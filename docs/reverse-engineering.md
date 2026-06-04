@@ -7,6 +7,9 @@ These notes track observed asset-format behaviour from locally supplied original
 - Candidate files include `COL01.DAT` and `HPALETTE.DAT` under `SYNDICAT/DATA` and `DATADISK/DATA`.
 - The current decoder treats the first 768 bytes as a 256-colour VGA palette with 6-bit RGB channels.
 - The HUD displays a 32-colour ramp sampled from the decoded palette.
+- Current observed palette candidates begin with an `RNC` signature, meaning they are compressed/enveloped rather than direct 768-byte palette payloads.
+- The engine now detects RNC headers and reports packed/unpacked lengths; full RNC decompression is the next requirement before palette payload rendering is complete.
+- The RNC abstraction now exposes packed payload slices, expected unpacked capacity, and complete/truncated/trailing-byte status. Actual method 1/2 decompression is intentionally still unimplemented until verified against known-good fixtures.
 
 ## TAB/DAT banks
 

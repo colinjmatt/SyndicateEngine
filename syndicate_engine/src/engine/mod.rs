@@ -6,5 +6,7 @@ pub mod formats;
 pub mod iso;
 pub mod palette;
 pub mod palette_decode;
+pub mod report;
+pub mod rnc;
 pub mod sprite_decode;
 pub mod tab_bank;

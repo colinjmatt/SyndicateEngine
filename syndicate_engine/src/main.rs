@@ -1,9 +1,8 @@
-mod engine;
-mod game;
-
-use engine::{assets::AssetIndex, config::window_conf};
-use game::world::WorldState;
 use macroquad::prelude::*;
+use syndicate_engine::{
+    engine::{assets::AssetIndex, config::window_conf},
+    game::world::WorldState,
+};
 
 #[macroquad::main(window_conf)]
 async fn main() {

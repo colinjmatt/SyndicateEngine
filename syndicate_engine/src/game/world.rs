@@ -1,6 +1,14 @@
 use crate::{
     engine::{assets::AssetIndex, camera::CameraRig, iso::iso_to_grid},
-    game::{agent::Agent, map::TacticalMap, ui},
+    game::{
+        agent::Agent,
+        combat::{AttackResult, Combatant, resolve_attack},
+        map::TacticalMap,
+        pathfinding::{GridPos, find_path},
+        save::{AgentSave, HostileSave, SaveGame, read_save, write_save},
+        sim::SimClock,
+        ui,
+    },
 };
 use macroquad::prelude::*;
 
@@ -9,8 +17,13 @@ pub struct WorldState {
     camera: CameraRig,
     map: TacticalMap,
     agents: Vec<Agent>,
+    hostiles: Vec<Combatant>,
     selected: usize,
+    combat_log: String,
+    sim_clock: SimClock,
 }
+
+const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
 
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
@@ -19,15 +32,24 @@ impl WorldState {
             camera: CameraRig::default(),
             map: TacticalMap::demo_city(),
             agents: Agent::squad(),
+            hostiles: vec![
+                Combatant::guard("EUROCORP-1", GridPos::new(15, 14)),
+                Combatant::guard("EUROCORP-2", GridPos::new(23, 10)),
+                Combatant::guard("POLICE", GridPos::new(8, 16)),
+            ],
             selected: 0,
+            combat_log: "No contact".to_string(),
+            sim_clock: SimClock::default(),
         }
     }
 
-    pub fn update(&mut self, dt: f32) {
+    pub fn update(&mut self, real_dt: f32) {
         if is_key_pressed(KeyCode::Escape) {
             std::process::exit(0);
         }
-        self.camera.update(dt);
+        self.camera.update(real_dt);
+        self.update_sim_controls();
+        let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
             (KeyCode::Key2, 1),
@@ -41,13 +63,92 @@ impl WorldState {
         if is_mouse_button_pressed(MouseButton::Right) {
             let mouse = vec2(mouse_position().0, mouse_position().1);
             let grid = iso_to_grid(self.camera.screen_to_world(mouse));
-            self.agents[self.selected].target = vec2(
-                grid.x.clamp(0.0, self.map.width as f32 - 1.0),
-                grid.y.clamp(0.0, self.map.height as f32 - 1.0),
+            let goal = GridPos::new(
+                grid.x.round().clamp(0.0, self.map.width as f32 - 1.0) as i32,
+                grid.y.round().clamp(0.0, self.map.height as f32 - 1.0) as i32,
             );
+            let start = self.agents[self.selected].grid_pos();
+            if let Some(path) = find_path(&self.map, start, goal) {
+                self.agents[self.selected].set_path(path);
+            } else {
+                self.agents[self.selected].reject_order(goal);
+            }
+        }
+        if is_mouse_button_pressed(MouseButton::Left) {
+            self.try_attack_at_mouse();
+        }
+        if is_key_pressed(KeyCode::F5) {
+            match self.quick_save() {
+                Ok(()) => self.combat_log = "Quick-saved tactical state".to_string(),
+                Err(err) => self.combat_log = format!("Quick-save failed: {err}"),
+            }
+        }
+        if is_key_pressed(KeyCode::F9) {
+            match self.quick_load() {
+                Ok(()) => self.combat_log = "Quick-loaded tactical state".to_string(),
+                Err(err) => self.combat_log = format!("Quick-load failed: {err}"),
+            }
         }
         for agent in &mut self.agents {
             agent.update(dt);
+        }
+        for hostile in &mut self.hostiles {
+            hostile.tick(dt);
+        }
+    }
+
+    fn update_sim_controls(&mut self) {
+        if is_key_pressed(KeyCode::Space) {
+            self.sim_clock.toggle_pause();
+        }
+        if is_key_pressed(KeyCode::Period) {
+            self.sim_clock.step_once();
+        }
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+            self.sim_clock.faster();
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            self.sim_clock.slower();
+        }
+    }
+
+    fn try_attack_at_mouse(&mut self) {
+        let mouse = vec2(mouse_position().0, mouse_position().1);
+        let grid = iso_to_grid(self.camera.screen_to_world(mouse));
+        let clicked = GridPos::new(grid.x.round() as i32, grid.y.round() as i32);
+        let Some(target_idx) = self
+            .hostiles
+            .iter()
+            .position(|hostile| hostile.is_alive() && hostile.pos.manhattan(clicked) <= 1)
+        else {
+            self.combat_log = "No hostile at cursor".to_string();
+            return;
+        };
+
+        let attacker_pos = self.agents[self.selected].grid_pos();
+        let weapon = self.agents[self.selected].weapon;
+        if !self.agents[self.selected].can_fire() {
+            self.combat_log = format!("{} weapon cooling", self.agents[self.selected].name);
+            return;
+        }
+
+        let target_name = self.hostiles[target_idx].name;
+        let result = resolve_attack(attacker_pos, weapon, &mut self.hostiles[target_idx]);
+        match result {
+            AttackResult::Hit { remaining_hp } => {
+                self.agents[self.selected].mark_fired_at(target_name);
+                self.combat_log = format!("Hit {target_name}: {remaining_hp} HP remaining");
+            }
+            AttackResult::Eliminated => {
+                self.agents[self.selected].mark_fired_at(target_name);
+                self.combat_log = format!("{target_name} eliminated");
+            }
+            AttackResult::OutOfRange => {
+                self.combat_log = format!("{target_name} out of range");
+            }
+            AttackResult::TargetAlreadyDown => {
+                self.combat_log = format!("{target_name} already down");
+            }
         }
     }
 
@@ -58,14 +159,126 @@ impl WorldState {
         }
     }
 
+    fn quick_save(&self) -> anyhow::Result<()> {
+        write_save(QUICK_SAVE_PATH, &self.to_save_game())
+    }
+
+    fn quick_load(&mut self) -> anyhow::Result<()> {
+        let save = read_save(QUICK_SAVE_PATH)?;
+        self.apply_save_game(save);
+        Ok(())
+    }
+
+    fn to_save_game(&self) -> SaveGame {
+        SaveGame {
+            version: 1,
+            selected_agent: self.selected,
+            agents: self
+                .agents
+                .iter()
+                .map(|agent| AgentSave {
+                    name: agent.name.to_string(),
+                    grid_x: agent.grid.x,
+                    grid_y: agent.grid.y,
+                    target_x: agent.target.x,
+                    target_y: agent.target.y,
+                    path: agent.path.clone(),
+                })
+                .collect(),
+            hostiles: self
+                .hostiles
+                .iter()
+                .map(|hostile| HostileSave {
+                    name: hostile.name.to_string(),
+                    pos: hostile.pos,
+                    hp: hostile.hp,
+                    cooldown: hostile.cooldown,
+                })
+                .collect(),
+            combat_log: self.combat_log.clone(),
+        }
+    }
+
+    fn apply_save_game(&mut self, save: SaveGame) {
+        self.selected = save.selected_agent.min(self.agents.len().saturating_sub(1));
+        for (agent, saved) in self.agents.iter_mut().zip(save.agents) {
+            agent.grid = vec2(saved.grid_x, saved.grid_y);
+            agent.target = vec2(saved.target_x, saved.target_y);
+            agent.path = saved.path;
+        }
+
+        self.hostiles = save
+            .hostiles
+            .into_iter()
+            .map(|saved| {
+                let mut hostile = Combatant::guard(hostile_name(saved.name.as_str()), saved.pos);
+                hostile.hp = saved.hp;
+                hostile.cooldown = saved.cooldown;
+                hostile
+            })
+            .collect();
+        self.combat_log = save.combat_log;
+        self.select(self.selected);
+    }
+
     pub fn draw(&self) {
         self.map.draw(&self.camera);
         for agent in &self.agents {
+            if agent.selected {
+                self.map.draw_path(&self.camera, &agent.path, agent.color);
+                if let Some(destination) = agent.destination() {
+                    self.map.draw_marker(&self.camera, destination, agent.color);
+                }
+            }
+        }
+        for agent in &self.agents {
             agent.draw(&self.camera);
         }
-        ui::draw_hud(&self.assets, self.agents[self.selected].name);
+        for hostile in &self.hostiles {
+            draw_hostile(&self.camera, hostile);
+        }
+        ui::draw_hud(
+            &self.assets,
+            self.agents[self.selected].name,
+            &self.agents[self.selected].order_summary(),
+            &self.combat_log,
+            &self.sim_clock.label(),
+        );
         draw_minimap(&self.agents);
     }
+}
+
+fn hostile_name(name: &str) -> &'static str {
+    match name {
+        "EUROCORP-1" => "EUROCORP-1",
+        "EUROCORP-2" => "EUROCORP-2",
+        "POLICE" => "POLICE",
+        _ => "HOSTILE",
+    }
+}
+
+fn draw_hostile(camera: &CameraRig, hostile: &Combatant) {
+    if !hostile.is_alive() {
+        return;
+    }
+    let base = camera.world_to_screen(crate::engine::iso::grid_to_iso(
+        hostile.pos.x as f32,
+        hostile.pos.y as f32,
+        0.0,
+    ));
+    let p = vec2(base.x, base.y - 18.0 * camera.zoom);
+    draw_circle(p.x, p.y, 8.0 * camera.zoom, RED);
+    draw_circle_lines(p.x, p.y, 11.0 * camera.zoom, 2.0, ORANGE);
+    draw_text(
+        hostile.name,
+        p.x - 24.0,
+        p.y - 16.0,
+        13.0 * camera.zoom,
+        ORANGE,
+    );
+    let hp_width = 34.0 * (hostile.hp as f32 / hostile.max_hp as f32);
+    draw_rectangle(p.x - 17.0, p.y + 14.0, 34.0, 4.0, DARKGRAY);
+    draw_rectangle(p.x - 17.0, p.y + 14.0, hp_width, 4.0, RED);
 }
 
 fn draw_minimap(agents: &[Agent]) {

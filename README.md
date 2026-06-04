@@ -39,11 +39,21 @@ original_assets/              your local original game data, ignored by git
 ## Validation
 
 ```bash
-cd syndicate_engine
-cargo fmt
-cargo test
-cargo build
+make validate
 ```
+
+Or run individual commands with `make fmt`, `make test`, `make build`, `make report`, and `make run`.
+
+## Asset inspection report
+
+Generate a headless reverse-engineering report from your local original assets:
+
+```bash
+cd syndicate_engine
+cargo run --bin inspect_assets -- ../original_assets ../docs/generated/asset-report.md
+```
+
+The report summarizes decoded palettes and `.TAB`/`.DAT` bank variant scores without copying copyrighted asset bytes into the repository.
 
 ## Roadmap
 

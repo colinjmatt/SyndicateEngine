@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 
 use crate::engine::{
     palette_decode::{Palette, Rgb8},
+    rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
     tab_bank::{TabArchive, TabVariantAnalysis},
 };
@@ -48,6 +49,13 @@ fn inspect_palette(root: &Path, palette_preview: &mut Vec<Rgb8>) -> String {
                     .unwrap_or("palette");
                 *palette_preview = palette.preview_ramp(32);
                 return format!("{name}: {} VGA colours", palette.colors.len());
+            }
+            if let Some(block) = RncBlock::parse(&data) {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("palette");
+                return format!("{name}: {}", block.diagnostic_summary());
             }
             return format!(
                 "{}: unsupported palette size {}",

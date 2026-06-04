@@ -1,0 +1,20 @@
+name: Rust validation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cd syndicate_engine && cargo fmt --all -- --check
+      - name: Test
+        run: cd syndicate_engine && cargo test --all-targets
+      - name: Build
+        run: cd syndicate_engine && cargo build --all-targets

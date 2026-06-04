@@ -3,9 +3,10 @@ use crate::engine::{
     iso::{draw_iso_tile, grid_to_iso},
     palette,
 };
+use crate::game::pathfinding::GridPos;
 use macroquad::prelude::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileKind {
     Road,
     Pavement,
@@ -51,6 +52,67 @@ impl TacticalMap {
 
     pub fn tile(&self, x: usize, y: usize) -> TileKind {
         self.tiles[y * self.width + x]
+    }
+
+    pub fn contains(&self, pos: GridPos) -> bool {
+        pos.x >= 0 && pos.y >= 0 && (pos.x as usize) < self.width && (pos.y as usize) < self.height
+    }
+
+    pub fn tile_pos(&self, pos: GridPos) -> Option<TileKind> {
+        self.contains(pos)
+            .then(|| self.tile(pos.x as usize, pos.y as usize))
+    }
+
+    pub fn is_walkable_pos(&self, pos: GridPos) -> bool {
+        self.tile_pos(pos)
+            .is_some_and(|tile| !matches!(tile, TileKind::Water | TileKind::Roof))
+    }
+
+    pub fn is_road_pos(&self, pos: GridPos) -> bool {
+        self.tile_pos(pos)
+            .is_some_and(|tile| tile == TileKind::Road)
+    }
+
+    pub fn walkable_neighbors(&self, pos: GridPos) -> Vec<GridPos> {
+        [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .map(|(dx, dy)| GridPos::new(pos.x + dx, pos.y + dy))
+            .filter(|&next| self.is_walkable_pos(next))
+            .collect()
+    }
+
+    pub fn draw_path(&self, camera: &CameraRig, path: &[GridPos], color: Color) {
+        for window in path.windows(2) {
+            let a =
+                camera.world_to_screen(grid_to_iso(window[0].x as f32, window[0].y as f32, 0.05));
+            let b =
+                camera.world_to_screen(grid_to_iso(window[1].x as f32, window[1].y as f32, 0.05));
+            draw_line(a.x, a.y, b.x, b.y, 3.0, color);
+        }
+    }
+
+    pub fn draw_marker(&self, camera: &CameraRig, pos: GridPos, color: Color) {
+        if !self.contains(pos) {
+            return;
+        }
+        let center = camera.world_to_screen(grid_to_iso(pos.x as f32, pos.y as f32, 0.1));
+        draw_circle_lines(center.x, center.y, 14.0 * camera.zoom, 3.0, color);
+        draw_line(
+            center.x - 18.0,
+            center.y,
+            center.x + 18.0,
+            center.y,
+            2.0,
+            color,
+        );
+        draw_line(
+            center.x,
+            center.y - 10.0,
+            center.x,
+            center.y + 10.0,
+            2.0,
+            color,
+        );
     }
 
     pub fn draw(&self, camera: &CameraRig) {
