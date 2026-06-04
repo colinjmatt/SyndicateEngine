@@ -5,13 +5,14 @@ use std::{fs, path::Path};
 use crate::engine::{
     palette_decode::{Palette, Rgb8},
     sprite_decode::SpriteChunkInfo,
-    tab_bank::TabArchive,
+    tab_bank::{TabArchive, TabVariantAnalysis},
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct DecodeDiagnostics {
     pub palette_status: String,
     pub tab_status: String,
+    pub tab_variant_status: String,
     pub sprite_status: String,
     pub palette_preview: Vec<Rgb8>,
 }
@@ -23,6 +24,7 @@ impl DecodeDiagnostics {
         Self {
             palette_status: inspect_palette(root, &mut palette_preview),
             tab_status: inspect_tab_bank(root),
+            tab_variant_status: inspect_tab_variants(root),
             sprite_status: inspect_sprite_chunks(root),
             palette_preview,
         }
@@ -90,6 +92,28 @@ fn inspect_tab_bank(root: &Path) -> String {
     }
 
     "TAB bank: not found".to_string()
+}
+
+fn inspect_tab_variants(root: &Path) -> String {
+    let candidates = [
+        root.join("SYNDICAT/DATA/HSPR-0.TAB"),
+        root.join("SYNDICAT/DATA/HSPR-1.TAB"),
+        root.join("DATADISK/DATA/MSPR-0-D.TAB"),
+    ];
+
+    for tab_path in candidates {
+        let dat_path = tab_path.with_extension("DAT");
+        if let (Ok(tab), Ok(dat_meta)) = (fs::read(&tab_path), fs::metadata(&dat_path)) {
+            let analysis = TabVariantAnalysis::analyze(&tab, dat_meta.len() as usize);
+            let name = tab_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("TAB");
+            return format!("{name}: {}", analysis.summary());
+        }
+    }
+
+    "TAB variants: no paired files".to_string()
 }
 
 fn inspect_sprite_chunks(root: &Path) -> String {

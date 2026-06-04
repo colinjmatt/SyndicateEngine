@@ -20,6 +20,20 @@ pub struct TabArchive {
     dat: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabVariantScore {
+    pub offset_width: usize,
+    pub records: usize,
+    pub valid_offsets: usize,
+    pub unique_offsets: usize,
+    pub monotonic_pairs: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabVariantAnalysis {
+    pub scores: Vec<TabVariantScore>,
+}
+
 impl TabBank {
     pub fn parse(tab: &[u8], dat_len: usize) -> Option<Self> {
         if tab.len() < 8 || tab.len() % 4 != 0 {
@@ -85,9 +99,94 @@ impl TabArchive {
     }
 }
 
+impl TabVariantAnalysis {
+    pub fn analyze(tab: &[u8], dat_len: usize) -> Self {
+        let scores = [2, 3, 4]
+            .into_iter()
+            .map(|offset_width| score_variant(tab, dat_len, offset_width))
+            .collect();
+        Self { scores }
+    }
+
+    pub fn best(&self) -> Option<TabVariantScore> {
+        self.scores.iter().copied().max_by_key(|score| {
+            let monotonic_ratio =
+                ratio_per_mille(score.monotonic_pairs, score.records.saturating_sub(1));
+            let unique_ratio = ratio_per_mille(score.unique_offsets, score.valid_offsets);
+            let valid_ratio = ratio_per_mille(score.valid_offsets, score.records);
+            (
+                monotonic_ratio,
+                unique_ratio,
+                valid_ratio,
+                score.offset_width,
+            )
+        })
+    }
+
+    pub fn summary(&self) -> String {
+        let Some(best) = self.best() else {
+            return "TAB variants: no candidates".to_string();
+        };
+
+        format!(
+            "TAB{} best: {}/{} valid, {} unique, {} monotonic",
+            best.offset_width * 8,
+            best.valid_offsets,
+            best.records,
+            best.unique_offsets,
+            best.monotonic_pairs
+        )
+    }
+}
+
+fn score_variant(tab: &[u8], dat_len: usize, offset_width: usize) -> TabVariantScore {
+    let records = tab.len() / offset_width;
+    let offsets = (0..records)
+        .map(|i| read_le_width(&tab[i * offset_width..][..offset_width]))
+        .collect::<Vec<_>>();
+
+    let valid_offsets = offsets
+        .iter()
+        .filter(|&&offset| offset <= dat_len as u32)
+        .count();
+    let mut unique = offsets
+        .iter()
+        .copied()
+        .filter(|&offset| offset <= dat_len as u32)
+        .collect::<Vec<_>>();
+    unique.sort_unstable();
+    unique.dedup();
+
+    let monotonic_pairs = offsets
+        .windows(2)
+        .filter(|pair| pair[0] <= dat_len as u32 && pair[1] <= dat_len as u32 && pair[1] >= pair[0])
+        .count();
+
+    TabVariantScore {
+        offset_width,
+        records,
+        valid_offsets,
+        unique_offsets: unique.len(),
+        monotonic_pairs,
+    }
+}
+
+fn read_le_width(bytes: &[u8]) -> u32 {
+    bytes.iter().enumerate().fold(0u32, |value, (shift, byte)| {
+        value | ((*byte as u32) << (shift * 8))
+    })
+}
+
+fn ratio_per_mille(numerator: usize, denominator: usize) -> usize {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator.saturating_mul(1000) / denominator
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TabArchive, TabBank};
+    use super::{TabArchive, TabBank, TabVariantAnalysis};
 
     #[test]
     fn parses_monotonic_offsets_into_lengths() {
@@ -113,5 +212,18 @@ mod tests {
         assert_eq!(archive.chunk(2), None);
         assert_eq!(archive.bank.min_chunk_len(), Some(2));
         assert_eq!(archive.bank.max_chunk_len(), Some(3));
+    }
+
+    #[test]
+    fn scores_offset_width_variants() {
+        let tab = [0u32, 4, 8, 12]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        let analysis = TabVariantAnalysis::analyze(&tab, 12);
+        let best = analysis.best().unwrap();
+        assert_eq!(best.offset_width, 4);
+        assert_eq!(best.valid_offsets, 4);
+        assert_eq!(best.monotonic_pairs, 3);
     }
 }
