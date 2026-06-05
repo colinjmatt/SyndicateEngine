@@ -35,6 +35,7 @@ pub struct AssetReport {
     compressed_palette_rows: Vec<String>,
     tab_rows: Vec<String>,
     tab_family_ranking_rows: Vec<String>,
+    tab_family_hint_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -266,6 +267,7 @@ impl AssetReport {
             compressed_palette_rows,
             tab_rows,
             tab_family_ranking_rows: format_tab_family_ranking_rows(&tab_analyses),
+            tab_family_hint_rows: format_tab_family_hint_rows(&tab_analyses),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -379,6 +381,16 @@ impl AssetReport {
             &mut markdown,
             &self.tab_family_ranking_rows,
             "no safely parsed TAB/DAT family rankings available",
+            7,
+        );
+
+        markdown.push_str("\n### TAB/sprite family next-investigation hints\n\n");
+        markdown.push_str("These rows turn the aggregate family rankings into conservative, non-reconstructable inspection priorities. Hints identify which aggregate evidence to inspect next; they do not decode metadata fields, dimensions, anchors, commands, pixels, audio, UI, or game semantics.\n\n");
+        markdown.push_str("| Family candidate | Inspection priority | Candidate metadata-shape to inspect next | Classifier/size-band pattern to prioritize | Chunk-length progression hint | Entropy/common-bucket hint | Conservative limitation |\n|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_hint_rows,
+            "no aggregate TAB/sprite investigation hints available",
             7,
         );
 
@@ -497,6 +509,9 @@ struct TabFamilyRankingSummary {
     min_entropy_milli_bits: u32,
     max_entropy_milli_bits: u32,
     common_bucket_overlap: Vec<TabFamilyCommonBucketOverlap>,
+    small_chunks: usize,
+    medium_chunks: usize,
+    large_chunks: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1524,6 +1539,18 @@ fn summarize_tab_family_ranking(
         min_entropy_milli_bits,
         max_entropy_milli_bits,
         common_bucket_overlap,
+        small_chunks: entries
+            .iter()
+            .map(|summary| summary.sprite_bank.size_band_counts.small)
+            .sum(),
+        medium_chunks: entries
+            .iter()
+            .map(|summary| summary.sprite_bank.size_band_counts.medium)
+            .sum(),
+        large_chunks: entries
+            .iter()
+            .map(|summary| summary.sprite_bank.size_band_counts.large)
+            .sum(),
     })
 }
 
@@ -1628,6 +1655,142 @@ fn format_tab_family_common_bucket_overlap(summary: &TabFamilyRankingSummary) ->
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+fn format_tab_family_hint_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
+    tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .filter(is_sprite_like_family_candidate)
+        .map(|summary| {
+            format!(
+                "| `{}` | {} | {} | {} | {} | {} | {} |",
+                summary.family,
+                tab_family_investigation_priority(&summary),
+                tab_family_metadata_hint(&summary),
+                tab_family_classifier_size_hint(&summary),
+                tab_family_progression_hint(&summary),
+                tab_family_entropy_bucket_hint(&summary),
+                "aggregate hint only; inspect local user-supplied assets at runtime without committing bytes, headers, chunks, or previews"
+            )
+        })
+        .collect()
+}
+
+fn tab_family_investigation_priority(summary: &TabFamilyRankingSummary) -> String {
+    let metadata_score = summary.metadata_support_score();
+    let progression_score = summary.progression_score();
+    let command_ratio = ratio_per_mille(summary.command_stream_chunks, summary.total_chunks);
+    if metadata_score >= summary.total_chunks / 2 || (command_ratio >= 700 && progression_score > 0)
+    {
+        "high aggregate inspection priority: strong candidate metadata/progression evidence"
+            .to_string()
+    } else if metadata_score > 0 || progression_score > 0 || command_ratio >= 500 {
+        "medium aggregate inspection priority: useful classifier or progression evidence"
+            .to_string()
+    } else {
+        "low aggregate inspection priority: limited sprite-like aggregate support".to_string()
+    }
+}
+
+fn tab_family_metadata_hint(summary: &TabFamilyRankingSummary) -> String {
+    summary
+        .metadata_shape_supports
+        .first()
+        .map(|support| {
+            format!(
+                "inspect `{}` candidate first ({} chunks, {} per mille support)",
+                support.label, support.support_count, support.per_mille
+            )
+        })
+        .unwrap_or_else(|| {
+            "no bounded candidate metadata-shape selected; prioritize classifier and size-band aggregates first".to_string()
+        })
+}
+
+fn tab_family_classifier_size_hint(summary: &TabFamilyRankingSummary) -> String {
+    let dominant = dominant_classifier_hint(summary);
+    let size_band = dominant_size_band_hint(summary);
+    format!("{dominant}; prioritize {size_band}")
+}
+
+fn dominant_classifier_hint(summary: &TabFamilyRankingSummary) -> String {
+    let classifiers = [
+        ("command-stream candidate", summary.command_stream_chunks),
+        ("raw-indexed candidate", summary.raw_chunks),
+        ("unknown candidate", summary.unknown_chunks),
+    ];
+    let (label, count) = classifiers
+        .into_iter()
+        .max_by_key(|(label, count)| (*count, std::cmp::Reverse(*label)))
+        .unwrap_or(("unknown candidate", 0));
+    format!(
+        "strongest classifier pattern: {label} {} chunks ({} per mille)",
+        count,
+        ratio_per_mille(count, summary.total_chunks)
+    )
+}
+
+fn dominant_size_band_hint(summary: &TabFamilyRankingSummary) -> String {
+    let bands = [
+        ("small chunks (0..31 bytes)", summary.small_chunks),
+        ("medium chunks (32..511 bytes)", summary.medium_chunks),
+        ("large chunks (>=512 bytes)", summary.large_chunks),
+    ];
+    let (label, count) = bands
+        .into_iter()
+        .max_by_key(|(label, count)| (*count, std::cmp::Reverse(*label)))
+        .unwrap_or(("unknown size band", 0));
+    format!(
+        "{label} with {} chunks ({} per mille)",
+        count,
+        ratio_per_mille(count, summary.total_chunks)
+    )
+}
+
+fn tab_family_progression_hint(summary: &TabFamilyRankingSummary) -> String {
+    match (
+        summary.equal_run_archives == summary.parsed_archives,
+        summary.repeated_pattern_archives == summary.parsed_archives,
+        summary.equal_run_archives > 0,
+        summary.repeated_pattern_archives > 0,
+    ) {
+        (true, true, _, _) => "chunk-length progression suggests repeated-record candidates across all parsed archives".to_string(),
+        (_, true, _, _) => "repeated size-pattern candidates appear in all parsed archives; inspect recurring record groups first".to_string(),
+        (_, _, true, true) => "mixed equal-run and repeated-pattern evidence suggests partial repeated records".to_string(),
+        (_, _, true, false) => "equal-size runs suggest localized repeated records, but varied records remain likely".to_string(),
+        _ => "limited repeated-length evidence; expect varied records until stronger aggregate support appears".to_string(),
+    }
+}
+
+fn tab_family_entropy_bucket_hint(summary: &TabFamilyRankingSummary) -> String {
+    let command_ratio = ratio_per_mille(summary.command_stream_chunks, summary.total_chunks);
+    let raw_or_unknown_ratio = ratio_per_mille(
+        summary.raw_chunks.saturating_add(summary.unknown_chunks),
+        summary.total_chunks,
+    );
+    let smallest_common_bucket = summary
+        .common_bucket_overlap
+        .iter()
+        .map(|bucket| bucket.len)
+        .min();
+    let behaviour = if command_ratio >= 800 && summary.max_entropy_milli_bits <= 5500 {
+        "closer to command-stream-heavy banks in aggregate"
+    } else if smallest_common_bucket.is_some_and(|len| len <= 32)
+        && summary.max_entropy_milli_bits <= 5500
+    {
+        "closer to compact metadata or control-record banks in aggregate"
+    } else if raw_or_unknown_ratio >= 300 || summary.max_entropy_milli_bits >= 6500 {
+        "closer to mixed banks with varied records in aggregate"
+    } else {
+        "no single entropy/common-bucket behaviour dominates"
+    };
+    format!(
+        "{}; entropy {:.3}..{:.3} bits; common buckets [{}]",
+        behaviour,
+        summary.min_entropy_milli_bits as f32 / 1000.0,
+        summary.max_entropy_milli_bits as f32 / 1000.0,
+        format_tab_family_common_bucket_overlap(summary)
+    )
 }
 
 fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
@@ -2335,13 +2498,67 @@ mod tests {
     }
 
     #[test]
+    fn formats_tab_family_next_investigation_hints_without_bytes() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows = super::format_tab_family_hint_rows(&[hspr_a, hspr_b, mspr, sound]);
+        let joined = rows.join("\n");
+
+        assert!(joined.contains("`HSPR`"));
+        assert!(joined.contains("`MSPR`"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("aggregate inspection priority"));
+        assert!(
+            joined.contains("candidate leading") || joined.contains("candidate metadata-shape")
+        );
+        assert!(joined.contains("strongest classifier pattern"));
+        assert!(joined.contains("prioritize"));
+        assert!(joined.contains("records") || joined.contains("repeated-length evidence"));
+        assert!(joined.contains("entropy"));
+        assert!(joined.contains("aggregate hint only"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
 
         assert!(markdown.contains("TAB/sprite family aggregate ranking candidates"));
+        assert!(markdown.contains("TAB/sprite family next-investigation hints"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
+        assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
