@@ -4,6 +4,7 @@ pub mod camera;
 pub mod config;
 pub mod formats;
 pub mod iso;
+pub mod map_decode;
 pub mod palette;
 pub mod palette_decode;
 pub mod report;

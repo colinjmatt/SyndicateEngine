@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use crate::engine::{
+    map_decode::MapDatAnalysis,
     palette_decode::Palette,
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
@@ -64,7 +65,7 @@ impl AssetReport {
                     "| `{}` | {} | {} |",
                     display_relative(root, path),
                     size,
-                    compressed_status(path)
+                    map_decode_status(path)
                 ));
             }
 
@@ -294,6 +295,16 @@ fn compressed_status(path: &Path) -> String {
         .ok()
         .and_then(|data| RncBlock::parse(&data).map(|block| rnc_decode_status(&block)))
         .unwrap_or_else(|| "plain/unknown".to_string())
+}
+
+fn map_decode_status(path: &Path) -> String {
+    fs::read(path)
+        .ok()
+        .map(|data| match MapDatAnalysis::analyze_file_bytes(&data) {
+            Ok(analysis) => analysis.short_label(),
+            Err(err) => format!("map decode error {err:?}"),
+        })
+        .unwrap_or_else(|| "unreadable".to_string())
 }
 
 fn rnc_decode_status(block: &RncBlock<'_>) -> String {

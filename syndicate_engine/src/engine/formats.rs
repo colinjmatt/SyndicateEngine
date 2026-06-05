@@ -3,6 +3,7 @@
 use std::{fs, path::Path};
 
 use crate::engine::{
+    map_decode::MapDatAnalysis,
     palette_decode::{Palette, Rgb8},
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
@@ -11,6 +12,7 @@ use crate::engine::{
 
 #[derive(Debug, Clone, Default)]
 pub struct DecodeDiagnostics {
+    pub map_status: String,
     pub palette_status: String,
     pub tab_status: String,
     pub tab_variant_status: String,
@@ -23,6 +25,7 @@ impl DecodeDiagnostics {
         let root = root.as_ref();
         let mut palette_preview = Vec::new();
         Self {
+            map_status: inspect_map(root),
             palette_status: inspect_palette(root, &mut palette_preview),
             tab_status: inspect_tab_bank(root),
             tab_variant_status: inspect_tab_variants(root),
@@ -30,6 +33,38 @@ impl DecodeDiagnostics {
             palette_preview,
         }
     }
+}
+
+fn inspect_map(root: &Path) -> String {
+    let candidates = [
+        root.join("SYNDICAT/DATA/MAP01.DAT"),
+        root.join("DATADISK/DATA/MAP01.DAT"),
+    ];
+
+    for path in candidates {
+        if let Ok(data) = fs::read(&path) {
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("MAP");
+            return match MapDatAnalysis::analyze_file_bytes(&data) {
+                Ok(analysis) => {
+                    if let Some(grid) = &analysis.payload.primary_grid {
+                        format!(
+                            "{name}: {}x{}x{} cells, {} unique, tail {} records",
+                            grid.width,
+                            grid.height,
+                            grid.bytes_per_cell,
+                            grid.unique_cells,
+                            analysis.payload.tail.record_count_12
+                        )
+                    } else {
+                        format!("{name}: {}", analysis.payload.short_label())
+                    }
+                }
+                Err(err) => format!("{name}: map decode error {err:?}"),
+            };
+        }
+    }
+
+    "map decode: no MAP*.DAT candidates".to_string()
 }
 
 fn inspect_palette(root: &Path, palette_preview: &mut Vec<Rgb8>) -> String {

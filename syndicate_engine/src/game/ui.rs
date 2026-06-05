@@ -37,7 +37,7 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         WHITE,
     );
     draw_text(
-        &format!("Sample map candidate: {}", asset_index.sample_map_name()),
+        &format!("Map: {}", asset_index.diagnostics().map_status),
         28.0,
         110.0,
         16.0,

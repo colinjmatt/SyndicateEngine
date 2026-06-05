@@ -17,6 +17,13 @@ These notes track observed asset-format behaviour from locally supplied original
 - Method 1 uses LSB-first Huffman/LZ blocks and header byte 17 as the block count. Header byte 16 is retained as leeway/in-place metadata but is not needed for out-of-place decoding.
 - The decoder verifies packed CRC before decompression and unpacked CRC before returning bytes. Method 2 remains unsupported until a clean fixture and implementation plan are available.
 
+## MAP data
+
+- All observed `MAP*.DAT` files are RNC method-1 containers and now decompress with packed/unpacked CRC verification.
+- The first stable decoded structure is a `64 * 64 * 12 = 49152` byte primary cell section. The analyzer treats each 12-byte cell conservatively as three little-endian 32-bit words until the fields are named.
+- Remaining decoded bytes form a variable tail. Observed tails are aligned to 12-byte records, suggesting additional map/object records, but those records are not semantically decoded yet.
+- The generated report lists primary-cell uniqueness, empty-cell counts, and tail record counts as aggregate diagnostics only; it does not include asset bytes.
+
 ## TAB/DAT banks
 
 Observed `.TAB` files are not all the same shape:

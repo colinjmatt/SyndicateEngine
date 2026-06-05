@@ -34,124 +34,124 @@ This report is generated from local original assets and should not include copyr
 
 | File | Bytes | Container |
 |---|---:|---|
-| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
-| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
-| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
-| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
-| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
-| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
-| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
-| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1, packed 8845 bytes, unpacked 61368 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61368 bytes |
-| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
-| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
-| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
-| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
-| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
-| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
-| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
-| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
-| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
-| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
-| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
-| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
-| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
-| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
-| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
-| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
-| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
-| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
-| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
-| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
-| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
-| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
-| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
-| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
-| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
-| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
-| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
-| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
-| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
-| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
-| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
-| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
-| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
-| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
-| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
-| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
-| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
-| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
-| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
-| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
-| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
-| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
-| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
-| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
-| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
-| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
-| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
-| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
-| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
-| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
-| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
-| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
-| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
-| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
-| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
-| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
-| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
-| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
-| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1, packed 9121 bytes, unpacked 61824 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61824 bytes |
-| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
-| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
-| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
-| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
-| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
-| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
-| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
-| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
-| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
-| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
-| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
-| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
-| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
-| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
-| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
-| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
-| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
-| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
-| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
-| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
-| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
-| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
-| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
-| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
-| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
-| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
-| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
-| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
-| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
-| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
-| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
-| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
-| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
-| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
-| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
-| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
-| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
-| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
-| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
-| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
-| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
-| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
-| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
-| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
-| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
-| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
-| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
-| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
-| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
-| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
-| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
+| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1 verified, packed 5388, unpacked 52632, 5 blocks; 64x64x12 primary cells, 373 unique, 0 empty; tail 3480 bytes (290 x 12-byte records) |
+| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1 verified, packed 10997, unpacked 64476, 6 blocks; 64x64x12 primary cells, 1221 unique, 0 empty; tail 15324 bytes (1277 x 12-byte records) |
+| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1 verified, packed 13877, unpacked 66984, 6 blocks; 64x64x12 primary cells, 1516 unique, 0 empty; tail 17832 bytes (1486 x 12-byte records) |
+| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1 verified, packed 11200, unpacked 64644, 6 blocks; 64x64x12 primary cells, 1331 unique, 0 empty; tail 15492 bytes (1291 x 12-byte records) |
+| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1 verified, packed 15711, unpacked 70128, 6 blocks; 64x64x12 primary cells, 1806 unique, 0 empty; tail 20976 bytes (1748 x 12-byte records) |
+| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1 verified, packed 26150, unpacked 81240, 7 blocks; 64x64x12 primary cells, 2745 unique, 0 empty; tail 32088 bytes (2674 x 12-byte records) |
+| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1 verified, packed 13842, unpacked 60060, 5 blocks; 64x64x12 primary cells, 1376 unique, 0 empty; tail 10908 bytes (909 x 12-byte records) |
+| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1 verified, packed 8845, unpacked 61368, 6 blocks; 64x64x12 primary cells, 1063 unique, 0 empty; tail 12216 bytes (1018 x 12-byte records) |
+| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1 verified, packed 136, unpacked 49188, 5 blocks; 64x64x12 primary cells, 7 unique, 0 empty; tail 36 bytes (3 x 12-byte records) |
+| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1 verified, packed 8061, unpacked 60372, 5 blocks; 64x64x12 primary cells, 950 unique, 0 empty; tail 11220 bytes (935 x 12-byte records) |
+| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1 verified, packed 8825, unpacked 61668, 6 blocks; 64x64x12 primary cells, 1050 unique, 0 empty; tail 12516 bytes (1043 x 12-byte records) |
+| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1 verified, packed 8197, unpacked 60708, 5 blocks; 64x64x12 primary cells, 888 unique, 0 empty; tail 11556 bytes (963 x 12-byte records) |
+| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1 verified, packed 14780, unpacked 61392, 6 blocks; 64x64x12 primary cells, 1714 unique, 0 empty; tail 12240 bytes (1020 x 12-byte records) |
+| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1 verified, packed 97, unpacked 49176, 5 blocks; 64x64x12 primary cells, 2 unique, 0 empty; tail 24 bytes (2 x 12-byte records) |
+| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1 verified, packed 12653, unpacked 56172, 5 blocks; 64x64x12 primary cells, 1784 unique, 0 empty; tail 7020 bytes (585 x 12-byte records) |
+| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1 verified, packed 1760, unpacked 51636, 5 blocks; 64x64x12 primary cells, 315 unique, 0 empty; tail 2484 bytes (207 x 12-byte records) |
+| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1 verified, packed 11642, unpacked 56328, 5 blocks; 64x64x12 primary cells, 1043 unique, 0 empty; tail 7176 bytes (598 x 12-byte records) |
+| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1 verified, packed 12345, unpacked 57576, 5 blocks; 64x64x12 primary cells, 1519 unique, 0 empty; tail 8424 bytes (702 x 12-byte records) |
+| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1 verified, packed 15583, unpacked 64932, 6 blocks; 64x64x12 primary cells, 1680 unique, 0 empty; tail 15780 bytes (1315 x 12-byte records) |
+| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1 verified, packed 10217, unpacked 52524, 5 blocks; 64x64x12 primary cells, 1200 unique, 0 empty; tail 3372 bytes (281 x 12-byte records) |
+| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1 verified, packed 16715, unpacked 67620, 6 blocks; 64x64x12 primary cells, 2009 unique, 0 empty; tail 18468 bytes (1539 x 12-byte records) |
+| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1 verified, packed 8106, unpacked 56232, 5 blocks; 64x64x12 primary cells, 1061 unique, 0 empty; tail 7080 bytes (590 x 12-byte records) |
+| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1 verified, packed 10909, unpacked 61740, 6 blocks; 64x64x12 primary cells, 1310 unique, 0 empty; tail 12588 bytes (1049 x 12-byte records) |
+| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1 verified, packed 10093, unpacked 54336, 5 blocks; 64x64x12 primary cells, 847 unique, 0 empty; tail 5184 bytes (432 x 12-byte records) |
+| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1 verified, packed 10878, unpacked 63864, 6 blocks; 64x64x12 primary cells, 1334 unique, 0 empty; tail 14712 bytes (1226 x 12-byte records) |
+| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1 verified, packed 5497, unpacked 56388, 5 blocks; 64x64x12 primary cells, 695 unique, 0 empty; tail 7236 bytes (603 x 12-byte records) |
+| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1 verified, packed 7497, unpacked 60012, 5 blocks; 64x64x12 primary cells, 863 unique, 0 empty; tail 10860 bytes (905 x 12-byte records) |
+| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1 verified, packed 14027, unpacked 62088, 6 blocks; 64x64x12 primary cells, 1543 unique, 0 empty; tail 12936 bytes (1078 x 12-byte records) |
+| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1 verified, packed 11464, unpacked 64860, 6 blocks; 64x64x12 primary cells, 1384 unique, 0 empty; tail 15708 bytes (1309 x 12-byte records) |
+| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1 verified, packed 13403, unpacked 68304, 6 blocks; 64x64x12 primary cells, 1540 unique, 0 empty; tail 19152 bytes (1596 x 12-byte records) |
+| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1 verified, packed 11539, unpacked 62964, 6 blocks; 64x64x12 primary cells, 1732 unique, 0 empty; tail 13812 bytes (1151 x 12-byte records) |
+| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1 verified, packed 10980, unpacked 62892, 6 blocks; 64x64x12 primary cells, 1548 unique, 0 empty; tail 13740 bytes (1145 x 12-byte records) |
+| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1 verified, packed 7317, unpacked 57024, 5 blocks; 64x64x12 primary cells, 1195 unique, 0 empty; tail 7872 bytes (656 x 12-byte records) |
+| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1 verified, packed 5885, unpacked 56400, 5 blocks; 64x64x12 primary cells, 1062 unique, 0 empty; tail 7248 bytes (604 x 12-byte records) |
+| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1 verified, packed 12654, unpacked 64836, 6 blocks; 64x64x12 primary cells, 1605 unique, 0 empty; tail 15684 bytes (1307 x 12-byte records) |
+| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1 verified, packed 13273, unpacked 66120, 6 blocks; 64x64x12 primary cells, 1749 unique, 0 empty; tail 16968 bytes (1414 x 12-byte records) |
+| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1 verified, packed 7468, unpacked 58416, 5 blocks; 64x64x12 primary cells, 973 unique, 0 empty; tail 9264 bytes (772 x 12-byte records) |
+| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1 verified, packed 5784, unpacked 55968, 5 blocks; 64x64x12 primary cells, 857 unique, 0 empty; tail 6816 bytes (568 x 12-byte records) |
+| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1 verified, packed 5921, unpacked 54528, 5 blocks; 64x64x12 primary cells, 1139 unique, 0 empty; tail 5376 bytes (448 x 12-byte records) |
+| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1 verified, packed 11853, unpacked 62040, 6 blocks; 64x64x12 primary cells, 1188 unique, 0 empty; tail 12888 bytes (1074 x 12-byte records) |
+| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1 verified, packed 9315, unpacked 58056, 5 blocks; 64x64x12 primary cells, 940 unique, 0 empty; tail 8904 bytes (742 x 12-byte records) |
+| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1 verified, packed 10815, unpacked 61308, 6 blocks; 64x64x12 primary cells, 1316 unique, 0 empty; tail 12156 bytes (1013 x 12-byte records) |
+| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1 verified, packed 11790, unpacked 62412, 6 blocks; 64x64x12 primary cells, 1353 unique, 0 empty; tail 13260 bytes (1105 x 12-byte records) |
+| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1 verified, packed 9864, unpacked 59436, 5 blocks; 64x64x12 primary cells, 1193 unique, 0 empty; tail 10284 bytes (857 x 12-byte records) |
+| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1 verified, packed 13551, unpacked 64572, 6 blocks; 64x64x12 primary cells, 1922 unique, 0 empty; tail 15420 bytes (1285 x 12-byte records) |
+| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1 verified, packed 10730, unpacked 61404, 6 blocks; 64x64x12 primary cells, 1647 unique, 0 empty; tail 12252 bytes (1021 x 12-byte records) |
+| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1 verified, packed 11324, unpacked 62652, 6 blocks; 64x64x12 primary cells, 1634 unique, 0 empty; tail 13500 bytes (1125 x 12-byte records) |
+| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1 verified, packed 13251, unpacked 64032, 6 blocks; 64x64x12 primary cells, 1669 unique, 0 empty; tail 14880 bytes (1240 x 12-byte records) |
+| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1 verified, packed 16801, unpacked 69252, 6 blocks; 64x64x12 primary cells, 2046 unique, 0 empty; tail 20100 bytes (1675 x 12-byte records) |
+| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1 verified, packed 15711, unpacked 68220, 6 blocks; 64x64x12 primary cells, 2097 unique, 0 empty; tail 19068 bytes (1589 x 12-byte records) |
+| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1 verified, packed 11689, unpacked 59736, 5 blocks; 64x64x12 primary cells, 1599 unique, 0 empty; tail 10584 bytes (882 x 12-byte records) |
+| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1 verified, packed 8716, unpacked 60360, 5 blocks; 64x64x12 primary cells, 1133 unique, 0 empty; tail 11208 bytes (934 x 12-byte records) |
+| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1 verified, packed 13725, unpacked 66936, 6 blocks; 64x64x12 primary cells, 1478 unique, 0 empty; tail 17784 bytes (1482 x 12-byte records) |
+| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1 verified, packed 13635, unpacked 66444, 6 blocks; 64x64x12 primary cells, 1659 unique, 0 empty; tail 17292 bytes (1441 x 12-byte records) |
+| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1 verified, packed 21059, unpacked 72396, 6 blocks; 64x64x12 primary cells, 2880 unique, 0 empty; tail 23244 bytes (1937 x 12-byte records) |
+| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1 verified, packed 17570, unpacked 70920, 6 blocks; 64x64x12 primary cells, 2046 unique, 0 empty; tail 21768 bytes (1814 x 12-byte records) |
+| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1 verified, packed 16453, unpacked 70656, 6 blocks; 64x64x12 primary cells, 1935 unique, 0 empty; tail 21504 bytes (1792 x 12-byte records) |
+| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1 verified, packed 11085, unpacked 60660, 5 blocks; 64x64x12 primary cells, 1644 unique, 0 empty; tail 11508 bytes (959 x 12-byte records) |
+| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1 verified, packed 6924, unpacked 52860, 5 blocks; 64x64x12 primary cells, 1002 unique, 0 empty; tail 3708 bytes (309 x 12-byte records) |
+| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1 verified, packed 5388, unpacked 52632, 5 blocks; 64x64x12 primary cells, 373 unique, 0 empty; tail 3480 bytes (290 x 12-byte records) |
+| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1 verified, packed 10997, unpacked 64476, 6 blocks; 64x64x12 primary cells, 1221 unique, 0 empty; tail 15324 bytes (1277 x 12-byte records) |
+| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1 verified, packed 13877, unpacked 66984, 6 blocks; 64x64x12 primary cells, 1516 unique, 0 empty; tail 17832 bytes (1486 x 12-byte records) |
+| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1 verified, packed 11200, unpacked 64644, 6 blocks; 64x64x12 primary cells, 1331 unique, 0 empty; tail 15492 bytes (1291 x 12-byte records) |
+| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1 verified, packed 15711, unpacked 70128, 6 blocks; 64x64x12 primary cells, 1806 unique, 0 empty; tail 20976 bytes (1748 x 12-byte records) |
+| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1 verified, packed 26150, unpacked 81240, 7 blocks; 64x64x12 primary cells, 2745 unique, 0 empty; tail 32088 bytes (2674 x 12-byte records) |
+| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1 verified, packed 13842, unpacked 60060, 5 blocks; 64x64x12 primary cells, 1376 unique, 0 empty; tail 10908 bytes (909 x 12-byte records) |
+| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1 verified, packed 9121, unpacked 61824, 6 blocks; 64x64x12 primary cells, 1090 unique, 0 empty; tail 12672 bytes (1056 x 12-byte records) |
+| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1 verified, packed 136, unpacked 49188, 5 blocks; 64x64x12 primary cells, 7 unique, 0 empty; tail 36 bytes (3 x 12-byte records) |
+| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1 verified, packed 8061, unpacked 60372, 5 blocks; 64x64x12 primary cells, 950 unique, 0 empty; tail 11220 bytes (935 x 12-byte records) |
+| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1 verified, packed 8825, unpacked 61668, 6 blocks; 64x64x12 primary cells, 1050 unique, 0 empty; tail 12516 bytes (1043 x 12-byte records) |
+| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1 verified, packed 8197, unpacked 60708, 5 blocks; 64x64x12 primary cells, 888 unique, 0 empty; tail 11556 bytes (963 x 12-byte records) |
+| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1 verified, packed 14780, unpacked 61392, 6 blocks; 64x64x12 primary cells, 1714 unique, 0 empty; tail 12240 bytes (1020 x 12-byte records) |
+| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1 verified, packed 97, unpacked 49176, 5 blocks; 64x64x12 primary cells, 2 unique, 0 empty; tail 24 bytes (2 x 12-byte records) |
+| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1 verified, packed 12653, unpacked 56172, 5 blocks; 64x64x12 primary cells, 1784 unique, 0 empty; tail 7020 bytes (585 x 12-byte records) |
+| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1 verified, packed 1760, unpacked 51636, 5 blocks; 64x64x12 primary cells, 315 unique, 0 empty; tail 2484 bytes (207 x 12-byte records) |
+| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1 verified, packed 11642, unpacked 56328, 5 blocks; 64x64x12 primary cells, 1043 unique, 0 empty; tail 7176 bytes (598 x 12-byte records) |
+| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1 verified, packed 12345, unpacked 57576, 5 blocks; 64x64x12 primary cells, 1519 unique, 0 empty; tail 8424 bytes (702 x 12-byte records) |
+| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1 verified, packed 15583, unpacked 64932, 6 blocks; 64x64x12 primary cells, 1680 unique, 0 empty; tail 15780 bytes (1315 x 12-byte records) |
+| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1 verified, packed 10217, unpacked 52524, 5 blocks; 64x64x12 primary cells, 1200 unique, 0 empty; tail 3372 bytes (281 x 12-byte records) |
+| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1 verified, packed 16715, unpacked 67620, 6 blocks; 64x64x12 primary cells, 2009 unique, 0 empty; tail 18468 bytes (1539 x 12-byte records) |
+| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1 verified, packed 8106, unpacked 56232, 5 blocks; 64x64x12 primary cells, 1061 unique, 0 empty; tail 7080 bytes (590 x 12-byte records) |
+| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1 verified, packed 10909, unpacked 61740, 6 blocks; 64x64x12 primary cells, 1310 unique, 0 empty; tail 12588 bytes (1049 x 12-byte records) |
+| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1 verified, packed 10093, unpacked 54336, 5 blocks; 64x64x12 primary cells, 847 unique, 0 empty; tail 5184 bytes (432 x 12-byte records) |
+| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1 verified, packed 10878, unpacked 63864, 6 blocks; 64x64x12 primary cells, 1334 unique, 0 empty; tail 14712 bytes (1226 x 12-byte records) |
+| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1 verified, packed 5497, unpacked 56388, 5 blocks; 64x64x12 primary cells, 695 unique, 0 empty; tail 7236 bytes (603 x 12-byte records) |
+| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1 verified, packed 7497, unpacked 60012, 5 blocks; 64x64x12 primary cells, 863 unique, 0 empty; tail 10860 bytes (905 x 12-byte records) |
+| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1 verified, packed 14027, unpacked 62088, 6 blocks; 64x64x12 primary cells, 1543 unique, 0 empty; tail 12936 bytes (1078 x 12-byte records) |
+| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1 verified, packed 11464, unpacked 64860, 6 blocks; 64x64x12 primary cells, 1384 unique, 0 empty; tail 15708 bytes (1309 x 12-byte records) |
+| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1 verified, packed 13403, unpacked 68304, 6 blocks; 64x64x12 primary cells, 1540 unique, 0 empty; tail 19152 bytes (1596 x 12-byte records) |
+| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1 verified, packed 11539, unpacked 62964, 6 blocks; 64x64x12 primary cells, 1732 unique, 0 empty; tail 13812 bytes (1151 x 12-byte records) |
+| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1 verified, packed 10980, unpacked 62892, 6 blocks; 64x64x12 primary cells, 1548 unique, 0 empty; tail 13740 bytes (1145 x 12-byte records) |
+| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1 verified, packed 7317, unpacked 57024, 5 blocks; 64x64x12 primary cells, 1195 unique, 0 empty; tail 7872 bytes (656 x 12-byte records) |
+| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1 verified, packed 5885, unpacked 56400, 5 blocks; 64x64x12 primary cells, 1062 unique, 0 empty; tail 7248 bytes (604 x 12-byte records) |
+| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1 verified, packed 12654, unpacked 64836, 6 blocks; 64x64x12 primary cells, 1605 unique, 0 empty; tail 15684 bytes (1307 x 12-byte records) |
+| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1 verified, packed 13273, unpacked 66120, 6 blocks; 64x64x12 primary cells, 1749 unique, 0 empty; tail 16968 bytes (1414 x 12-byte records) |
+| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1 verified, packed 7468, unpacked 58416, 5 blocks; 64x64x12 primary cells, 973 unique, 0 empty; tail 9264 bytes (772 x 12-byte records) |
+| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1 verified, packed 5784, unpacked 55968, 5 blocks; 64x64x12 primary cells, 857 unique, 0 empty; tail 6816 bytes (568 x 12-byte records) |
+| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1 verified, packed 5921, unpacked 54528, 5 blocks; 64x64x12 primary cells, 1139 unique, 0 empty; tail 5376 bytes (448 x 12-byte records) |
+| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1 verified, packed 11853, unpacked 62040, 6 blocks; 64x64x12 primary cells, 1188 unique, 0 empty; tail 12888 bytes (1074 x 12-byte records) |
+| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1 verified, packed 9315, unpacked 58056, 5 blocks; 64x64x12 primary cells, 940 unique, 0 empty; tail 8904 bytes (742 x 12-byte records) |
+| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1 verified, packed 10815, unpacked 61308, 6 blocks; 64x64x12 primary cells, 1316 unique, 0 empty; tail 12156 bytes (1013 x 12-byte records) |
+| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1 verified, packed 11790, unpacked 62412, 6 blocks; 64x64x12 primary cells, 1353 unique, 0 empty; tail 13260 bytes (1105 x 12-byte records) |
+| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1 verified, packed 9864, unpacked 59436, 5 blocks; 64x64x12 primary cells, 1193 unique, 0 empty; tail 10284 bytes (857 x 12-byte records) |
+| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1 verified, packed 13551, unpacked 64572, 6 blocks; 64x64x12 primary cells, 1922 unique, 0 empty; tail 15420 bytes (1285 x 12-byte records) |
+| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1 verified, packed 10730, unpacked 61404, 6 blocks; 64x64x12 primary cells, 1647 unique, 0 empty; tail 12252 bytes (1021 x 12-byte records) |
+| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1 verified, packed 11324, unpacked 62652, 6 blocks; 64x64x12 primary cells, 1634 unique, 0 empty; tail 13500 bytes (1125 x 12-byte records) |
+| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1 verified, packed 13251, unpacked 64032, 6 blocks; 64x64x12 primary cells, 1669 unique, 0 empty; tail 14880 bytes (1240 x 12-byte records) |
+| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1 verified, packed 16801, unpacked 69252, 6 blocks; 64x64x12 primary cells, 2046 unique, 0 empty; tail 20100 bytes (1675 x 12-byte records) |
+| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1 verified, packed 15711, unpacked 68220, 6 blocks; 64x64x12 primary cells, 2097 unique, 0 empty; tail 19068 bytes (1589 x 12-byte records) |
+| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1 verified, packed 11689, unpacked 59736, 5 blocks; 64x64x12 primary cells, 1599 unique, 0 empty; tail 10584 bytes (882 x 12-byte records) |
+| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1 verified, packed 8716, unpacked 60360, 5 blocks; 64x64x12 primary cells, 1133 unique, 0 empty; tail 11208 bytes (934 x 12-byte records) |
+| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1 verified, packed 13725, unpacked 66936, 6 blocks; 64x64x12 primary cells, 1478 unique, 0 empty; tail 17784 bytes (1482 x 12-byte records) |
+| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1 verified, packed 13635, unpacked 66444, 6 blocks; 64x64x12 primary cells, 1659 unique, 0 empty; tail 17292 bytes (1441 x 12-byte records) |
+| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1 verified, packed 21059, unpacked 72396, 6 blocks; 64x64x12 primary cells, 2880 unique, 0 empty; tail 23244 bytes (1937 x 12-byte records) |
+| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1 verified, packed 17570, unpacked 70920, 6 blocks; 64x64x12 primary cells, 2046 unique, 0 empty; tail 21768 bytes (1814 x 12-byte records) |
+| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1 verified, packed 16453, unpacked 70656, 6 blocks; 64x64x12 primary cells, 1935 unique, 0 empty; tail 21504 bytes (1792 x 12-byte records) |
+| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1 verified, packed 11085, unpacked 60660, 5 blocks; 64x64x12 primary cells, 1644 unique, 0 empty; tail 11508 bytes (959 x 12-byte records) |
+| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1 verified, packed 6924, unpacked 52860, 5 blocks; 64x64x12 primary cells, 1002 unique, 0 empty; tail 3708 bytes (309 x 12-byte records) |
 
 ## Mission inventory
 
