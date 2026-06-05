@@ -383,13 +383,13 @@ impl AssetReport {
         );
 
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
-        markdown.push_str("These rows compare top-ranked sprite-like filename families using aggregate ratios and bucket sets only. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
-        markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Conservative note |\n|---|---|---|---|---|---|---|\n");
+        markdown.push_str("These rows compare the top-ranked sprite-like filename-family candidates using aggregate ratios and bucket sets only. Output is capped to the top three selected families to avoid noisy all-pairs listings. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
+        markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Strongest shared compatibility clues | Strongest distinguishing clues | Conservative note |\n|---|---|---|---|---|---|---|---|---|\n");
         append_rows_or_empty(
             &mut markdown,
             &self.tab_family_comparison_rows,
             "no aggregate TAB/sprite family comparisons available",
-            7,
+            9,
         );
 
         markdown.push_str("\n## Mission inventory\n\n");
@@ -525,6 +525,8 @@ struct TabFamilyComparisonSummary {
     overlapping_common_buckets: Vec<u32>,
     left_distinct_common_buckets: Vec<u32>,
     right_distinct_common_buckets: Vec<u32>,
+    shared_compatibility_clues: Vec<String>,
+    distinguishing_clues: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1633,7 +1635,7 @@ fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> 
         .into_iter()
         .map(|summary| {
             format!(
-                "| `{}` vs `{}` | {} | {} | {} | {} | {} | {} |",
+                "| `{}` vs `{}` | {} | {} | {} | {} | {} | {} | {} | {} |",
                 summary.left_family,
                 summary.right_family,
                 format_tab_family_ratio_differences(&summary.metadata_differences),
@@ -1641,6 +1643,8 @@ fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> 
                 format_tab_family_progression_difference(&summary),
                 format_tab_family_entropy_comparison(&summary),
                 format_tab_family_bucket_comparison(&summary),
+                format_clue_list(&summary.shared_compatibility_clues),
+                format_clue_list(&summary.distinguishing_clues),
                 "aggregate comparison only; compatibility clues do not decode or prove family semantics"
             )
         })
@@ -1651,14 +1655,30 @@ fn tab_family_comparison_summaries(
     tab_analyses: &[TabBankReportAnalysis],
 ) -> Vec<TabFamilyComparisonSummary> {
     let rankings = tab_family_ranking_summaries(tab_analyses);
+    let selected = rankings
+        .iter()
+        .filter(|summary| is_sprite_like_family_candidate(summary))
+        .take(3)
+        .collect::<Vec<_>>();
+
     let mut comparisons = Vec::new();
-    if let (Some(hspr), Some(mspr)) = (
-        rankings.iter().find(|summary| summary.family == "HSPR"),
-        rankings.iter().find(|summary| summary.family == "MSPR"),
-    ) {
-        comparisons.push(compare_tab_families(hspr, mspr));
+    for left_index in 0..selected.len() {
+        for right_index in left_index + 1..selected.len() {
+            comparisons.push(compare_tab_families(
+                selected[left_index],
+                selected[right_index],
+            ));
+        }
     }
     comparisons
+}
+
+fn is_sprite_like_family_candidate(summary: &TabFamilyRankingSummary) -> bool {
+    summary.family != "SOUND"
+        && summary.family != "OTHER"
+        && (summary.metadata_support_score() > 0
+            || summary.command_stream_chunks > 0
+            || summary.raw_chunks > 0)
 }
 
 fn compare_tab_families(
@@ -1688,6 +1708,21 @@ fn compare_tab_families(
     let overlapping_common_buckets = sorted_intersection(&left_buckets, &right_buckets);
     let left_distinct_common_buckets = sorted_difference(&left_buckets, &right_buckets);
     let right_distinct_common_buckets = sorted_difference(&right_buckets, &left_buckets);
+    let shared_compatibility_clues = shared_tab_family_clues(
+        left,
+        right,
+        &metadata_differences,
+        &classifier_differences,
+        &overlapping_common_buckets,
+        equal_run_archive_ratio_delta,
+        repeated_pattern_archive_ratio_delta,
+    );
+    let distinguishing_clues = distinguishing_tab_family_clues(
+        left,
+        right,
+        &metadata_differences,
+        &classifier_differences,
+    );
 
     TabFamilyComparisonSummary {
         left_family: left.family,
@@ -1701,7 +1736,102 @@ fn compare_tab_families(
         overlapping_common_buckets,
         left_distinct_common_buckets,
         right_distinct_common_buckets,
+        shared_compatibility_clues,
+        distinguishing_clues,
     }
+}
+
+fn shared_tab_family_clues(
+    left: &TabFamilyRankingSummary,
+    right: &TabFamilyRankingSummary,
+    metadata_differences: &[TabFamilyRatioDifference],
+    classifier_differences: &[TabFamilyRatioDifference],
+    overlapping_common_buckets: &[u32],
+    equal_run_archive_ratio_delta: i32,
+    repeated_pattern_archive_ratio_delta: i32,
+) -> Vec<String> {
+    let mut clues = Vec::new();
+    let shared_metadata = metadata_differences
+        .iter()
+        .filter(|difference| difference.left_per_mille > 0 && difference.right_per_mille > 0)
+        .min_by_key(|difference| difference.delta_per_mille.abs());
+    if let Some(difference) = shared_metadata {
+        clues.push(format!(
+            "shared candidate metadata-shape `{}` at {} vs {} per mille",
+            difference.label, difference.left_per_mille, difference.right_per_mille
+        ));
+    }
+
+    if !overlapping_common_buckets.is_empty() {
+        clues.push(format!(
+            "overlapping common-size buckets [{}]",
+            format_bucket_lens(overlapping_common_buckets)
+        ));
+    }
+
+    if equal_run_archive_ratio_delta.abs() <= 100
+        && repeated_pattern_archive_ratio_delta.abs() <= 100
+    {
+        clues.push("similar aggregate chunk-length progression support".to_string());
+    }
+
+    if let Some(difference) = classifier_differences
+        .iter()
+        .min_by_key(|difference| difference.delta_per_mille.abs())
+        .filter(|difference| difference.delta_per_mille.abs() <= 100)
+    {
+        clues.push(format!(
+            "similar `{}` classifier ratio at {} vs {} per mille",
+            difference.label, difference.left_per_mille, difference.right_per_mille
+        ));
+    }
+
+    if clues.is_empty() {
+        clues.push(format!(
+            "both families are parsed sprite-like aggregate candidates with {} and {} chunks",
+            left.total_chunks, right.total_chunks
+        ));
+    }
+    clues.truncate(3);
+    clues
+}
+
+fn distinguishing_tab_family_clues(
+    left: &TabFamilyRankingSummary,
+    right: &TabFamilyRankingSummary,
+    metadata_differences: &[TabFamilyRatioDifference],
+    classifier_differences: &[TabFamilyRatioDifference],
+) -> Vec<String> {
+    let mut clues = Vec::new();
+    if let Some(difference) = metadata_differences.first() {
+        clues.push(format!(
+            "metadata clue `{}` differs by {:+} per mille",
+            difference.label, difference.delta_per_mille
+        ));
+    }
+    if let Some(difference) = classifier_differences.first() {
+        clues.push(format!(
+            "classifier clue `{}` differs by {:+} per mille",
+            difference.label, difference.delta_per_mille
+        ));
+    }
+
+    let entropy_mid_delta = signed_delta_per_mille(
+        ((left.min_entropy_milli_bits + left.max_entropy_milli_bits) / 2) as usize,
+        ((right.min_entropy_milli_bits + right.max_entropy_milli_bits) / 2) as usize,
+    );
+    if entropy_mid_delta.abs() >= 500 {
+        clues.push(format!(
+            "chunk-size entropy midpoint differs by {:+.3} bits",
+            entropy_mid_delta as f32 / 1000.0
+        ));
+    }
+
+    if clues.is_empty() {
+        clues.push("no single strong distinguishing aggregate clue selected".to_string());
+    }
+    clues.truncate(3);
+    clues
 }
 
 fn compare_metadata_ratios(
@@ -1846,6 +1976,14 @@ fn format_tab_family_bucket_comparison(summary: &TabFamilyComparisonSummary) -> 
         summary.right_family,
         format_bucket_lens(&summary.right_distinct_common_buckets)
     )
+}
+
+fn format_clue_list(clues: &[String]) -> String {
+    if clues.is_empty() {
+        return "no aggregate clues selected".to_string();
+    }
+
+    clues.join("; ")
 }
 
 fn format_bucket_lens(lengths: &[u32]) -> String {
@@ -2139,7 +2277,60 @@ mod tests {
         assert!(joined.contains("likely RLE/command-stream chunk candidate"));
         assert!(joined.contains("equal-size run archive-ratio delta"));
         assert!(joined.contains("overlap"));
+        assert!(joined.contains("shared") || joined.contains("similar"));
+        assert!(joined.contains("distinguishing") || joined.contains("differs by"));
         assert!(joined.contains("aggregate comparison only"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn selects_top_sprite_like_family_comparisons_without_all_pairs_noise() {
+        let hspr = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([12, 16, 1, 1], 96),
+                chunk_with_prefix([12, 16, 1, 1], 96),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let font = make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 0, 0], 64),
+                chunk_with_prefix([8, 12, 0, 0], 64),
+                chunk_with_prefix([8, 12, 0, 0], 64),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![
+                chunk_with_prefix([97, 116, 0, 0], 64),
+                chunk_with_prefix([97, 116, 0, 0], 64),
+                chunk_with_prefix([97, 116, 0, 0], 64),
+                chunk_with_prefix([97, 116, 0, 0], 64),
+            ],
+        );
+
+        let rows = super::format_tab_family_comparison_rows(&[hspr, mspr, font, sound]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 3);
+        assert!(joined.contains("`HSPR` vs `MSPR`") || joined.contains("`MSPR` vs `HSPR`"));
+        assert!(joined.contains("`HSPR` vs `FONT`") || joined.contains("`FONT` vs `HSPR`"));
+        assert!(joined.contains("`MSPR` vs `FONT`") || joined.contains("`FONT` vs `MSPR`"));
+        assert!(!joined.contains("SOUND` vs"));
+        assert!(joined.contains("shared candidate") || joined.contains("similar aggregate"));
+        assert!(joined.contains("metadata clue") || joined.contains("classifier clue"));
         assert!(!joined.contains("f0 00"));
     }
 
