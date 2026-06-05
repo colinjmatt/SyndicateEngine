@@ -102,13 +102,14 @@ impl AssetReport {
                 if let Ok(data) = fs::read(path) {
                     let analysis = BlockGraphicsAnalysis::analyze_file_bytes(&data);
                     block_graphics_rows.push(format!(
-                        "| `{}` | {} | {} | {} | {} | {} |",
+                        "| `{}` | {} | {} | {} | {} | {} | {} |",
                         display_relative(root, path),
                         size,
                         analysis.container_label(),
                         analysis.decoded_len,
                         format_block_byte_summary(&analysis),
-                        format_block_record_candidates(&analysis)
+                        format_block_record_candidates(&analysis),
+                        format_block_layout_probes(&analysis)
                     ));
                     block_analyses.push((display_relative(root, path), analysis));
                 }
@@ -333,13 +334,13 @@ impl AssetReport {
         );
 
         markdown.push_str("\n## Block/tile graphics container candidates\n\n");
-        markdown.push_str("These diagnostics inspect BLK-like containers using RNC status, decoded length, aggregate byte statistics, and plausible fixed-size indexed-pixel record counts only. They do not include pixel previews or byte dumps. Candidate dimensions are provisional and not yet proven render layouts.\n\n");
-        markdown.push_str("| File | Bytes | Container | Decoded bytes | Aggregate byte summary | Fixed-size record candidates |\n|---|---:|---|---:|---|---|\n");
+        markdown.push_str("These diagnostics inspect BLK-like containers using RNC status, decoded length, aggregate byte statistics, plausible fixed-size indexed-pixel record counts, and aggregate layout probes only. They do not include pixel previews or byte dumps. Candidate dimensions, table/header hints, and region labels are provisional and not yet proven render layouts.\n\n");
+        markdown.push_str("| File | Bytes | Container | Decoded bytes | Aggregate byte summary | Fixed-size record candidates | Aggregate layout probes |\n|---|---:|---|---:|---|---|---|\n");
         append_rows_or_empty(
             &mut markdown,
             &self.block_graphics_rows,
             "no BLK-like graphics candidates found",
-            6,
+            7,
         );
 
         markdown.push_str("\n### MAP substrate to block/tile candidate correlations\n\n");
@@ -784,6 +785,70 @@ fn format_block_record_candidates(analysis: &BlockGraphicsAnalysis) -> String {
         .join("; ")
 }
 
+fn format_block_layout_probes(analysis: &BlockGraphicsAnalysis) -> String {
+    if analysis.layout_probes.is_empty() {
+        return "no complete fixed-size probe records".to_string();
+    }
+
+    let best = analysis
+        .best_layout_probe()
+        .map(|probe| format!("best {}", probe.label()))
+        .unwrap_or_else(|| "best unavailable".to_string());
+    let candidates = analysis
+        .layout_probes
+        .iter()
+        .take(3)
+        .map(|probe| {
+            format!(
+                "{}x{} {} records, {}, dup {}, zero% min/med/max {}/{}/{}, unique min/med/max {}/{}/{}, entropy min/med/max {:.3}/{:.3}/{:.3}{}{}",
+                probe.width,
+                probe.height,
+                probe.complete_records,
+                probe.alignment.label(),
+                probe.duplicate_records,
+                probe.record_zero_percent.min,
+                probe.record_zero_percent.median,
+                probe.record_zero_percent.max,
+                probe.record_unique_values.min,
+                probe.record_unique_values.median,
+                probe.record_unique_values.max,
+                probe.record_entropy_milli_bits.min as f32 / 1000.0,
+                probe.record_entropy_milli_bits.median as f32 / 1000.0,
+                probe.record_entropy_milli_bits.max as f32 / 1000.0,
+                format_region_hint("lead", probe.leading_region_hint),
+                format_region_hint("trail", probe.trailing_region_hint)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let low_entropy_note = if analysis.byte_summary.unique_values <= 4
+        && analysis.byte_summary.entropy_milli_bits <= 1000
+    {
+        "; observed very low aggregate unique/entropy values, which may indicate masks, tables, or minimap/block metadata rather than final terrain graphics"
+    } else {
+        ""
+    };
+
+    format!("{best}; probes [{candidates}]{low_entropy_note}")
+}
+
+fn format_region_hint(
+    label: &str,
+    hint: Option<crate::engine::block_decode::BlockRegionHint>,
+) -> String {
+    hint.map(|hint| {
+        format!(
+            ", {label} {} bytes entropy {:.3}, zero {}%, unique {}",
+            hint.bytes,
+            hint.entropy_milli_bits as f32 / 1000.0,
+            hint.zero_percent,
+            hint.unique_values
+        )
+    })
+    .unwrap_or_default()
+}
+
 fn format_block_map_correlation_rows(
     map_analysis: &MapGlobalCorrelationAnalysis,
     block_analyses: &[(String, BlockGraphicsAnalysis)],
@@ -876,6 +941,7 @@ mod tests {
         assert!(markdown.contains("File extension inventory"));
         assert!(markdown.contains("Map inventory"));
         assert!(markdown.contains("Block/tile graphics container candidates"));
+        assert!(markdown.contains("Aggregate layout probes"));
         assert!(markdown.contains("MAP substrate to block/tile candidate correlations"));
     }
 }

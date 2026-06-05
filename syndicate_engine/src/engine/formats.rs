@@ -64,8 +64,12 @@ fn inspect_block_graphics(root: &Path) -> String {
                 .best_aligned_record_candidate()
                 .map(|candidate| candidate.label())
                 .unwrap_or_else(|| "no aligned fixed-size candidate".to_string());
+            let layout = analysis
+                .best_layout_probe()
+                .map(|probe| probe.label())
+                .unwrap_or_else(|| "no aggregate layout probe".to_string());
             return format!(
-                "{name}: {}; decoded {} bytes; {best}; entropy {:.3} bits/byte",
+                "{name}: {}; decoded {} bytes; {best}; layout {layout}; entropy {:.3} bits/byte",
                 analysis.container_label(),
                 analysis.decoded_len,
                 analysis.byte_summary.entropy_milli_bits as f32 / 1000.0
