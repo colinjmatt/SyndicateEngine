@@ -10,7 +10,7 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Isometric tactical city renderer with pan/zoom camera.
 - Four controllable agents with selection and right-click movement orders.
 - Asset indexer that scans `original_assets/` for maps, missions, palettes, sprites, and sounds.
-- Early binary decoding modules for little-endian reads, VGA palettes, and `.TAB`/`.DAT` banks.
+- Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -53,13 +53,13 @@ cd syndicate_engine
 cargo run --bin inspect_assets -- ../original_assets ../docs/generated/asset-report.md
 ```
 
-The report summarizes decoded palettes and `.TAB`/`.DAT` bank variant scores without copying copyrighted asset bytes into the repository.
+The report summarizes verified RNC decompression, decoded palettes, and `.TAB`/`.DAT` bank variant scores without copying copyrighted asset bytes into the repository.
 
 ## Roadmap
 
 1. Decode Bullfrog `.TAB`/`.DAT` sprite banks into runtime textures.
-2. Decode palette files and remap indexed art into RGBA textures.
-3. Reverse-engineer `MAP*.DAT` city data into real tile layers.
+2. Remap indexed art through decoded palettes into RGBA textures.
+3. Reverse-engineer decompressed `MAP*.DAT` city data into real tile layers.
 4. Decode `MISS*.DAT` mission scripts, objectives, spawns, and trigger data.
 5. Add tactical systems: weapons, civilians, vehicles, persuasion, destructibility, and AI.
 6. Add modern UX: scalable UI, remappable controls, saves, accessibility, and mod packs.

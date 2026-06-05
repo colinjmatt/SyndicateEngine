@@ -83,7 +83,7 @@ impl AssetReport {
                         "| `{}` | {} | {} |",
                         display_relative(root, path),
                         size,
-                        block.diagnostic_summary()
+                        rnc_decode_status(&block)
                     ));
                 }
             }
@@ -98,11 +98,34 @@ impl AssetReport {
                             palette.colors.len()
                         ));
                     } else if let Some(block) = RncBlock::parse(&data) {
+                        let status = match block.decompress() {
+                            Ok(decoded) => {
+                                if let Some(palette) = Palette::decode_vga_6bit(&decoded) {
+                                    palette_rows.push(format!(
+                                        "| `{}` | {} | RNC method {} -> {} colours |",
+                                        display_relative(root, path),
+                                        data.len(),
+                                        block.header.method,
+                                        palette.colors.len()
+                                    ));
+                                    format!(
+                                        "decoded to {}-byte VGA palette, unpacked CRC ok",
+                                        decoded.len()
+                                    )
+                                } else {
+                                    format!(
+                                        "verified RNC, unpacked {} bytes; not a 768-byte VGA palette",
+                                        decoded.len()
+                                    )
+                                }
+                            }
+                            Err(err) => format!("decompress error {err:?}"),
+                        };
                         compressed_palette_rows.push(format!(
                             "| `{}` | {} | {} |",
                             display_relative(root, path),
                             data.len(),
-                            block.diagnostic_summary()
+                            format!("{}; {status}", block.diagnostic_summary())
                         ));
                     }
                 }
@@ -269,8 +292,16 @@ fn display_relative(root: &Path, path: &Path) -> String {
 fn compressed_status(path: &Path) -> String {
     fs::read(path)
         .ok()
-        .and_then(|data| RncBlock::parse(&data).map(|block| block.diagnostic_summary()))
+        .and_then(|data| RncBlock::parse(&data).map(|block| rnc_decode_status(&block)))
         .unwrap_or_else(|| "plain/unknown".to_string())
+}
+
+fn rnc_decode_status(block: &RncBlock<'_>) -> String {
+    let decode_status = match block.decompress() {
+        Ok(decoded) => format!("unpacked CRC ok, decoded {} bytes", decoded.len()),
+        Err(err) => format!("decompress error {err:?}"),
+    };
+    format!("{}; {decode_status}", block.diagnostic_summary())
 }
 
 fn append_rows_or_empty(markdown: &mut String, rows: &[String], empty: &str, columns: usize) {

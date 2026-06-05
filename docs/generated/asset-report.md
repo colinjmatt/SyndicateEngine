@@ -7,7 +7,7 @@ This report is generated from local original assets and should not include copyr
 - Maps found: 118
 - Missions found: 500
 - RNC-compressed files found: 284
-- VGA palettes decoded: 0
+- VGA palettes decoded: 14
 - RNC-compressed palette candidates: 16
 - TAB/DAT pairs analyzed: 23
 
@@ -34,124 +34,124 @@ This report is generated from local original assets and should not include copyr
 
 | File | Bytes | Container |
 |---|---:|---|
-| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, status Complete |
-| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, status Complete |
-| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, status Complete |
-| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, status Complete |
-| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, status Complete |
-| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, status Complete |
-| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, status Complete |
-| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1, packed 8845 bytes, unpacked 61368 bytes, status Complete |
-| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, status Complete |
-| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, status Complete |
-| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, status Complete |
-| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, status Complete |
-| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, status Complete |
-| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, status Complete |
-| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, status Complete |
-| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, status Complete |
-| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, status Complete |
-| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, status Complete |
-| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, status Complete |
-| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, status Complete |
-| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, status Complete |
-| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, status Complete |
-| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, status Complete |
-| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, status Complete |
-| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, status Complete |
-| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, status Complete |
-| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, status Complete |
-| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, status Complete |
-| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, status Complete |
-| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, status Complete |
-| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, status Complete |
-| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, status Complete |
-| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, status Complete |
-| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, status Complete |
-| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, status Complete |
-| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, status Complete |
-| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, status Complete |
-| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, status Complete |
-| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, status Complete |
-| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, status Complete |
-| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, status Complete |
-| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, status Complete |
-| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, status Complete |
-| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, status Complete |
-| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, status Complete |
-| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, status Complete |
-| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, status Complete |
-| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, status Complete |
-| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, status Complete |
-| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, status Complete |
-| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, status Complete |
-| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, status Complete |
-| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, status Complete |
-| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, status Complete |
-| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, status Complete |
-| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, status Complete |
-| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, status Complete |
-| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, status Complete |
-| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, status Complete |
-| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, status Complete |
-| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, status Complete |
-| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, status Complete |
-| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, status Complete |
-| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, status Complete |
-| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, status Complete |
-| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, status Complete |
-| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1, packed 9121 bytes, unpacked 61824 bytes, status Complete |
-| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, status Complete |
-| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, status Complete |
-| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, status Complete |
-| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, status Complete |
-| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, status Complete |
-| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, status Complete |
-| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, status Complete |
-| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, status Complete |
-| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, status Complete |
-| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, status Complete |
-| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, status Complete |
-| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, status Complete |
-| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, status Complete |
-| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, status Complete |
-| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, status Complete |
-| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, status Complete |
-| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, status Complete |
-| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, status Complete |
-| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, status Complete |
-| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, status Complete |
-| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, status Complete |
-| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, status Complete |
-| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, status Complete |
-| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, status Complete |
-| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, status Complete |
-| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, status Complete |
-| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, status Complete |
-| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, status Complete |
-| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, status Complete |
-| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, status Complete |
-| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, status Complete |
-| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, status Complete |
-| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, status Complete |
-| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, status Complete |
-| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, status Complete |
-| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, status Complete |
-| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, status Complete |
-| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, status Complete |
-| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, status Complete |
-| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, status Complete |
-| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, status Complete |
-| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, status Complete |
-| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, status Complete |
-| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, status Complete |
-| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, status Complete |
-| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, status Complete |
-| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, status Complete |
-| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, status Complete |
-| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, status Complete |
-| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, status Complete |
-| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, status Complete |
+| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
+| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
+| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
+| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
+| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
+| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
+| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
+| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1, packed 8845 bytes, unpacked 61368 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61368 bytes |
+| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
+| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
+| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
+| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
+| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
+| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
+| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
+| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
+| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
+| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
+| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
+| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
+| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
+| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
+| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
+| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
+| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
+| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
+| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
+| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
+| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
+| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
+| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
+| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
+| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
+| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
+| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
+| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
+| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
+| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
+| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
+| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
+| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
+| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
+| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
+| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
+| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
+| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
+| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
+| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
+| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
+| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
+| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
+| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
+| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
+| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
+| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
+| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
+| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
+| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
+| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
+| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
+| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
+| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
+| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
+| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
+| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
+| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
+| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1, packed 9121 bytes, unpacked 61824 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61824 bytes |
+| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
+| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
+| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
+| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
+| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
+| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
+| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
+| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
+| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
+| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
+| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
+| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
+| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
+| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
+| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
+| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
+| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
+| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
+| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
+| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
+| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
+| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
+| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
+| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
+| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
+| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
+| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
+| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
+| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
+| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
+| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
+| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
+| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
+| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
+| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
+| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
+| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
+| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
+| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
+| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
+| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
+| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
+| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
+| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
+| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
+| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
+| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
+| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
+| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
+| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
+| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
 
 ## Mission inventory
 
@@ -662,316 +662,329 @@ This report is generated from local original assets and should not include copyr
 
 | File | Bytes | RNC header |
 |---|---:|---|
-| `DATADISK/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, status Complete |
-| `DATADISK/DATA/GAME01.DAT` | 1417 | RNC method 1, packed 1399 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME02.DAT` | 7733 | RNC method 1, packed 7715 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME03.DAT` | 7753 | RNC method 1, packed 7735 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME04.DAT` | 6133 | RNC method 1, packed 6115 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME05.DAT` | 9087 | RNC method 1, packed 9069 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME06.DAT` | 8991 | RNC method 1, packed 8973 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME07.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME08.DAT` | 5274 | RNC method 1, packed 5256 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME09.DAT` | 7187 | RNC method 1, packed 7169 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME10.DAT` | 5768 | RNC method 1, packed 5750 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME11.DAT` | 8573 | RNC method 1, packed 8555 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME12.DAT` | 3323 | RNC method 1, packed 3305 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME13.DAT` | 3322 | RNC method 1, packed 3304 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME14.DAT` | 5566 | RNC method 1, packed 5548 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME15.DAT` | 3007 | RNC method 1, packed 2989 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME16.DAT` | 5120 | RNC method 1, packed 5102 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME17.DAT` | 1739 | RNC method 1, packed 1721 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME18.DAT` | 2247 | RNC method 1, packed 2229 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME19.DAT` | 5403 | RNC method 1, packed 5385 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME20.DAT` | 2544 | RNC method 1, packed 2526 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME21.DAT` | 4411 | RNC method 1, packed 4393 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME22.DAT` | 7749 | RNC method 1, packed 7731 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME23.DAT` | 3297 | RNC method 1, packed 3279 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME24.DAT` | 3466 | RNC method 1, packed 3448 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME25.DAT` | 4546 | RNC method 1, packed 4528 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME26.DAT` | 8122 | RNC method 1, packed 8104 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME27.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME28.DAT` | 8279 | RNC method 1, packed 8261 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME29.DAT` | 7073 | RNC method 1, packed 7055 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME30.DAT` | 8853 | RNC method 1, packed 8835 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME31.DAT` | 6319 | RNC method 1, packed 6301 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME32.DAT` | 7880 | RNC method 1, packed 7862 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME33.DAT` | 7546 | RNC method 1, packed 7528 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME34.DAT` | 8570 | RNC method 1, packed 8552 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME35.DAT` | 8737 | RNC method 1, packed 8719 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME36.DAT` | 5498 | RNC method 1, packed 5480 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME37.DAT` | 2845 | RNC method 1, packed 2827 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME38.DAT` | 4545 | RNC method 1, packed 4527 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME39.DAT` | 7198 | RNC method 1, packed 7180 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME40.DAT` | 6746 | RNC method 1, packed 6728 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME41.DAT` | 6174 | RNC method 1, packed 6156 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME42.DAT` | 4601 | RNC method 1, packed 4583 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME43.DAT` | 8656 | RNC method 1, packed 8638 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME44.DAT` | 6688 | RNC method 1, packed 6670 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME45.DAT` | 7045 | RNC method 1, packed 7027 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME46.DAT` | 4276 | RNC method 1, packed 4258 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME47.DAT` | 7350 | RNC method 1, packed 7332 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME48.DAT` | 7708 | RNC method 1, packed 7690 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME49.DAT` | 2687 | RNC method 1, packed 2669 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME50.DAT` | 7186 | RNC method 1, packed 7168 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME90.DAT` | 5526 | RNC method 1, packed 5508 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME91.DAT` | 4463 | RNC method 1, packed 4445 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME92.DAT` | 4875 | RNC method 1, packed 4857 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME93.DAT` | 7091 | RNC method 1, packed 7073 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME94.DAT` | 10361 | RNC method 1, packed 10343 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME95.DAT` | 7814 | RNC method 1, packed 7796 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME96.DAT` | 2784 | RNC method 1, packed 2766 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME97.DAT` | 1642 | RNC method 1, packed 1624 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME98.DAT` | 1107 | RNC method 1, packed 1089 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/GAME99.DAT` | 3196 | RNC method 1, packed 3178 bytes, unpacked 116010 bytes, status Complete |
-| `DATADISK/DATA/HBLK01.DAT` | 117484 | RNC method 1, packed 117466 bytes, unpacked 321664 bytes, status Complete |
-| `DATADISK/DATA/HELE-0.ANI` | 38453 | RNC method 1, packed 38435 bytes, unpacked 104860 bytes, status Complete |
-| `DATADISK/DATA/HFNT01.DAT` | 1047 | RNC method 1, packed 1029 bytes, unpacked 1707 bytes, status Complete |
-| `DATADISK/DATA/HFRA-0.ANI` | 17583 | RNC method 1, packed 17565 bytes, unpacked 71584 bytes, status Complete |
-| `DATADISK/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPOINTER.DAT` | 524 | RNC method 1, packed 506 bytes, unpacked 3962 bytes, status Complete |
-| `DATADISK/DATA/HREQ.DAT` | 2719 | RNC method 1, packed 2701 bytes, unpacked 30720 bytes, status Complete |
-| `DATADISK/DATA/HSPR-0-D.DAT` | 121993 | RNC method 1, packed 121975 bytes, unpacked 355356 bytes, status Complete |
-| `DATADISK/DATA/HSPR-0-D.TAB` | 4641 | RNC method 1, packed 4623 bytes, unpacked 10812 bytes, status Complete |
-| `DATADISK/DATA/HSTA-0.ANI` | 1937 | RNC method 1, packed 1919 bytes, unpacked 3940 bytes, status Complete |
-| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, status Complete |
-| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, status Complete |
-| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, status Complete |
-| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, status Complete |
-| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, status Complete |
-| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, status Complete |
-| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, status Complete |
-| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1, packed 8845 bytes, unpacked 61368 bytes, status Complete |
-| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, status Complete |
-| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, status Complete |
-| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, status Complete |
-| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, status Complete |
-| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, status Complete |
-| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, status Complete |
-| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, status Complete |
-| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, status Complete |
-| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, status Complete |
-| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, status Complete |
-| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, status Complete |
-| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, status Complete |
-| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, status Complete |
-| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, status Complete |
-| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, status Complete |
-| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, status Complete |
-| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, status Complete |
-| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, status Complete |
-| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, status Complete |
-| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, status Complete |
-| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, status Complete |
-| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, status Complete |
-| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, status Complete |
-| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, status Complete |
-| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, status Complete |
-| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, status Complete |
-| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, status Complete |
-| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, status Complete |
-| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, status Complete |
-| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, status Complete |
-| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, status Complete |
-| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, status Complete |
-| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, status Complete |
-| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, status Complete |
-| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, status Complete |
-| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, status Complete |
-| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, status Complete |
-| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, status Complete |
-| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, status Complete |
-| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, status Complete |
-| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, status Complete |
-| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, status Complete |
-| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, status Complete |
-| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, status Complete |
-| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, status Complete |
-| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, status Complete |
-| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, status Complete |
-| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, status Complete |
-| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, status Complete |
-| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, status Complete |
-| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, status Complete |
-| `DATADISK/DATA/MLOGOS.DAT` | 4393 | RNC method 1, packed 4375 bytes, unpacked 40960 bytes, status Complete |
-| `DATADISK/DATA/MMAPBLK.DAT` | 2613 | RNC method 1, packed 2595 bytes, unpacked 140800 bytes, status Complete |
-| `DATADISK/DATA/MMINLOGO.DAT` | 1533 | RNC method 1, packed 1515 bytes, unpacked 10240 bytes, status Complete |
-| `DATADISK/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/SOUND-1.DAT` | 357566 | RNC method 1, packed 357548 bytes, unpacked 443792 bytes, status Complete |
-| `DATADISK/DATA/SOUND-1.TAB` | 129 | RNC method 1, packed 111 bytes, unpacked 448 bytes, status Complete |
-| `SYNDICAT/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, status Complete |
-| `SYNDICAT/DATA/GAME01.DAT` | 1417 | RNC method 1, packed 1399 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME02.DAT` | 7733 | RNC method 1, packed 7715 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME03.DAT` | 7753 | RNC method 1, packed 7735 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME04.DAT` | 6133 | RNC method 1, packed 6115 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME05.DAT` | 8063 | RNC method 1, packed 8045 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME06.DAT` | 8991 | RNC method 1, packed 8973 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME07.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME08.DAT` | 5493 | RNC method 1, packed 5475 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME09.DAT` | 7187 | RNC method 1, packed 7169 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME10.DAT` | 5768 | RNC method 1, packed 5750 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME11.DAT` | 8573 | RNC method 1, packed 8555 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME12.DAT` | 3323 | RNC method 1, packed 3305 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME13.DAT` | 3322 | RNC method 1, packed 3304 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME14.DAT` | 4245 | RNC method 1, packed 4227 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME15.DAT` | 3007 | RNC method 1, packed 2989 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME16.DAT` | 4767 | RNC method 1, packed 4749 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME17.DAT` | 1537 | RNC method 1, packed 1519 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME18.DAT` | 2247 | RNC method 1, packed 2229 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME19.DAT` | 5403 | RNC method 1, packed 5385 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME20.DAT` | 2544 | RNC method 1, packed 2526 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME21.DAT` | 3898 | RNC method 1, packed 3880 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME22.DAT` | 7749 | RNC method 1, packed 7731 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME23.DAT` | 3748 | RNC method 1, packed 3730 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME24.DAT` | 6180 | RNC method 1, packed 6162 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME25.DAT` | 4546 | RNC method 1, packed 4528 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME26.DAT` | 2488 | RNC method 1, packed 2470 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME27.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME28.DAT` | 8279 | RNC method 1, packed 8261 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME29.DAT` | 4655 | RNC method 1, packed 4637 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME30.DAT` | 6614 | RNC method 1, packed 6596 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME31.DAT` | 6319 | RNC method 1, packed 6301 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME32.DAT` | 6622 | RNC method 1, packed 6604 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME33.DAT` | 7546 | RNC method 1, packed 7528 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME34.DAT` | 9175 | RNC method 1, packed 9157 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME35.DAT` | 8737 | RNC method 1, packed 8719 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME36.DAT` | 8486 | RNC method 1, packed 8468 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME37.DAT` | 2945 | RNC method 1, packed 2927 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME38.DAT` | 4545 | RNC method 1, packed 4527 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME39.DAT` | 9514 | RNC method 1, packed 9496 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME40.DAT` | 6746 | RNC method 1, packed 6728 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME41.DAT` | 6174 | RNC method 1, packed 6156 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME42.DAT` | 5187 | RNC method 1, packed 5169 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME43.DAT` | 8656 | RNC method 1, packed 8638 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME44.DAT` | 8419 | RNC method 1, packed 8401 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME45.DAT` | 7045 | RNC method 1, packed 7027 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME46.DAT` | 6900 | RNC method 1, packed 6882 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME47.DAT` | 6449 | RNC method 1, packed 6431 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME48.DAT` | 7708 | RNC method 1, packed 7690 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME49.DAT` | 6792 | RNC method 1, packed 6774 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME50.DAT` | 7186 | RNC method 1, packed 7168 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME90.DAT` | 5526 | RNC method 1, packed 5508 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME91.DAT` | 4353 | RNC method 1, packed 4335 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME92.DAT` | 4296 | RNC method 1, packed 4278 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME93.DAT` | 2656 | RNC method 1, packed 2638 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME94.DAT` | 4396 | RNC method 1, packed 4378 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME95.DAT` | 1693 | RNC method 1, packed 1675 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME96.DAT` | 2754 | RNC method 1, packed 2736 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME97.DAT` | 1642 | RNC method 1, packed 1624 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME98.DAT` | 1107 | RNC method 1, packed 1089 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/GAME99.DAT` | 3196 | RNC method 1, packed 3178 bytes, unpacked 116010 bytes, status Complete |
-| `SYNDICAT/DATA/HBLK01.DAT` | 117484 | RNC method 1, packed 117466 bytes, unpacked 321664 bytes, status Complete |
-| `SYNDICAT/DATA/HELE-0.ANI` | 38453 | RNC method 1, packed 38435 bytes, unpacked 104860 bytes, status Complete |
-| `SYNDICAT/DATA/HFNT01.DAT` | 1047 | RNC method 1, packed 1029 bytes, unpacked 1707 bytes, status Complete |
-| `SYNDICAT/DATA/HFRA-0.ANI` | 17583 | RNC method 1, packed 17565 bytes, unpacked 71584 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPOINTER.DAT` | 524 | RNC method 1, packed 506 bytes, unpacked 3962 bytes, status Complete |
-| `SYNDICAT/DATA/HREQ.DAT` | 2719 | RNC method 1, packed 2701 bytes, unpacked 30720 bytes, status Complete |
-| `SYNDICAT/DATA/HSPR-0.DAT` | 121817 | RNC method 1, packed 121799 bytes, unpacked 355356 bytes, status Complete |
-| `SYNDICAT/DATA/HSPR-0.TAB` | 4641 | RNC method 1, packed 4623 bytes, unpacked 10812 bytes, status Complete |
-| `SYNDICAT/DATA/HSTA-0.ANI` | 1937 | RNC method 1, packed 1919 bytes, unpacked 3940 bytes, status Complete |
-| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, status Complete |
-| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, status Complete |
-| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, status Complete |
-| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, status Complete |
-| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, status Complete |
-| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, status Complete |
-| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, status Complete |
-| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1, packed 9121 bytes, unpacked 61824 bytes, status Complete |
-| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, status Complete |
-| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, status Complete |
-| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, status Complete |
-| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, status Complete |
-| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, status Complete |
-| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, status Complete |
-| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, status Complete |
-| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, status Complete |
-| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, status Complete |
-| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, status Complete |
-| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, status Complete |
-| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, status Complete |
-| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, status Complete |
-| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, status Complete |
-| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, status Complete |
-| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, status Complete |
-| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, status Complete |
-| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, status Complete |
-| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, status Complete |
-| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, status Complete |
-| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, status Complete |
-| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, status Complete |
-| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, status Complete |
-| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, status Complete |
-| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, status Complete |
-| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, status Complete |
-| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, status Complete |
-| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, status Complete |
-| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, status Complete |
-| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, status Complete |
-| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, status Complete |
-| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, status Complete |
-| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, status Complete |
-| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, status Complete |
-| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, status Complete |
-| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, status Complete |
-| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, status Complete |
-| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, status Complete |
-| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, status Complete |
-| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, status Complete |
-| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, status Complete |
-| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, status Complete |
-| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, status Complete |
-| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, status Complete |
-| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, status Complete |
-| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, status Complete |
-| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, status Complete |
-| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, status Complete |
-| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, status Complete |
-| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, status Complete |
-| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, status Complete |
-| `SYNDICAT/DATA/MLOGOS.DAT` | 4393 | RNC method 1, packed 4375 bytes, unpacked 40960 bytes, status Complete |
-| `SYNDICAT/DATA/MMAPBLK.DAT` | 2613 | RNC method 1, packed 2595 bytes, unpacked 140800 bytes, status Complete |
-| `SYNDICAT/DATA/MMINLOGO.DAT` | 1533 | RNC method 1, packed 1515 bytes, unpacked 10240 bytes, status Complete |
-| `SYNDICAT/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/MSPR-0.DAT` | 28707 | RNC method 1, packed 28689 bytes, unpacked 138145 bytes, status Complete |
-| `SYNDICAT/DATA/MSPR-0.TAB` | 3273 | RNC method 1, packed 3255 bytes, unpacked 7080 bytes, status Complete |
-| `SYNDICAT/DATA/SOUND-1.DAT` | 357566 | RNC method 1, packed 357548 bytes, unpacked 443792 bytes, status Complete |
-| `SYNDICAT/DATA/SOUND-1.TAB` | 129 | RNC method 1, packed 111 bytes, unpacked 448 bytes, status Complete |
+| `DATADISK/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 256 bytes |
+| `DATADISK/DATA/GAME01.DAT` | 1417 | RNC method 1, packed 1399 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME02.DAT` | 7733 | RNC method 1, packed 7715 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME03.DAT` | 7753 | RNC method 1, packed 7735 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME04.DAT` | 6133 | RNC method 1, packed 6115 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME05.DAT` | 9087 | RNC method 1, packed 9069 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME06.DAT` | 8991 | RNC method 1, packed 8973 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME07.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME08.DAT` | 5274 | RNC method 1, packed 5256 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME09.DAT` | 7187 | RNC method 1, packed 7169 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME10.DAT` | 5768 | RNC method 1, packed 5750 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME11.DAT` | 8573 | RNC method 1, packed 8555 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME12.DAT` | 3323 | RNC method 1, packed 3305 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME13.DAT` | 3322 | RNC method 1, packed 3304 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME14.DAT` | 5566 | RNC method 1, packed 5548 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME15.DAT` | 3007 | RNC method 1, packed 2989 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME16.DAT` | 5120 | RNC method 1, packed 5102 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME17.DAT` | 1739 | RNC method 1, packed 1721 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME18.DAT` | 2247 | RNC method 1, packed 2229 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME19.DAT` | 5403 | RNC method 1, packed 5385 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME20.DAT` | 2544 | RNC method 1, packed 2526 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME21.DAT` | 4411 | RNC method 1, packed 4393 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME22.DAT` | 7749 | RNC method 1, packed 7731 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME23.DAT` | 3297 | RNC method 1, packed 3279 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME24.DAT` | 3466 | RNC method 1, packed 3448 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME25.DAT` | 4546 | RNC method 1, packed 4528 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME26.DAT` | 8122 | RNC method 1, packed 8104 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME27.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME28.DAT` | 8279 | RNC method 1, packed 8261 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME29.DAT` | 7073 | RNC method 1, packed 7055 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME30.DAT` | 8853 | RNC method 1, packed 8835 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME31.DAT` | 6319 | RNC method 1, packed 6301 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME32.DAT` | 7880 | RNC method 1, packed 7862 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME33.DAT` | 7546 | RNC method 1, packed 7528 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME34.DAT` | 8570 | RNC method 1, packed 8552 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME35.DAT` | 8737 | RNC method 1, packed 8719 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME36.DAT` | 5498 | RNC method 1, packed 5480 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME37.DAT` | 2845 | RNC method 1, packed 2827 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME38.DAT` | 4545 | RNC method 1, packed 4527 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME39.DAT` | 7198 | RNC method 1, packed 7180 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME40.DAT` | 6746 | RNC method 1, packed 6728 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME41.DAT` | 6174 | RNC method 1, packed 6156 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME42.DAT` | 4601 | RNC method 1, packed 4583 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME43.DAT` | 8656 | RNC method 1, packed 8638 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME44.DAT` | 6688 | RNC method 1, packed 6670 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME45.DAT` | 7045 | RNC method 1, packed 7027 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME46.DAT` | 4276 | RNC method 1, packed 4258 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME47.DAT` | 7350 | RNC method 1, packed 7332 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME48.DAT` | 7708 | RNC method 1, packed 7690 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME49.DAT` | 2687 | RNC method 1, packed 2669 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME50.DAT` | 7186 | RNC method 1, packed 7168 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME90.DAT` | 5526 | RNC method 1, packed 5508 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME91.DAT` | 4463 | RNC method 1, packed 4445 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME92.DAT` | 4875 | RNC method 1, packed 4857 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME93.DAT` | 7091 | RNC method 1, packed 7073 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME94.DAT` | 10361 | RNC method 1, packed 10343 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME95.DAT` | 7814 | RNC method 1, packed 7796 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME96.DAT` | 2784 | RNC method 1, packed 2766 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME97.DAT` | 1642 | RNC method 1, packed 1624 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME98.DAT` | 1107 | RNC method 1, packed 1089 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/GAME99.DAT` | 3196 | RNC method 1, packed 3178 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `DATADISK/DATA/HBLK01.DAT` | 117484 | RNC method 1, packed 117466 bytes, unpacked 321664 bytes, 27 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 321664 bytes |
+| `DATADISK/DATA/HELE-0.ANI` | 38453 | RNC method 1, packed 38435 bytes, unpacked 104860 bytes, 9 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 104860 bytes |
+| `DATADISK/DATA/HFNT01.DAT` | 1047 | RNC method 1, packed 1029 bytes, unpacked 1707 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 1707 bytes |
+| `DATADISK/DATA/HFRA-0.ANI` | 17583 | RNC method 1, packed 17565 bytes, unpacked 71584 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 71584 bytes |
+| `DATADISK/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/HPOINTER.DAT` | 524 | RNC method 1, packed 506 bytes, unpacked 3962 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 3962 bytes |
+| `DATADISK/DATA/HREQ.DAT` | 2719 | RNC method 1, packed 2701 bytes, unpacked 30720 bytes, 3 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 30720 bytes |
+| `DATADISK/DATA/HSPR-0-D.DAT` | 121993 | RNC method 1, packed 121975 bytes, unpacked 355356 bytes, 30 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 355356 bytes |
+| `DATADISK/DATA/HSPR-0-D.TAB` | 4641 | RNC method 1, packed 4623 bytes, unpacked 10812 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 10812 bytes |
+| `DATADISK/DATA/HSTA-0.ANI` | 1937 | RNC method 1, packed 1919 bytes, unpacked 3940 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 3940 bytes |
+| `DATADISK/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
+| `DATADISK/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
+| `DATADISK/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
+| `DATADISK/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
+| `DATADISK/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
+| `DATADISK/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
+| `DATADISK/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
+| `DATADISK/DATA/MAP08.DAT` | 8863 | RNC method 1, packed 8845 bytes, unpacked 61368 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61368 bytes |
+| `DATADISK/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
+| `DATADISK/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
+| `DATADISK/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
+| `DATADISK/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
+| `DATADISK/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
+| `DATADISK/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
+| `DATADISK/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
+| `DATADISK/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
+| `DATADISK/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
+| `DATADISK/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
+| `DATADISK/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
+| `DATADISK/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
+| `DATADISK/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
+| `DATADISK/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
+| `DATADISK/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
+| `DATADISK/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
+| `DATADISK/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
+| `DATADISK/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
+| `DATADISK/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
+| `DATADISK/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
+| `DATADISK/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
+| `DATADISK/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
+| `DATADISK/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
+| `DATADISK/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
+| `DATADISK/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
+| `DATADISK/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
+| `DATADISK/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
+| `DATADISK/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
+| `DATADISK/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
+| `DATADISK/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
+| `DATADISK/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
+| `DATADISK/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
+| `DATADISK/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
+| `DATADISK/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
+| `DATADISK/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
+| `DATADISK/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
+| `DATADISK/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
+| `DATADISK/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
+| `DATADISK/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
+| `DATADISK/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
+| `DATADISK/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
+| `DATADISK/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
+| `DATADISK/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
+| `DATADISK/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
+| `DATADISK/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
+| `DATADISK/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
+| `DATADISK/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
+| `DATADISK/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
+| `DATADISK/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
+| `DATADISK/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
+| `DATADISK/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
+| `DATADISK/DATA/MLOGOS.DAT` | 4393 | RNC method 1, packed 4375 bytes, unpacked 40960 bytes, 4 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 40960 bytes |
+| `DATADISK/DATA/MMAPBLK.DAT` | 2613 | RNC method 1, packed 2595 bytes, unpacked 140800 bytes, 13 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 140800 bytes |
+| `DATADISK/DATA/MMINLOGO.DAT` | 1533 | RNC method 1, packed 1515 bytes, unpacked 10240 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 10240 bytes |
+| `DATADISK/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `DATADISK/DATA/SOUND-1.DAT` | 357566 | RNC method 1, packed 357548 bytes, unpacked 443792 bytes, 37 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 443792 bytes |
+| `DATADISK/DATA/SOUND-1.TAB` | 129 | RNC method 1, packed 111 bytes, unpacked 448 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 448 bytes |
+| `SYNDICAT/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 256 bytes |
+| `SYNDICAT/DATA/GAME01.DAT` | 1417 | RNC method 1, packed 1399 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME02.DAT` | 7733 | RNC method 1, packed 7715 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME03.DAT` | 7753 | RNC method 1, packed 7735 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME04.DAT` | 6133 | RNC method 1, packed 6115 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME05.DAT` | 8063 | RNC method 1, packed 8045 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME06.DAT` | 8991 | RNC method 1, packed 8973 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME07.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME08.DAT` | 5493 | RNC method 1, packed 5475 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME09.DAT` | 7187 | RNC method 1, packed 7169 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME10.DAT` | 5768 | RNC method 1, packed 5750 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME11.DAT` | 8573 | RNC method 1, packed 8555 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME12.DAT` | 3323 | RNC method 1, packed 3305 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME13.DAT` | 3322 | RNC method 1, packed 3304 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME14.DAT` | 4245 | RNC method 1, packed 4227 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME15.DAT` | 3007 | RNC method 1, packed 2989 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME16.DAT` | 4767 | RNC method 1, packed 4749 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME17.DAT` | 1537 | RNC method 1, packed 1519 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME18.DAT` | 2247 | RNC method 1, packed 2229 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME19.DAT` | 5403 | RNC method 1, packed 5385 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME20.DAT` | 2544 | RNC method 1, packed 2526 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME21.DAT` | 3898 | RNC method 1, packed 3880 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME22.DAT` | 7749 | RNC method 1, packed 7731 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME23.DAT` | 3748 | RNC method 1, packed 3730 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME24.DAT` | 6180 | RNC method 1, packed 6162 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME25.DAT` | 4546 | RNC method 1, packed 4528 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME26.DAT` | 2488 | RNC method 1, packed 2470 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME27.DAT` | 5609 | RNC method 1, packed 5591 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME28.DAT` | 8279 | RNC method 1, packed 8261 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME29.DAT` | 4655 | RNC method 1, packed 4637 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME30.DAT` | 6614 | RNC method 1, packed 6596 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME31.DAT` | 6319 | RNC method 1, packed 6301 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME32.DAT` | 6622 | RNC method 1, packed 6604 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME33.DAT` | 7546 | RNC method 1, packed 7528 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME34.DAT` | 9175 | RNC method 1, packed 9157 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME35.DAT` | 8737 | RNC method 1, packed 8719 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME36.DAT` | 8486 | RNC method 1, packed 8468 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME37.DAT` | 2945 | RNC method 1, packed 2927 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME38.DAT` | 4545 | RNC method 1, packed 4527 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME39.DAT` | 9514 | RNC method 1, packed 9496 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME40.DAT` | 6746 | RNC method 1, packed 6728 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME41.DAT` | 6174 | RNC method 1, packed 6156 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME42.DAT` | 5187 | RNC method 1, packed 5169 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME43.DAT` | 8656 | RNC method 1, packed 8638 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME44.DAT` | 8419 | RNC method 1, packed 8401 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME45.DAT` | 7045 | RNC method 1, packed 7027 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME46.DAT` | 6900 | RNC method 1, packed 6882 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME47.DAT` | 6449 | RNC method 1, packed 6431 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME48.DAT` | 7708 | RNC method 1, packed 7690 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME49.DAT` | 6792 | RNC method 1, packed 6774 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME50.DAT` | 7186 | RNC method 1, packed 7168 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME90.DAT` | 5526 | RNC method 1, packed 5508 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME91.DAT` | 4353 | RNC method 1, packed 4335 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME92.DAT` | 4296 | RNC method 1, packed 4278 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME93.DAT` | 2656 | RNC method 1, packed 2638 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME94.DAT` | 4396 | RNC method 1, packed 4378 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME95.DAT` | 1693 | RNC method 1, packed 1675 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME96.DAT` | 2754 | RNC method 1, packed 2736 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME97.DAT` | 1642 | RNC method 1, packed 1624 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME98.DAT` | 1107 | RNC method 1, packed 1089 bytes, unpacked 116010 bytes, 10 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/GAME99.DAT` | 3196 | RNC method 1, packed 3178 bytes, unpacked 116010 bytes, 11 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 116010 bytes |
+| `SYNDICAT/DATA/HBLK01.DAT` | 117484 | RNC method 1, packed 117466 bytes, unpacked 321664 bytes, 27 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 321664 bytes |
+| `SYNDICAT/DATA/HELE-0.ANI` | 38453 | RNC method 1, packed 38435 bytes, unpacked 104860 bytes, 9 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 104860 bytes |
+| `SYNDICAT/DATA/HFNT01.DAT` | 1047 | RNC method 1, packed 1029 bytes, unpacked 1707 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 1707 bytes |
+| `SYNDICAT/DATA/HFRA-0.ANI` | 17583 | RNC method 1, packed 17565 bytes, unpacked 71584 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 71584 bytes |
+| `SYNDICAT/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/HPOINTER.DAT` | 524 | RNC method 1, packed 506 bytes, unpacked 3962 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 3962 bytes |
+| `SYNDICAT/DATA/HREQ.DAT` | 2719 | RNC method 1, packed 2701 bytes, unpacked 30720 bytes, 3 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 30720 bytes |
+| `SYNDICAT/DATA/HSPR-0.DAT` | 121817 | RNC method 1, packed 121799 bytes, unpacked 355356 bytes, 30 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 355356 bytes |
+| `SYNDICAT/DATA/HSPR-0.TAB` | 4641 | RNC method 1, packed 4623 bytes, unpacked 10812 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 10812 bytes |
+| `SYNDICAT/DATA/HSTA-0.ANI` | 1937 | RNC method 1, packed 1919 bytes, unpacked 3940 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 3940 bytes |
+| `SYNDICAT/DATA/MAP01.DAT` | 5406 | RNC method 1, packed 5388 bytes, unpacked 52632 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52632 bytes |
+| `SYNDICAT/DATA/MAP02.DAT` | 11015 | RNC method 1, packed 10997 bytes, unpacked 64476 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64476 bytes |
+| `SYNDICAT/DATA/MAP03.DAT` | 13895 | RNC method 1, packed 13877 bytes, unpacked 66984 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66984 bytes |
+| `SYNDICAT/DATA/MAP04.DAT` | 11218 | RNC method 1, packed 11200 bytes, unpacked 64644 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64644 bytes |
+| `SYNDICAT/DATA/MAP05.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 70128 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70128 bytes |
+| `SYNDICAT/DATA/MAP06.DAT` | 26168 | RNC method 1, packed 26150 bytes, unpacked 81240 bytes, 7 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 81240 bytes |
+| `SYNDICAT/DATA/MAP07.DAT` | 13860 | RNC method 1, packed 13842 bytes, unpacked 60060 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60060 bytes |
+| `SYNDICAT/DATA/MAP08.DAT` | 9139 | RNC method 1, packed 9121 bytes, unpacked 61824 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61824 bytes |
+| `SYNDICAT/DATA/MAP09.DAT` | 154 | RNC method 1, packed 136 bytes, unpacked 49188 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49188 bytes |
+| `SYNDICAT/DATA/MAP10.DAT` | 8079 | RNC method 1, packed 8061 bytes, unpacked 60372 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60372 bytes |
+| `SYNDICAT/DATA/MAP11.DAT` | 8843 | RNC method 1, packed 8825 bytes, unpacked 61668 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61668 bytes |
+| `SYNDICAT/DATA/MAP12.DAT` | 8215 | RNC method 1, packed 8197 bytes, unpacked 60708 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60708 bytes |
+| `SYNDICAT/DATA/MAP13.DAT` | 14798 | RNC method 1, packed 14780 bytes, unpacked 61392 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61392 bytes |
+| `SYNDICAT/DATA/MAP15.DAT` | 115 | RNC method 1, packed 97 bytes, unpacked 49176 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 49176 bytes |
+| `SYNDICAT/DATA/MAP16.DAT` | 12671 | RNC method 1, packed 12653 bytes, unpacked 56172 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56172 bytes |
+| `SYNDICAT/DATA/MAP17.DAT` | 1778 | RNC method 1, packed 1760 bytes, unpacked 51636 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 51636 bytes |
+| `SYNDICAT/DATA/MAP18.DAT` | 11660 | RNC method 1, packed 11642 bytes, unpacked 56328 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56328 bytes |
+| `SYNDICAT/DATA/MAP19.DAT` | 12363 | RNC method 1, packed 12345 bytes, unpacked 57576 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57576 bytes |
+| `SYNDICAT/DATA/MAP20.DAT` | 15601 | RNC method 1, packed 15583 bytes, unpacked 64932 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64932 bytes |
+| `SYNDICAT/DATA/MAP21.DAT` | 10235 | RNC method 1, packed 10217 bytes, unpacked 52524 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52524 bytes |
+| `SYNDICAT/DATA/MAP31.DAT` | 16733 | RNC method 1, packed 16715 bytes, unpacked 67620 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 67620 bytes |
+| `SYNDICAT/DATA/MAP32.DAT` | 8124 | RNC method 1, packed 8106 bytes, unpacked 56232 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56232 bytes |
+| `SYNDICAT/DATA/MAP34.DAT` | 10927 | RNC method 1, packed 10909 bytes, unpacked 61740 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61740 bytes |
+| `SYNDICAT/DATA/MAP35.DAT` | 10111 | RNC method 1, packed 10093 bytes, unpacked 54336 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54336 bytes |
+| `SYNDICAT/DATA/MAP37.DAT` | 10896 | RNC method 1, packed 10878 bytes, unpacked 63864 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 63864 bytes |
+| `SYNDICAT/DATA/MAP38.DAT` | 5515 | RNC method 1, packed 5497 bytes, unpacked 56388 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56388 bytes |
+| `SYNDICAT/DATA/MAP39.DAT` | 7515 | RNC method 1, packed 7497 bytes, unpacked 60012 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60012 bytes |
+| `SYNDICAT/DATA/MAP40.DAT` | 14045 | RNC method 1, packed 14027 bytes, unpacked 62088 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62088 bytes |
+| `SYNDICAT/DATA/MAP41.DAT` | 11482 | RNC method 1, packed 11464 bytes, unpacked 64860 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64860 bytes |
+| `SYNDICAT/DATA/MAP43.DAT` | 13421 | RNC method 1, packed 13403 bytes, unpacked 68304 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68304 bytes |
+| `SYNDICAT/DATA/MAP50.DAT` | 11557 | RNC method 1, packed 11539 bytes, unpacked 62964 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62964 bytes |
+| `SYNDICAT/DATA/MAP51.DAT` | 10998 | RNC method 1, packed 10980 bytes, unpacked 62892 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62892 bytes |
+| `SYNDICAT/DATA/MAP52.DAT` | 7335 | RNC method 1, packed 7317 bytes, unpacked 57024 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 57024 bytes |
+| `SYNDICAT/DATA/MAP53.DAT` | 5903 | RNC method 1, packed 5885 bytes, unpacked 56400 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 56400 bytes |
+| `SYNDICAT/DATA/MAP54.DAT` | 12672 | RNC method 1, packed 12654 bytes, unpacked 64836 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64836 bytes |
+| `SYNDICAT/DATA/MAP55.DAT` | 13291 | RNC method 1, packed 13273 bytes, unpacked 66120 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66120 bytes |
+| `SYNDICAT/DATA/MAP56.DAT` | 7486 | RNC method 1, packed 7468 bytes, unpacked 58416 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58416 bytes |
+| `SYNDICAT/DATA/MAP57.DAT` | 5802 | RNC method 1, packed 5784 bytes, unpacked 55968 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 55968 bytes |
+| `SYNDICAT/DATA/MAP58.DAT` | 5939 | RNC method 1, packed 5921 bytes, unpacked 54528 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 54528 bytes |
+| `SYNDICAT/DATA/MAP60.DAT` | 11871 | RNC method 1, packed 11853 bytes, unpacked 62040 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62040 bytes |
+| `SYNDICAT/DATA/MAP61.DAT` | 9333 | RNC method 1, packed 9315 bytes, unpacked 58056 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 58056 bytes |
+| `SYNDICAT/DATA/MAP62.DAT` | 10833 | RNC method 1, packed 10815 bytes, unpacked 61308 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61308 bytes |
+| `SYNDICAT/DATA/MAP63.DAT` | 11808 | RNC method 1, packed 11790 bytes, unpacked 62412 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62412 bytes |
+| `SYNDICAT/DATA/MAP64.DAT` | 9882 | RNC method 1, packed 9864 bytes, unpacked 59436 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59436 bytes |
+| `SYNDICAT/DATA/MAP65.DAT` | 13569 | RNC method 1, packed 13551 bytes, unpacked 64572 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64572 bytes |
+| `SYNDICAT/DATA/MAP66.DAT` | 10748 | RNC method 1, packed 10730 bytes, unpacked 61404 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 61404 bytes |
+| `SYNDICAT/DATA/MAP67.DAT` | 11342 | RNC method 1, packed 11324 bytes, unpacked 62652 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 62652 bytes |
+| `SYNDICAT/DATA/MAP70.DAT` | 13269 | RNC method 1, packed 13251 bytes, unpacked 64032 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 64032 bytes |
+| `SYNDICAT/DATA/MAP71.DAT` | 16819 | RNC method 1, packed 16801 bytes, unpacked 69252 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 69252 bytes |
+| `SYNDICAT/DATA/MAP72.DAT` | 15729 | RNC method 1, packed 15711 bytes, unpacked 68220 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 68220 bytes |
+| `SYNDICAT/DATA/MAP73.DAT` | 11707 | RNC method 1, packed 11689 bytes, unpacked 59736 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 59736 bytes |
+| `SYNDICAT/DATA/MAP80.DAT` | 8734 | RNC method 1, packed 8716 bytes, unpacked 60360 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60360 bytes |
+| `SYNDICAT/DATA/MAP81.DAT` | 13743 | RNC method 1, packed 13725 bytes, unpacked 66936 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66936 bytes |
+| `SYNDICAT/DATA/MAP82.DAT` | 13653 | RNC method 1, packed 13635 bytes, unpacked 66444 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 66444 bytes |
+| `SYNDICAT/DATA/MAP90.DAT` | 21077 | RNC method 1, packed 21059 bytes, unpacked 72396 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 72396 bytes |
+| `SYNDICAT/DATA/MAP91.DAT` | 17588 | RNC method 1, packed 17570 bytes, unpacked 70920 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70920 bytes |
+| `SYNDICAT/DATA/MAP92.DAT` | 16471 | RNC method 1, packed 16453 bytes, unpacked 70656 bytes, 6 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 70656 bytes |
+| `SYNDICAT/DATA/MAP93.DAT` | 11103 | RNC method 1, packed 11085 bytes, unpacked 60660 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 60660 bytes |
+| `SYNDICAT/DATA/MAP94.DAT` | 6942 | RNC method 1, packed 6924 bytes, unpacked 52860 bytes, 5 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 52860 bytes |
+| `SYNDICAT/DATA/MLOGOS.DAT` | 4393 | RNC method 1, packed 4375 bytes, unpacked 40960 bytes, 4 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 40960 bytes |
+| `SYNDICAT/DATA/MMAPBLK.DAT` | 2613 | RNC method 1, packed 2595 bytes, unpacked 140800 bytes, 13 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 140800 bytes |
+| `SYNDICAT/DATA/MMINLOGO.DAT` | 1533 | RNC method 1, packed 1515 bytes, unpacked 10240 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 10240 bytes |
+| `SYNDICAT/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 768 bytes |
+| `SYNDICAT/DATA/MSPR-0.DAT` | 28707 | RNC method 1, packed 28689 bytes, unpacked 138145 bytes, 12 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 138145 bytes |
+| `SYNDICAT/DATA/MSPR-0.TAB` | 3273 | RNC method 1, packed 3255 bytes, unpacked 7080 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 7080 bytes |
+| `SYNDICAT/DATA/SOUND-1.DAT` | 357566 | RNC method 1, packed 357548 bytes, unpacked 443792 bytes, 37 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 443792 bytes |
+| `SYNDICAT/DATA/SOUND-1.TAB` | 129 | RNC method 1, packed 111 bytes, unpacked 448 bytes, 1 blocks, status Complete, packed CRC ok; unpacked CRC ok, decoded 448 bytes |
 ## Decoded palettes
 
 | File | Bytes | Result |
 |---|---:|---|
-| _none_ | 0 | no compatible palette files found |
+| `DATADISK/DATA/HPAL01.DAT` | 90 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/HPAL02.DAT` | 88 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/HPAL03.DAT` | 90 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/HPAL04.DAT` | 577 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/HPAL05.DAT` | 576 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/HPALETTE.DAT` | 90 | RNC method 1 -> 256 colours |
+| `DATADISK/DATA/MSELECT.PAL` | 679 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPAL01.DAT` | 90 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPAL02.DAT` | 88 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPAL03.DAT` | 90 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPAL04.DAT` | 577 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPAL05.DAT` | 576 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/HPALETTE.DAT` | 90 | RNC method 1 -> 256 colours |
+| `SYNDICAT/DATA/MSELECT.PAL` | 679 | RNC method 1 -> 256 colours |
 
 ## Compressed palette candidates
 
 | File | Bytes | RNC header |
 |---|---:|---|
-| `DATADISK/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, status Complete |
-| `DATADISK/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `DATADISK/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, status Complete |
-| `SYNDICAT/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, status Complete |
+| `DATADISK/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, 1 blocks, status Complete, packed CRC ok; verified RNC, unpacked 256 bytes; not a 768-byte VGA palette |
+| `DATADISK/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `DATADISK/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/COL01.DAT` | 127 | RNC method 1, packed 109 bytes, unpacked 256 bytes, 1 blocks, status Complete, packed CRC ok; verified RNC, unpacked 256 bytes; not a 768-byte VGA palette |
+| `SYNDICAT/DATA/HPAL01.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/HPAL02.DAT` | 88 | RNC method 1, packed 70 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/HPAL03.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/HPAL04.DAT` | 577 | RNC method 1, packed 559 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/HPAL05.DAT` | 576 | RNC method 1, packed 558 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/HPALETTE.DAT` | 90 | RNC method 1, packed 72 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
+| `SYNDICAT/DATA/MSELECT.PAL` | 679 | RNC method 1, packed 661 bytes, unpacked 768 bytes, 1 blocks, status Complete, packed CRC ok; decoded to 768-byte VGA palette, unpacked CRC ok |
 
 ## TAB/DAT bank analysis
 

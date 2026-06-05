@@ -39,33 +39,54 @@ fn inspect_palette(root: &Path, palette_preview: &mut Vec<Rgb8>) -> String {
         root.join("SYNDICAT/DATA/HPALETTE.DAT"),
         root.join("DATADISK/DATA/HPALETTE.DAT"),
     ];
+    let mut fallback = None;
 
     for path in candidates {
         if let Ok(data) = fs::read(&path) {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("palette");
             if let Some(palette) = Palette::decode_vga_6bit(&data) {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("palette");
                 *palette_preview = palette.preview_ramp(32);
                 return format!("{name}: {} VGA colours", palette.colors.len());
             }
             if let Some(block) = RncBlock::parse(&data) {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("palette");
-                return format!("{name}: {}", block.diagnostic_summary());
+                match block.decompress() {
+                    Ok(decoded) => {
+                        if let Some(palette) = Palette::decode_vga_6bit(&decoded) {
+                            *palette_preview = palette.preview_ramp(32);
+                            return format!(
+                                "{name}: RNC method {} verified -> {} VGA colours",
+                                block.header.method,
+                                palette.colors.len()
+                            );
+                        }
+                        fallback = Some(format!(
+                            "{name}: RNC method {} verified -> {} unpacked bytes",
+                            block.header.method,
+                            decoded.len()
+                        ));
+                    }
+                    Err(err) => {
+                        fallback = Some(format!(
+                            "{name}: {}, decompress error {:?}",
+                            block.diagnostic_summary(),
+                            err
+                        ));
+                    }
+                }
+                continue;
             }
-            return format!(
+            fallback = Some(format!(
                 "{}: unsupported palette size {}",
                 path.display(),
                 data.len()
-            );
+            ));
         }
     }
 
-    "palette: not found".to_string()
+    fallback.unwrap_or_else(|| "palette: not found".to_string())
 }
 
 fn inspect_tab_bank(root: &Path) -> String {

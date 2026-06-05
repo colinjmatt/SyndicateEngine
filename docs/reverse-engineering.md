@@ -7,9 +7,15 @@ These notes track observed asset-format behaviour from locally supplied original
 - Candidate files include `COL01.DAT` and `HPALETTE.DAT` under `SYNDICAT/DATA` and `DATADISK/DATA`.
 - The current decoder treats the first 768 bytes as a 256-colour VGA palette with 6-bit RGB channels.
 - The HUD displays a 32-colour ramp sampled from the decoded palette.
-- Current observed palette candidates begin with an `RNC` signature, meaning they are compressed/enveloped rather than direct 768-byte palette payloads.
-- The engine now detects RNC headers and reports packed/unpacked lengths; full RNC decompression is the next requirement before palette payload rendering is complete.
-- The RNC abstraction now exposes packed payload slices, expected unpacked capacity, and complete/truncated/trailing-byte status. Actual method 1/2 decompression is intentionally still unimplemented until verified against known-good fixtures.
+- Current observed palette candidates begin with an `RNC` signature, meaning they are compressed/enveloped rather than direct palette payloads.
+- RNC method-1 decompression is implemented with CRC-16/IBM verification for both packed payloads and unpacked output.
+- `HPALETTE.DAT` decompresses to a 768-byte VGA palette candidate; `COL01.DAT` decompresses to a smaller 256-byte colour/index table and is tracked separately from full VGA palettes.
+
+## RNC containers
+
+- Header fields are big-endian for packed/unpacked lengths and CRCs; payload data begins after the 18-byte header.
+- Method 1 uses LSB-first Huffman/LZ blocks and header byte 17 as the block count. Header byte 16 is retained as leeway/in-place metadata but is not needed for out-of-place decoding.
+- The decoder verifies packed CRC before decompression and unpacked CRC before returning bytes. Method 2 remains unsupported until a clean fixture and implementation plan are available.
 
 ## TAB/DAT banks
 
