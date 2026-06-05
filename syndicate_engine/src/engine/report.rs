@@ -34,6 +34,7 @@ pub struct AssetReport {
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
     tab_rows: Vec<String>,
+    tab_family_ranking_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
     block_cross_container_rows: Vec<String>,
@@ -263,6 +264,7 @@ impl AssetReport {
             palette_rows,
             compressed_palette_rows,
             tab_rows,
+            tab_family_ranking_rows: format_tab_family_ranking_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
             block_cross_container_rows: format_block_cross_container_rows(
@@ -368,6 +370,16 @@ impl AssetReport {
             5,
         );
 
+        markdown.push_str("\n### TAB/sprite family aggregate ranking candidates\n\n");
+        markdown.push_str("These rows rank safely parsed TAB/DAT filename families using non-reconstructable aggregate evidence only: parsed archive counts, classifier totals, candidate metadata-shape support ratios, chunk-length progression support, entropy ranges, and overlapping common chunk-size buckets. The ranking is a prioritization aid for future clean-room decoding, not proof of sprite metadata, rendering, font, sound, or UI semantics.\n\n");
+        markdown.push_str("| Family candidate | Parsed archives | Classifier totals | Candidate metadata-shape support | Progression support | Entropy range | Common bucket overlap | Conservative note |\n|---|---:|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_ranking_rows,
+            "no safely parsed TAB/DAT family rankings available",
+            7,
+        );
+
         markdown.push_str("\n## Mission inventory\n\n");
         markdown.push_str("| File | Bytes | Container |\n|---|---:|---|\n");
         append_rows_or_empty(
@@ -457,6 +469,35 @@ struct TabBankReportAnalysis {
     best_variant: Option<crate::engine::tab_bank::TabVariantScore>,
     archive_bank: Option<TabBank>,
     archive_summary: Option<TabArchiveSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyRankingSummary {
+    family: &'static str,
+    parsed_archives: usize,
+    total_chunks: usize,
+    command_stream_chunks: usize,
+    raw_chunks: usize,
+    unknown_chunks: usize,
+    metadata_shape_supports: Vec<TabFamilyMetadataShapeSupport>,
+    equal_run_archives: usize,
+    repeated_pattern_archives: usize,
+    min_entropy_milli_bits: u32,
+    max_entropy_milli_bits: u32,
+    common_bucket_overlap: Vec<TabFamilyCommonBucketOverlap>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyMetadataShapeSupport {
+    label: &'static str,
+    support_count: usize,
+    per_mille: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyCommonBucketOverlap {
+    len: u32,
+    archive_count: usize,
 }
 
 fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Option<Vec<u8>>) {
@@ -1315,6 +1356,243 @@ fn format_tab_family_relation_rows(tab_analyses: &[TabBankReportAnalysis]) -> Ve
         .collect()
 }
 
+fn format_tab_family_ranking_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
+    tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .map(|summary| {
+            format!(
+                "| `{}` | {} of {} chunks | {} | {} | {} | {} | {} | {} |",
+                summary.family,
+                summary.parsed_archives,
+                summary.total_chunks,
+                format_tab_family_classifier_totals(&summary),
+                format_tab_family_metadata_support(&summary),
+                format_tab_family_progression_support(&summary),
+                format!(
+                    "{:.3}..{:.3} bits",
+                    summary.min_entropy_milli_bits as f32 / 1000.0,
+                    summary.max_entropy_milli_bits as f32 / 1000.0
+                ),
+                format_tab_family_common_bucket_overlap(&summary),
+                "candidate ranking only; aggregate support does not decode sprite metadata or prove family semantics"
+            )
+        })
+        .collect()
+}
+
+fn tab_family_ranking_summaries(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<TabFamilyRankingSummary> {
+    let mut grouped: BTreeMap<&'static str, Vec<&TabArchiveSummary>> = BTreeMap::new();
+    for tab in tab_analyses {
+        if let Some(summary) = tab.archive_summary.as_ref() {
+            grouped
+                .entry(tab_file_family(&tab.path))
+                .or_default()
+                .push(summary);
+        }
+    }
+
+    let mut summaries = grouped
+        .into_iter()
+        .filter_map(|(family, entries)| summarize_tab_family_ranking(family, &entries))
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .metadata_support_score()
+            .cmp(&left.metadata_support_score())
+            .then_with(|| right.progression_score().cmp(&left.progression_score()))
+            .then_with(|| right.total_chunks.cmp(&left.total_chunks))
+            .then_with(|| left.family.cmp(right.family))
+    });
+    summaries
+}
+
+fn summarize_tab_family_ranking(
+    family: &'static str,
+    entries: &[&TabArchiveSummary],
+) -> Option<TabFamilyRankingSummary> {
+    if entries.is_empty() {
+        return None;
+    }
+
+    let parsed_archives = entries.len();
+    let total_chunks = entries
+        .iter()
+        .map(|summary| summary.bank.chunk_count)
+        .sum::<usize>();
+    let command_stream_chunks = sum_family_kind(
+        entries,
+        crate::engine::sprite_decode::SpriteChunkKind::LikelyRleOrCommandStream,
+    );
+    let raw_chunks = sum_family_kind(
+        entries,
+        crate::engine::sprite_decode::SpriteChunkKind::LikelyRawIndexed,
+    );
+    let unknown_chunks = sum_family_kind(
+        entries,
+        crate::engine::sprite_decode::SpriteChunkKind::Unknown,
+    );
+    let mut metadata_shape_supports = entries
+        .iter()
+        .flat_map(|summary| summary.sprite_bank.metadata_shape_probes.iter())
+        .fold(BTreeMap::new(), |mut counts, probe| {
+            *counts.entry(probe.kind.label()).or_insert(0usize) += probe.support_count;
+            counts
+        })
+        .into_iter()
+        .map(|(label, support_count)| TabFamilyMetadataShapeSupport {
+            label,
+            support_count,
+            per_mille: ratio_per_mille(support_count, total_chunks),
+        })
+        .collect::<Vec<_>>();
+    metadata_shape_supports.sort_by(|left, right| {
+        right
+            .support_count
+            .cmp(&left.support_count)
+            .then_with(|| left.label.cmp(right.label))
+    });
+
+    let equal_run_archives = entries
+        .iter()
+        .filter(|summary| summary.bank.longest_equal_len_run.run_chunks >= 2)
+        .count();
+    let repeated_pattern_archives = entries
+        .iter()
+        .filter(|summary| !summary.bank.repeated_len_patterns.is_empty())
+        .count();
+    let min_entropy_milli_bits = entries
+        .iter()
+        .map(|summary| summary.bank.chunk_len_entropy_milli_bits)
+        .min()
+        .unwrap_or(0);
+    let max_entropy_milli_bits = entries
+        .iter()
+        .map(|summary| summary.bank.chunk_len_entropy_milli_bits)
+        .max()
+        .unwrap_or(0);
+    let common_bucket_overlap = family_common_bucket_overlap(entries);
+
+    Some(TabFamilyRankingSummary {
+        family,
+        parsed_archives,
+        total_chunks,
+        command_stream_chunks,
+        raw_chunks,
+        unknown_chunks,
+        metadata_shape_supports,
+        equal_run_archives,
+        repeated_pattern_archives,
+        min_entropy_milli_bits,
+        max_entropy_milli_bits,
+        common_bucket_overlap,
+    })
+}
+
+impl TabFamilyRankingSummary {
+    fn metadata_support_score(&self) -> usize {
+        self.metadata_shape_supports
+            .iter()
+            .map(|support| support.support_count)
+            .sum()
+    }
+
+    fn progression_score(&self) -> usize {
+        self.equal_run_archives + self.repeated_pattern_archives
+    }
+}
+
+fn sum_family_kind(
+    entries: &[&TabArchiveSummary],
+    kind: crate::engine::sprite_decode::SpriteChunkKind,
+) -> usize {
+    entries
+        .iter()
+        .flat_map(|summary| summary.sprite_bank.kind_aggregates.iter())
+        .filter(|aggregate| aggregate.kind == kind)
+        .map(|aggregate| aggregate.count)
+        .sum()
+}
+
+fn family_common_bucket_overlap(
+    entries: &[&TabArchiveSummary],
+) -> Vec<TabFamilyCommonBucketOverlap> {
+    let mut counts = BTreeMap::new();
+    for summary in entries {
+        for bucket in &summary.bank.common_chunk_len_buckets {
+            *counts.entry(bucket.len).or_insert(0usize) += 1;
+        }
+    }
+    let mut overlaps = counts
+        .into_iter()
+        .filter(|(_, archive_count)| *archive_count >= 2 || entries.len() == 1)
+        .map(|(len, archive_count)| TabFamilyCommonBucketOverlap { len, archive_count })
+        .collect::<Vec<_>>();
+    overlaps.sort_by(|left, right| {
+        right
+            .archive_count
+            .cmp(&left.archive_count)
+            .then_with(|| left.len.cmp(&right.len))
+    });
+    overlaps.truncate(5);
+    overlaps
+}
+
+fn format_tab_family_classifier_totals(summary: &TabFamilyRankingSummary) -> String {
+    format!(
+        "command-stream candidates {}, raw candidates {}, unknown candidates {}",
+        summary.command_stream_chunks, summary.raw_chunks, summary.unknown_chunks
+    )
+}
+
+fn format_tab_family_metadata_support(summary: &TabFamilyRankingSummary) -> String {
+    if summary.metadata_shape_supports.is_empty() {
+        return "no bounded candidate metadata-shape support".to_string();
+    }
+
+    summary
+        .metadata_shape_supports
+        .iter()
+        .take(3)
+        .map(|support| {
+            format!(
+                "{} {} chunks ({} per mille)",
+                support.label, support.support_count, support.per_mille
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_tab_family_progression_support(summary: &TabFamilyRankingSummary) -> String {
+    format!(
+        "equal-size runs in {}/{} archives; repeated size-pattern candidates in {}/{} archives",
+        summary.equal_run_archives,
+        summary.parsed_archives,
+        summary.repeated_pattern_archives,
+        summary.parsed_archives
+    )
+}
+
+fn format_tab_family_common_bucket_overlap(summary: &TabFamilyRankingSummary) -> String {
+    if summary.common_bucket_overlap.is_empty() {
+        return "no repeated common-size buckets across parsed archives".to_string();
+    }
+
+    summary
+        .common_bucket_overlap
+        .iter()
+        .map(|overlap| {
+            format!(
+                "{} bytes in {} archives",
+                overlap.len, overlap.archive_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn tab_file_family(path: &str) -> &'static str {
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_uppercase();
     if name.starts_with("HSPR") {
@@ -1459,8 +1737,9 @@ fn append_rows_or_empty(markdown: &mut String, rows: &[String], empty: &str, col
 
 #[cfg(test)]
 mod tests {
-    use super::AssetReport;
+    use super::{AssetReport, TabBankReportAnalysis};
     use crate::engine::sprite_decode::SpriteBankAggregateSummary;
+    use crate::engine::tab_bank::{TabArchive, TabVariantAnalysis};
 
     #[test]
     fn empty_report_still_renders_markdown() {
@@ -1489,5 +1768,78 @@ mod tests {
         assert!(formatted.contains("candidate header-shapes"));
         assert!(formatted.contains("candidate metadata-shapes"));
         assert!(!formatted.contains("ff 00 fe 00"));
+    }
+
+    #[test]
+    fn ranks_tab_families_with_aggregate_only_evidence() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-0.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([32, 24, 0xf0, 0], 128),
+                chunk_with_prefix([32, 24, 0xf0, 0], 128),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([8, 8, 0xf0, 0], 128),
+                chunk_with_prefix([8, 8, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "SYNDICAT/DATA/MSPR-0.TAB",
+            vec![(1..=80).collect::<Vec<u8>>(), (2..=81).collect::<Vec<u8>>()],
+        );
+        let rows = super::format_tab_family_ranking_rows(&[hspr_a, hspr_b, mspr]);
+
+        assert!(rows[0].starts_with("| `HSPR` | 2 of 8 chunks"));
+        assert!(rows[0].contains("candidate leading u8 width/height range"));
+        assert!(rows[0].contains("repeated size-pattern candidates in 2/2 archives"));
+        assert!(rows[0].contains("128 bytes in 2 archives"));
+        assert!(rows.iter().any(|row| row.starts_with("| `MSPR` |")));
+        assert!(!rows.join("\n").contains("f0 00"));
+    }
+
+    #[test]
+    fn renders_empty_tab_family_ranking_section_conservatively() {
+        let report = AssetReport::generate("definitely-not-a-real-asset-dir");
+        let markdown = report.to_markdown();
+
+        assert!(markdown.contains("TAB/sprite family aggregate ranking candidates"));
+        assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
+    }
+
+    fn make_tab_report_analysis(path: &str, chunks: Vec<Vec<u8>>) -> TabBankReportAnalysis {
+        let mut dat = Vec::new();
+        let mut offsets = Vec::new();
+        for chunk in chunks {
+            offsets.push(dat.len() as u32);
+            dat.extend(chunk);
+        }
+        offsets.push(dat.len() as u32);
+        let tab = offsets
+            .iter()
+            .flat_map(|offset| offset.to_le_bytes())
+            .collect::<Vec<_>>();
+        let archive = TabArchive::parse(&tab, dat.clone()).unwrap();
+        let analysis = TabVariantAnalysis::analyze(&tab, dat.len());
+
+        TabBankReportAnalysis {
+            path: path.to_string(),
+            dat_len: dat.len(),
+            best_variant: analysis.best(),
+            archive_bank: Some(archive.bank.clone()),
+            archive_summary: Some(archive.aggregate_summary()),
+        }
+    }
+
+    fn chunk_with_prefix(prefix: [u8; 4], len: usize) -> Vec<u8> {
+        let mut chunk = vec![1; len];
+        chunk[..prefix.len()].copy_from_slice(&prefix);
+        chunk
     }
 }
