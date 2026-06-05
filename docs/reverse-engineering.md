@@ -24,6 +24,7 @@ These notes track observed asset-format behaviour from locally supplied original
 - Remaining decoded bytes form a variable tail. Observed tails are aligned to 12-byte records, suggesting additional map/object records, but those records are not semantically decoded yet.
 - The generated report lists primary-cell uniqueness, empty-cell counts, and tail record counts as aggregate diagnostics only; it does not include asset bytes.
 - The HUD can render an abstract 64x64 cell-signature preview for `MAP01.DAT`. Colours represent frequency-ranked exact 12-byte cell signatures, not decoded terrain types.
+- Press `M` in the prototype to toggle the main world view between the playable hand-authored demo city and the decoded `MAP01.DAT` signature preview. Gameplay/pathfinding still uses the demo tactical grid until the map fields are named.
 
 ## TAB/DAT banks
 

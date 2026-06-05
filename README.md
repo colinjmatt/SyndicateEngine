@@ -26,6 +26,7 @@ Controls:
 - Mouse wheel: zoom
 - `1`-`4`: select agent
 - Right click: send selected agent to a tile
+- `M`: toggle between the playable demo city and an abstract decoded `MAP01.DAT` signature preview
 - `Esc`: quit
 
 ## Project layout

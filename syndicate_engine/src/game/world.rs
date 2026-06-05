@@ -21,9 +21,25 @@ pub struct WorldState {
     selected: usize,
     combat_log: String,
     sim_clock: SimClock,
+    render_mode: MapRenderMode,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MapRenderMode {
+    DemoCity,
+    DecodedSignature,
+}
+
+impl MapRenderMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DemoCity => "demo city",
+            Self::DecodedSignature => "MAP01 signatures",
+        }
+    }
+}
 
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
@@ -40,6 +56,7 @@ impl WorldState {
             selected: 0,
             combat_log: "No contact".to_string(),
             sim_clock: SimClock::default(),
+            render_mode: MapRenderMode::DemoCity,
         }
     }
 
@@ -48,6 +65,7 @@ impl WorldState {
             std::process::exit(0);
         }
         self.camera.update(real_dt);
+        self.update_render_controls();
         self.update_sim_controls();
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
@@ -94,6 +112,21 @@ impl WorldState {
         }
         for hostile in &mut self.hostiles {
             hostile.tick(dt);
+        }
+    }
+
+    fn update_render_controls(&mut self) {
+        if is_key_pressed(KeyCode::M) {
+            if self.assets.diagnostics().map_preview.is_none() {
+                self.combat_log = "MAP signature preview unavailable".to_string();
+                return;
+            }
+
+            self.render_mode = match self.render_mode {
+                MapRenderMode::DemoCity => MapRenderMode::DecodedSignature,
+                MapRenderMode::DecodedSignature => MapRenderMode::DemoCity,
+            };
+            self.combat_log = format!("View mode: {}", self.render_mode.label());
         }
     }
 
@@ -222,7 +255,16 @@ impl WorldState {
     }
 
     pub fn draw(&self) {
-        self.map.draw(&self.camera);
+        match self.render_mode {
+            MapRenderMode::DemoCity => self.map.draw(&self.camera),
+            MapRenderMode::DecodedSignature => {
+                if let Some(preview) = self.assets.diagnostics().map_preview.as_ref() {
+                    self.map.draw_signature_preview(&self.camera, preview);
+                } else {
+                    self.map.draw(&self.camera);
+                }
+            }
+        }
         for agent in &self.agents {
             if agent.selected {
                 self.map.draw_path(&self.camera, &agent.path, agent.color);
@@ -242,7 +284,11 @@ impl WorldState {
             self.agents[self.selected].name,
             &self.agents[self.selected].order_summary(),
             &self.combat_log,
-            &self.sim_clock.label(),
+            &format!(
+                "{} | view {}",
+                self.sim_clock.label(),
+                self.render_mode.label()
+            ),
         );
         draw_minimap(&self.agents);
     }

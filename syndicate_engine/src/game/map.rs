@@ -1,6 +1,7 @@
 use crate::engine::{
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
+    map_decode::MapSignaturePreview,
     palette,
 };
 use crate::game::pathfinding::GridPos;
@@ -134,5 +135,40 @@ impl TacticalMap {
                 draw_iso_tile(center, color, Color::new(0.02, 0.025, 0.03, 0.75));
             }
         }
+    }
+
+    pub fn draw_signature_preview(&self, camera: &CameraRig, preview: &MapSignaturePreview) {
+        for y in 0..preview.height {
+            for x in 0..preview.width {
+                let class = preview.cell(x, y).unwrap_or(0);
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, 0.0));
+                draw_iso_tile(
+                    center,
+                    signature_tile_color(class),
+                    Color::new(0.01, 0.012, 0.016, 0.55),
+                );
+            }
+        }
+    }
+}
+
+fn signature_tile_color(class: u8) -> Color {
+    match class {
+        0 => Color::from_rgba(18, 20, 27, 255),
+        1 => Color::from_rgba(58, 105, 147, 255),
+        2 => Color::from_rgba(74, 137, 92, 255),
+        3 => Color::from_rgba(157, 126, 62, 255),
+        4 => Color::from_rgba(130, 86, 156, 255),
+        5 => Color::from_rgba(158, 79, 80, 255),
+        6 => Color::from_rgba(64, 150, 150, 255),
+        7 => Color::from_rgba(180, 180, 92, 255),
+        8 => Color::from_rgba(99, 105, 190, 255),
+        9 => Color::from_rgba(190, 120, 70, 255),
+        10 => Color::from_rgba(120, 170, 105, 255),
+        11 => Color::from_rgba(170, 105, 150, 255),
+        12 => Color::from_rgba(95, 145, 190, 255),
+        13 => Color::from_rgba(190, 95, 120, 255),
+        14 => Color::from_rgba(130, 150, 80, 255),
+        _ => Color::from_rgba(205, 205, 205, 255),
     }
 }
