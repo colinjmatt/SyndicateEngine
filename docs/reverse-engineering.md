@@ -23,6 +23,7 @@ These notes track observed asset-format behaviour from locally supplied original
 - The first stable decoded structure is a `64 * 64 * 12 = 49152` byte primary cell section. The analyzer treats each 12-byte cell conservatively as three little-endian 32-bit words until the fields are named.
 - Remaining decoded bytes form a variable tail. Observed tails are aligned to 12-byte records, suggesting additional map/object records, but those records are not semantically decoded yet.
 - The generated report lists primary-cell uniqueness, empty-cell counts, and tail record counts as aggregate diagnostics only; it does not include asset bytes.
+- The HUD can render an abstract 64x64 cell-signature preview for `MAP01.DAT`. Colours represent frequency-ranked exact 12-byte cell signatures, not decoded terrain types.
 
 ## TAB/DAT banks
 

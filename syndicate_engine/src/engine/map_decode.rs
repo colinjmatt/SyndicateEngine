@@ -5,7 +5,7 @@
 //! payload with a `64 * 64 * 12` primary cell section followed by a variable-size
 //! tail that is also aligned to 12-byte records.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::rnc::{RncBlock, RncError};
 
@@ -14,6 +14,7 @@ pub const MAP_HEIGHT_CANDIDATE: usize = 64;
 pub const MAP_CELL_BYTES: usize = 12;
 pub const MAP_CELL_COUNT: usize = MAP_WIDTH_CANDIDATE * MAP_HEIGHT_CANDIDATE;
 pub const MAP_PRIMARY_SECTION_LEN: usize = MAP_CELL_COUNT * MAP_CELL_BYTES;
+pub const MAP_SIGNATURE_PREVIEW_CLASSES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapDatAnalysis {
@@ -37,6 +38,7 @@ pub struct MapPayloadAnalysis {
     pub len: usize,
     pub primary_grid: Option<MapPrimaryGridAnalysis>,
     pub tail: MapTailAnalysis,
+    pub signature_preview: Option<MapSignaturePreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +70,16 @@ pub struct MapTailAnalysis {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapCellRecord {
     pub words: [u32; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapSignaturePreview {
+    pub width: usize,
+    pub height: usize,
+    pub cells: Vec<u8>,
+    pub visual_classes: usize,
+    pub unique_signatures: usize,
+    pub dominant_signature_cells: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,15 +128,27 @@ impl MapDatAnalysis {
 impl MapPayloadAnalysis {
     pub fn short_label(&self) -> String {
         if let Some(grid) = &self.primary_grid {
+            let preview = self
+                .signature_preview
+                .as_ref()
+                .map(|preview| {
+                    format!(
+                        "; preview {} classes, dominant {}%",
+                        preview.visual_classes,
+                        preview.dominant_coverage_percent()
+                    )
+                })
+                .unwrap_or_default();
             format!(
-                "{}x{}x{} primary cells, {} unique, {} empty; tail {} bytes ({} x 12-byte records)",
+                "{}x{}x{} primary cells, {} unique, {} empty; tail {} bytes ({} x 12-byte records){}",
                 grid.width,
                 grid.height,
                 grid.bytes_per_cell,
                 grid.unique_cells,
                 grid.empty_cells,
                 self.tail.len,
-                self.tail.record_count_12
+                self.tail.record_count_12,
+                preview
             )
         } else {
             format!(
@@ -132,6 +156,22 @@ impl MapPayloadAnalysis {
                 self.len, MAP_PRIMARY_SECTION_LEN
             )
         }
+    }
+}
+
+impl MapSignaturePreview {
+    pub fn cell(&self, x: usize, y: usize) -> Option<u8> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        self.cells.get(y * self.width + x).copied()
+    }
+
+    pub fn dominant_coverage_percent(&self) -> u8 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+        ((self.dominant_signature_cells * 100 + self.cells.len() / 2) / self.cells.len()) as u8
     }
 }
 
@@ -161,6 +201,7 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
                 aligned_to_cell_record: false,
                 record_count_12: 0,
             },
+            signature_preview: None,
         };
     }
 
@@ -212,13 +253,65 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             aligned_to_cell_record: tail_len % MAP_CELL_BYTES == 0,
             record_count_12: tail_len / MAP_CELL_BYTES,
         },
+        signature_preview: Some(build_signature_preview(primary)),
+    }
+}
+
+fn build_signature_preview(primary: &[u8]) -> MapSignaturePreview {
+    let mut frequency = BTreeMap::<[u8; MAP_CELL_BYTES], usize>::new();
+    let mut records = Vec::with_capacity(MAP_CELL_COUNT);
+
+    for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
+        let mut record = [0; MAP_CELL_BYTES];
+        record.copy_from_slice(chunk);
+        *frequency.entry(record).or_insert(0) += 1;
+        records.push(record);
+    }
+
+    let mut ranked = frequency
+        .iter()
+        .map(|(&record, &count)| (record, count))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|(left_record, left_count), (right_record, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| left_record.cmp(right_record))
+    });
+
+    let mut class_by_record = BTreeMap::new();
+    for (index, (record, _)) in ranked
+        .iter()
+        .take(MAP_SIGNATURE_PREVIEW_CLASSES.saturating_sub(1))
+        .enumerate()
+    {
+        class_by_record.insert(*record, index as u8 + 1);
+    }
+
+    let cells = records
+        .iter()
+        .map(|record| class_by_record.get(record).copied().unwrap_or(0))
+        .collect::<Vec<_>>();
+    let dominant_signature_cells = ranked.first().map(|(_, count)| *count).unwrap_or(0);
+    let visual_classes = ranked
+        .len()
+        .min(MAP_SIGNATURE_PREVIEW_CLASSES.saturating_sub(1))
+        + usize::from(ranked.len() >= MAP_SIGNATURE_PREVIEW_CLASSES);
+
+    MapSignaturePreview {
+        width: MAP_WIDTH_CANDIDATE,
+        height: MAP_HEIGHT_CANDIDATE,
+        cells,
+        visual_classes,
+        unique_signatures: ranked.len(),
+        dominant_signature_cells,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_PRIMARY_SECTION_LEN, MapCellRecord, analyze_payload,
+        MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_PRIMARY_SECTION_LEN, MAP_SIGNATURE_PREVIEW_CLASSES,
+        MapCellRecord, analyze_payload,
     };
 
     #[test]
@@ -246,6 +339,14 @@ mod tests {
         assert_eq!(analysis.tail.len, MAP_CELL_BYTES * 2);
         assert!(analysis.tail.aligned_to_cell_record);
         assert_eq!(analysis.tail.record_count_12, 2);
+        let preview = analysis.signature_preview.unwrap();
+        assert_eq!(preview.width, 64);
+        assert_eq!(preview.height, 64);
+        assert_eq!(preview.unique_signatures, 2);
+        assert_eq!(preview.visual_classes, 2);
+        assert_eq!(preview.dominant_signature_cells, MAP_CELL_COUNT - 1);
+        assert_eq!(preview.cell(1, 0), Some(1));
+        assert!(preview.cell(64, 0).is_none());
     }
 
     #[test]
@@ -253,5 +354,22 @@ mod tests {
         let analysis = analyze_payload(&[0; 128]);
         assert!(analysis.primary_grid.is_none());
         assert_eq!(analysis.tail.len, 0);
+        assert!(analysis.signature_preview.is_none());
+    }
+
+    #[test]
+    fn collapses_rare_records_into_preview_class_zero() {
+        let mut payload = vec![0; MAP_PRIMARY_SECTION_LEN];
+        for index in 0..MAP_SIGNATURE_PREVIEW_CLASSES {
+            let start = index * MAP_CELL_BYTES;
+            payload[start..start + 4].copy_from_slice(&(index as u32 + 1).to_le_bytes());
+        }
+
+        let analysis = analyze_payload(&payload);
+        let preview = analysis.signature_preview.unwrap();
+        assert_eq!(preview.unique_signatures, MAP_SIGNATURE_PREVIEW_CLASSES + 1);
+        assert_eq!(preview.visual_classes, MAP_SIGNATURE_PREVIEW_CLASSES);
+        assert_eq!(preview.cell(20, 0), Some(1));
+        assert_eq!(preview.cell(MAP_SIGNATURE_PREVIEW_CLASSES - 1, 0), Some(0));
     }
 }

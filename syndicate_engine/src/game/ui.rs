@@ -1,4 +1,4 @@
-use crate::engine::{assets::AssetIndex, palette_decode::Rgb8};
+use crate::engine::{assets::AssetIndex, map_decode::MapSignaturePreview, palette_decode::Rgb8};
 use macroquad::prelude::*;
 
 pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &str, sim: &str) {
@@ -90,6 +90,84 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
     );
 
     draw_palette_preview(asset_index.diagnostics().palette_preview.as_slice());
+    draw_map_preview(asset_index.diagnostics().map_preview.as_ref());
+}
+
+fn draw_map_preview(preview: Option<&MapSignaturePreview>) {
+    let origin = vec2(612.0, 118.0);
+    draw_text(
+        "MAP01 cell signatures",
+        origin.x,
+        origin.y - 8.0,
+        13.0,
+        LIGHTGRAY,
+    );
+
+    let Some(preview) = preview else {
+        draw_text(
+            "MAP preview unavailable",
+            origin.x,
+            origin.y + 18.0,
+            13.0,
+            DARKGRAY,
+        );
+        return;
+    };
+
+    let scale = 2.0;
+    for y in 0..preview.height {
+        for x in 0..preview.width {
+            let class = preview.cell(x, y).unwrap_or(0);
+            draw_rectangle(
+                origin.x + x as f32 * scale,
+                origin.y + y as f32 * scale,
+                scale,
+                scale,
+                signature_color(class),
+            );
+        }
+    }
+
+    draw_rectangle_lines(
+        origin.x,
+        origin.y,
+        preview.width as f32 * scale,
+        preview.height as f32 * scale,
+        1.0,
+        GRAY,
+    );
+    draw_text(
+        &format!(
+            "{} classes, top {}%",
+            preview.visual_classes,
+            preview.dominant_coverage_percent()
+        ),
+        origin.x,
+        origin.y + preview.height as f32 * scale + 14.0,
+        13.0,
+        LIGHTGRAY,
+    );
+}
+
+fn signature_color(class: u8) -> Color {
+    match class {
+        0 => Color::from_rgba(20, 23, 31, 255),
+        1 => Color::from_rgba(58, 105, 147, 255),
+        2 => Color::from_rgba(74, 137, 92, 255),
+        3 => Color::from_rgba(157, 126, 62, 255),
+        4 => Color::from_rgba(130, 86, 156, 255),
+        5 => Color::from_rgba(158, 79, 80, 255),
+        6 => Color::from_rgba(64, 150, 150, 255),
+        7 => Color::from_rgba(180, 180, 92, 255),
+        8 => Color::from_rgba(99, 105, 190, 255),
+        9 => Color::from_rgba(190, 120, 70, 255),
+        10 => Color::from_rgba(120, 170, 105, 255),
+        11 => Color::from_rgba(170, 105, 150, 255),
+        12 => Color::from_rgba(95, 145, 190, 255),
+        13 => Color::from_rgba(190, 95, 120, 255),
+        14 => Color::from_rgba(130, 150, 80, 255),
+        _ => Color::from_rgba(205, 205, 205, 255),
+    }
 }
 
 fn draw_palette_preview(colors: &[Rgb8]) {

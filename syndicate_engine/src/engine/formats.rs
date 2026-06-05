@@ -3,7 +3,7 @@
 use std::{fs, path::Path};
 
 use crate::engine::{
-    map_decode::MapDatAnalysis,
+    map_decode::{MapDatAnalysis, MapSignaturePreview},
     palette_decode::{Palette, Rgb8},
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
@@ -13,6 +13,7 @@ use crate::engine::{
 #[derive(Debug, Clone, Default)]
 pub struct DecodeDiagnostics {
     pub map_status: String,
+    pub map_preview: Option<MapSignaturePreview>,
     pub palette_status: String,
     pub tab_status: String,
     pub tab_variant_status: String,
@@ -24,8 +25,10 @@ impl DecodeDiagnostics {
     pub fn inspect(root: impl AsRef<Path>) -> Self {
         let root = root.as_ref();
         let mut palette_preview = Vec::new();
+        let (map_status, map_preview) = inspect_map(root);
         Self {
-            map_status: inspect_map(root),
+            map_status,
+            map_preview,
             palette_status: inspect_palette(root, &mut palette_preview),
             tab_status: inspect_tab_bank(root),
             tab_variant_status: inspect_tab_variants(root),
@@ -35,7 +38,7 @@ impl DecodeDiagnostics {
     }
 }
 
-fn inspect_map(root: &Path) -> String {
+fn inspect_map(root: &Path) -> (String, Option<MapSignaturePreview>) {
     let candidates = [
         root.join("SYNDICAT/DATA/MAP01.DAT"),
         root.join("DATADISK/DATA/MAP01.DAT"),
@@ -46,25 +49,32 @@ fn inspect_map(root: &Path) -> String {
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("MAP");
             return match MapDatAnalysis::analyze_file_bytes(&data) {
                 Ok(analysis) => {
+                    let preview = analysis.payload.signature_preview.clone();
                     if let Some(grid) = &analysis.payload.primary_grid {
-                        format!(
-                            "{name}: {}x{}x{} cells, {} unique, tail {} records",
-                            grid.width,
-                            grid.height,
-                            grid.bytes_per_cell,
-                            grid.unique_cells,
-                            analysis.payload.tail.record_count_12
+                        (
+                            format!(
+                                "{name}: {}x{}x{} cells, {} unique, tail {} records",
+                                grid.width,
+                                grid.height,
+                                grid.bytes_per_cell,
+                                grid.unique_cells,
+                                analysis.payload.tail.record_count_12
+                            ),
+                            preview,
                         )
                     } else {
-                        format!("{name}: {}", analysis.payload.short_label())
+                        (
+                            format!("{name}: {}", analysis.payload.short_label()),
+                            preview,
+                        )
                     }
                 }
-                Err(err) => format!("{name}: map decode error {err:?}"),
+                Err(err) => (format!("{name}: map decode error {err:?}"), None),
             };
         }
     }
 
-    "map decode: no MAP*.DAT candidates".to_string()
+    ("map decode: no MAP*.DAT candidates".to_string(), None)
 }
 
 fn inspect_palette(root: &Path, palette_preview: &mut Vec<Rgb8>) -> String {
