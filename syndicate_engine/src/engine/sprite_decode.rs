@@ -4,12 +4,23 @@
 //! not claim to fully decode sprites yet. It classifies byte chunks and extracts
 //! plausible metadata that can guide reverse engineering and future renderers.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SpriteChunkKind {
     Empty,
     LikelyRawIndexed,
     LikelyRleOrCommandStream,
     Unknown,
+}
+
+impl SpriteChunkKind {
+    pub fn conservative_label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty chunk candidate",
+            Self::LikelyRawIndexed => "likely raw indexed chunk candidate",
+            Self::LikelyRleOrCommandStream => "likely RLE/command-stream chunk candidate",
+            Self::Unknown => "unknown chunk candidate",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

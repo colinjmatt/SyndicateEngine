@@ -39,12 +39,15 @@ Observed `.TAB` files are not all the same shape:
 - Some banks look compatible with 32-bit little-endian offsets into paired `.DAT` files.
 - Some files have odd byte lengths or patterns that suggest packed records, 16-bit fields, flags, dimensions, or mixed metadata rather than a plain offset table.
 - The engine now scores 16/24/32-bit little-endian interpretations by valid offset count, unique offset count, and monotonic adjacent pairs.
+- Safely parsed 32-bit TAB/DAT archives now report aggregate-only chunk diagnostics: chunk count, min/median/max chunk size, common chunk-size buckets, chunk-size entropy, duplicate-offset/zero-length candidate counts, first/last offset sanity ranges, exact matches to fixed tile-byte candidates such as 64/256/512/1024/2048/4096 bytes, and aggregate sprite chunk classifier counts. These summaries do not include chunk bytes or render previews.
+- Cross-container probes compare TAB/DAT chunk-size distributions and chunk counts with BLK-like fixed-record candidates. These are compatibility rankings for future investigation only; they do not prove that a TAB/DAT bank is a sprite, tile, font, sound, or map-support format.
 
 Current conservative approach:
 
 1. Use `TabArchive` only when a bank can be parsed safely into bounded chunks.
 2. Use `TabVariantAnalysis` to report which offset width looks most plausible.
-3. Avoid rendering decoded sprites until chunk layout and per-chunk headers are better understood.
+3. Use aggregate summaries and synthetic tests to rank candidate relationships without exposing reconstructable data.
+4. Avoid rendering decoded sprites until chunk layout and per-chunk headers are better understood.
 
 ## Sprite chunks
 

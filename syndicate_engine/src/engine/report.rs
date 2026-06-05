@@ -15,8 +15,7 @@ use crate::engine::{
     },
     palette_decode::Palette,
     rnc::RncBlock,
-    sprite_decode::SpriteChunkInfo,
-    tab_bank::{TabArchive, TabBank, TabVariantAnalysis},
+    tab_bank::{TabArchive, TabArchiveSummary, TabBank, TabBankSummary, TabVariantAnalysis},
 };
 
 #[derive(Debug, Clone)]
@@ -191,27 +190,17 @@ impl AssetReport {
                     let best = analysis.summary();
                     let tab_relative = display_relative(root, path);
                     let archive = TabArchive::parse(&tab, dat.clone());
-                    let archive_summary = TabArchive::parse(&tab, dat.clone())
-                        .map(|archive| {
-                            let sprite = archive
-                                .chunk(0)
-                                .map(SpriteChunkInfo::inspect)
-                                .map(|info| info.short_label())
-                                .unwrap_or_else(|| "no first chunk".to_string());
-                            format!(
-                                "{} chunks; {}-{} bytes; {}",
-                                archive.bank.entry_count(),
-                                archive.bank.min_chunk_len().unwrap_or(0),
-                                archive.bank.max_chunk_len().unwrap_or(0),
-                                sprite
-                            )
-                        })
+                    let archive_summary = archive
+                        .as_ref()
+                        .map(|archive| format_tab_archive_summary(&archive.aggregate_summary()))
                         .unwrap_or_else(|| "not parsed as 32-bit archive".to_string());
+                    let archive_summary_data = archive.as_ref().map(TabArchive::aggregate_summary);
                     tab_analyses.push(TabBankReportAnalysis {
                         path: tab_relative.clone(),
                         dat_len: dat.len(),
                         best_variant: analysis.best(),
                         archive_bank: archive.map(|archive| archive.bank),
+                        archive_summary: archive_summary_data,
                     });
 
                     tab_rows.push(format!(
@@ -369,7 +358,7 @@ impl AssetReport {
         );
 
         markdown.push_str("\n### Cross-container aggregate relation probes\n\n");
-        markdown.push_str("These rows compare BLK-like and TAB/DAT containers using decoded/plain lengths, non-reconstructable content hashes, aggregate layout alignment support, duplicate-file status, and chunk-count compatibility only. Matching values are evidence for candidate relationships, not proof of a render format or semantic role.\n\n");
+        markdown.push_str("These rows compare BLK-like and TAB/DAT containers using decoded/plain lengths, non-reconstructable content hashes, aggregate layout alignment support, duplicate-file status, chunk-size distributions, exact candidate byte-size matches, sprite classifier counts, and chunk-count compatibility only. Matching values are evidence for candidate relationships, not proof of a render format or semantic role.\n\n");
         markdown.push_str("| Probe group | Containers | Aggregate relation | Candidate evidence | Conservative note |\n|---|---|---|---|---|\n");
         append_rows_or_empty(
             &mut markdown,
@@ -415,6 +404,7 @@ impl AssetReport {
         }
 
         markdown.push_str("\n## TAB/DAT bank analysis\n\n");
+        markdown.push_str("These diagnostics summarize paired TAB/DAT banks using offset-width scoring, bounded 32-bit archive chunks when safely parsed, chunk-size distributions, offset sanity counts, fixed tile-byte candidate matches, and aggregate sprite chunk classifier counts only. They do not render sprites, expose chunk bytes, or prove final sprite/tile semantics.\n\n");
         markdown.push_str("| TAB file | TAB bytes | Variant score | 32-bit archive summary |\n|---|---:|---|---|\n");
         if self.tab_rows.is_empty() {
             markdown.push_str("| _none_ | 0 | no paired files found | - |\n");
@@ -465,6 +455,7 @@ struct TabBankReportAnalysis {
     dat_len: usize,
     best_variant: Option<crate::engine::tab_bank::TabVariantScore>,
     archive_bank: Option<TabBank>,
+    archive_summary: Option<TabArchiveSummary>,
 }
 
 fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Option<Vec<u8>>) {
@@ -1030,6 +1021,84 @@ fn format_layout_support_rows(block_analyses: &[(String, BlockGraphicsAnalysis)]
         .collect()
 }
 
+fn format_tab_archive_summary(summary: &TabArchiveSummary) -> String {
+    format!(
+        "{}; {}; sprite classifier counts [{}]",
+        format_tab_bank_summary(&summary.bank),
+        format_tab_candidate_size_matches(&summary.bank),
+        format_tab_sprite_kind_counts(summary)
+    )
+}
+
+fn format_tab_bank_summary(summary: &TabBankSummary) -> String {
+    format!(
+        "{} chunks; len min/med/max {}/{}/{} bytes; size entropy {:.3} bits; offsets first/last {}; duplicate offsets {}, zero-length candidates {}; common sizes [{}]",
+        summary.chunk_count,
+        summary.min_chunk_len,
+        summary.median_chunk_len,
+        summary.max_chunk_len,
+        summary.chunk_len_entropy_milli_bits as f32 / 1000.0,
+        format_tab_offset_sanity(summary),
+        summary.duplicate_offset_count,
+        summary.zero_len_chunks,
+        format_tab_common_size_buckets(summary)
+    )
+}
+
+fn format_tab_offset_sanity(summary: &TabBankSummary) -> String {
+    match (summary.first_offset, summary.last_offset) {
+        (Some(first), Some(last)) => {
+            format!("{}..{} of {} DAT bytes", first, last, summary.dat_len)
+        }
+        _ => format!("unavailable of {} DAT bytes", summary.dat_len),
+    }
+}
+
+fn format_tab_common_size_buckets(summary: &TabBankSummary) -> String {
+    if summary.common_chunk_len_buckets.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .common_chunk_len_buckets
+        .iter()
+        .map(|bucket| format!("{}:{}", bucket.len, bucket.count))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_tab_candidate_size_matches(summary: &TabBankSummary) -> String {
+    if summary.exact_candidate_size_matches.is_empty() {
+        return "no exact matches to fixed tile-byte candidates".to_string();
+    }
+
+    let matches = summary
+        .exact_candidate_size_matches
+        .iter()
+        .map(|candidate| {
+            format!(
+                "{} bytes:{} chunks",
+                candidate.bytes_per_chunk, candidate.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("exact fixed tile-byte candidate matches [{matches}]")
+}
+
+fn format_tab_sprite_kind_counts(summary: &TabArchiveSummary) -> String {
+    if summary.sprite_kind_counts.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .sprite_kind_counts
+        .iter()
+        .map(|entry| format!("{}:{}", entry.kind.conservative_label(), entry.count))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn format_tab_block_relation_rows(
     block_analyses: &[(String, BlockGraphicsAnalysis)],
     tab_analyses: &[TabBankReportAnalysis],
@@ -1061,14 +1130,20 @@ fn format_tab_block_relation_rows(
             }
 
             rows.push(format!(
-                "| TAB/DAT chunk-count compatibility candidate | `{}`, `{}` | {} chunks vs block record candidates [{}] | TAB DAT bytes {}; chunk-size range {}..{}; best variant {} | chunk count compatibility is aggregate-only and does not imply sprite/tile format equivalence |",
+                "| TAB/DAT chunk-count compatibility candidate | `{}`, `{}` | {} chunks vs block record candidates [{}] | TAB DAT bytes {}; {}; best variant {} | chunk count compatibility is aggregate-only and does not imply sprite/tile format equivalence |",
                 tab.path,
                 path,
                 chunk_count,
                 candidates.join(", "),
                 tab.dat_len,
-                bank.min_chunk_len().unwrap_or(0),
-                bank.max_chunk_len().unwrap_or(0),
+                tab.archive_summary
+                    .as_ref()
+                    .map(|summary| format_tab_relation_evidence(&summary.bank))
+                    .unwrap_or_else(|| format!(
+                        "chunk-size range {}..{}",
+                        bank.min_chunk_len().unwrap_or(0),
+                        bank.max_chunk_len().unwrap_or(0)
+                    )),
                 tab.best_variant
                     .map(|score| format!("TAB{}", score.offset_width * 8))
                     .unwrap_or_else(|| "unknown".to_string())
@@ -1076,6 +1151,18 @@ fn format_tab_block_relation_rows(
         }
     }
     rows
+}
+
+fn format_tab_relation_evidence(summary: &TabBankSummary) -> String {
+    format!(
+        "chunk len min/med/max {}/{}/{}; entropy {:.3}; {}; common [{}]",
+        summary.min_chunk_len,
+        summary.median_chunk_len,
+        summary.max_chunk_len,
+        summary.chunk_len_entropy_milli_bits as f32 / 1000.0,
+        format_tab_candidate_size_matches(summary),
+        format_tab_common_size_buckets(summary)
+    )
 }
 
 fn find_block_analysis<'a>(
