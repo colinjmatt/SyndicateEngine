@@ -26,7 +26,8 @@ These notes track observed asset-format behaviour from locally supplied original
 - The HUD can render an abstract 64x64 cell-signature preview for `MAP01.DAT`. Colours represent frequency-ranked exact 12-byte cell signatures, not decoded terrain types.
 - The analyzer now also reports per-word ranges and candidate low-byte lanes (`b0`, `b4`, `b8`) for the three 32-bit words, plus top byte-value counts. These are aggregate field diagnostics only.
 - A gated inferred-layer preview derives low-risk visual channels from dominant byte-lane baselines: word-0 low byte as a surface candidate, word-1 low byte as a detail candidate, word-2 low byte as a reference candidate, and the narrowest varying high byte as a height-like candidate. These labels are deliberately provisional and should not be treated as final terrain/building semantics.
-- Press `M` in the prototype to cycle the main world view between the playable hand-authored demo city, the decoded `MAP01.DAT` signature preview, and the provisional inferred-layer preview. Gameplay/pathfinding still uses the demo tactical grid until the map fields are named.
+- The report now adds evidence-backed field-correlation diagnostics across decoded MAP primary sections: global byte-lane distributions, neighbour-continuity percentages, common value transitions, repeated 2x2/block-like patterns, and conservative height-gradient checks. These diagnostics are intended to rank candidate fields; they are not claims of exact terrain/building semantics.
+- Press `M` in the prototype to cycle the main world view between the playable hand-authored demo city, the decoded `MAP01.DAT` signature preview, the provisional inferred-layer preview, and individual candidate-field explorer views for `surface_index_candidate`, `detail_index_candidate`, `reference_candidate`, and `height_candidate`. Gameplay/pathfinding still uses the demo tactical grid until the map fields are named.
 
 ## TAB/DAT banks
 

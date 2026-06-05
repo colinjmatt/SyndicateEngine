@@ -1,5 +1,7 @@
 use crate::{
-    engine::{assets::AssetIndex, camera::CameraRig, iso::iso_to_grid},
+    engine::{
+        assets::AssetIndex, camera::CameraRig, iso::iso_to_grid, map_decode::MapCandidateField,
+    },
     game::{
         agent::Agent,
         combat::{AttackResult, Combatant, resolve_attack},
@@ -31,14 +33,16 @@ enum MapRenderMode {
     DemoCity,
     DecodedSignature,
     InferredLayer,
+    CandidateField(MapCandidateField),
 }
 
 impl MapRenderMode {
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::DemoCity => "demo city",
-            Self::DecodedSignature => "MAP01 signatures",
-            Self::InferredLayer => "MAP01 inferred layer",
+            Self::DemoCity => "demo city".to_string(),
+            Self::DecodedSignature => "MAP01 signatures".to_string(),
+            Self::InferredLayer => "MAP01 inferred layer".to_string(),
+            Self::CandidateField(field) => format!("MAP01 {}", field.provisional_label()),
         }
     }
 }
@@ -124,18 +128,33 @@ impl WorldState {
                 return;
             }
 
-            self.render_mode = match self.render_mode {
-                MapRenderMode::DemoCity => MapRenderMode::DecodedSignature,
-                MapRenderMode::DecodedSignature => self
-                    .assets
-                    .diagnostics()
-                    .map_inferred_preview
-                    .as_ref()
-                    .map(|_| MapRenderMode::InferredLayer)
-                    .unwrap_or(MapRenderMode::DemoCity),
-                MapRenderMode::InferredLayer => MapRenderMode::DemoCity,
-            };
+            self.render_mode = self.next_render_mode();
             self.combat_log = format!("View mode: {}", self.render_mode.label());
+        }
+    }
+
+    fn next_render_mode(&self) -> MapRenderMode {
+        let inferred_available = self.assets.diagnostics().map_inferred_preview.is_some();
+        match self.render_mode {
+            MapRenderMode::DemoCity => MapRenderMode::DecodedSignature,
+            MapRenderMode::DecodedSignature if inferred_available => MapRenderMode::InferredLayer,
+            MapRenderMode::DecodedSignature => MapRenderMode::DemoCity,
+            MapRenderMode::InferredLayer if inferred_available => {
+                MapRenderMode::CandidateField(MapCandidateField::SurfaceIndex)
+            }
+            MapRenderMode::InferredLayer => MapRenderMode::DemoCity,
+            MapRenderMode::CandidateField(MapCandidateField::SurfaceIndex)
+                if inferred_available =>
+            {
+                MapRenderMode::CandidateField(MapCandidateField::DetailIndex)
+            }
+            MapRenderMode::CandidateField(MapCandidateField::DetailIndex) if inferred_available => {
+                MapRenderMode::CandidateField(MapCandidateField::Reference)
+            }
+            MapRenderMode::CandidateField(MapCandidateField::Reference) if inferred_available => {
+                MapRenderMode::CandidateField(MapCandidateField::Height)
+            }
+            MapRenderMode::CandidateField(_) => MapRenderMode::DemoCity,
         }
     }
 
@@ -276,6 +295,14 @@ impl WorldState {
             MapRenderMode::InferredLayer => {
                 if let Some(preview) = self.assets.diagnostics().map_inferred_preview.as_ref() {
                     self.map.draw_inferred_layer_preview(&self.camera, preview);
+                } else {
+                    self.map.draw(&self.camera);
+                }
+            }
+            MapRenderMode::CandidateField(field) => {
+                if let Some(preview) = self.assets.diagnostics().map_inferred_preview.as_ref() {
+                    self.map
+                        .draw_candidate_field_preview(&self.camera, preview, field);
                 } else {
                     self.map.draw(&self.camera);
                 }

@@ -5,7 +5,13 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use crate::engine::{
-    map_decode::{ByteLaneStats, MapDatAnalysis, MapInferredLayerPreview, MapPrimaryGridAnalysis},
+    map_decode::{
+        ByteLaneSpatialStats, ByteLaneStats, MAP_CANDIDATE_DETAIL_LANE,
+        MAP_CANDIDATE_REFERENCE_LANE, MAP_CANDIDATE_SURFACE_LANE, MAP_PRIMARY_SECTION_LEN,
+        MapCandidateField, MapDatAnalysis, MapGlobalCorrelationAnalysis, MapInferredLayerPreview,
+        MapPrimaryGridAnalysis, MapSpatialCorrelationAnalysis, analyze_payload,
+        analyze_primary_sections, decode_map_payload_bytes,
+    },
     palette_decode::Palette,
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
@@ -20,6 +26,8 @@ pub struct AssetReport {
     compressed_rows: Vec<String>,
     map_rows: Vec<String>,
     map_diagnostic_rows: Vec<String>,
+    map_global_summary: String,
+    map_global_candidate_rows: Vec<String>,
     mission_rows: Vec<String>,
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
@@ -34,6 +42,7 @@ impl AssetReport {
         let mut compressed_rows = Vec::new();
         let mut map_rows = Vec::new();
         let mut map_diagnostic_rows = Vec::new();
+        let mut map_primary_sections = Vec::new();
         let mut mission_rows = Vec::new();
         let mut palette_rows = Vec::new();
         let mut compressed_palette_rows = Vec::new();
@@ -63,7 +72,10 @@ impl AssetReport {
             *extension_counts.entry(ext).or_insert(0) += 1;
 
             if name.starts_with("MAP") && name.ends_with(".DAT") {
-                let (container, diagnostics) = map_decode_report_fields(path);
+                let (container, diagnostics, primary_section) = map_decode_report_fields(path);
+                if let Some(primary_section) = primary_section {
+                    map_primary_sections.push(primary_section);
+                }
                 map_rows.push(format!(
                     "| `{}` | {} | {} |",
                     display_relative(root, path),
@@ -71,11 +83,12 @@ impl AssetReport {
                     container
                 ));
                 map_diagnostic_rows.push(format!(
-                    "| `{}` | {} | {} | {} |",
+                    "| `{}` | {} | {} | {} | {} |",
                     display_relative(root, path),
                     diagnostics.word_summary,
                     diagnostics.byte_summary,
-                    diagnostics.inferred_summary
+                    diagnostics.inferred_summary,
+                    diagnostics.spatial_summary
                 ));
             }
 
@@ -187,6 +200,21 @@ impl AssetReport {
         compressed_palette_rows.sort();
         tab_rows.sort();
 
+        let (map_global_summary, map_global_candidate_rows) =
+            analyze_primary_sections(map_primary_sections.iter().map(Vec::as_slice))
+                .map(|analysis| {
+                    (
+                        format_global_map_summary(&analysis),
+                        format_global_candidate_rows(&analysis),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    (
+                        "no decoded MAP primary sections available".to_string(),
+                        Vec::new(),
+                    )
+                });
+
         Self {
             root: root.display().to_string(),
             total_files,
@@ -194,6 +222,8 @@ impl AssetReport {
             compressed_rows,
             map_rows,
             map_diagnostic_rows,
+            map_global_summary,
+            map_global_candidate_rows,
             mission_rows,
             palette_rows,
             compressed_palette_rows,
@@ -237,13 +267,24 @@ impl AssetReport {
         append_rows_or_empty(&mut markdown, &self.map_rows, "no MAP*.DAT files found", 3);
 
         markdown.push_str("\n## MAP primary-cell field diagnostics\n\n");
-        markdown.push_str("These rows summarize aggregate diagnostics over the 64x64x12 primary section only. Word and byte-lane names are provisional candidates, not final terrain semantics.\n\n");
-        markdown.push_str("| File | Three u32 word ranges | Candidate byte lanes | Inferred layer preview |\n|---|---|---|---|\n");
+        markdown.push_str("These rows summarize aggregate diagnostics over each file's 64x64x12 primary section only. Word, byte-lane, and spatial-correlation names are provisional candidates, not final terrain semantics.\n\n");
+        markdown.push_str("| File | Three u32 word ranges | Candidate byte lanes | Inferred layer preview | Candidate spatial correlation |\n|---|---|---|---|---|\n");
         append_rows_or_empty(
             &mut markdown,
             &self.map_diagnostic_rows,
             "no MAP*.DAT diagnostics available",
-            4,
+            5,
+        );
+
+        markdown.push_str("\n## MAP global field-correlation diagnostics\n\n");
+        markdown.push_str("These rows aggregate all decoded MAP primary sections found in the scanned tree. Candidate labels are evidence-backed by byte-lane frequency and spatial continuity only; they are not final terrain/building semantics.\n\n");
+        markdown.push_str(&format!("- {}\n\n", self.map_global_summary));
+        markdown.push_str("| Candidate field | Lane | Byte distribution | Spatial continuity | Common transitions | 2x2/block-like patterns | Height-gradient check |\n|---|---:|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.map_global_candidate_rows,
+            "no global MAP candidate diagnostics available",
+            7,
         );
 
         markdown.push_str("\n## Mission inventory\n\n");
@@ -324,21 +365,30 @@ struct MapReportDiagnostics {
     word_summary: String,
     byte_summary: String,
     inferred_summary: String,
+    spatial_summary: String,
 }
 
-fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics) {
+fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Option<Vec<u8>>) {
     let fallback = MapReportDiagnostics {
         word_summary: "-".to_string(),
         byte_summary: "-".to_string(),
         inferred_summary: "-".to_string(),
+        spatial_summary: "-".to_string(),
     };
 
     let Ok(data) = fs::read(path) else {
-        return ("unreadable".to_string(), fallback);
+        return ("unreadable".to_string(), fallback, None);
     };
 
-    match MapDatAnalysis::analyze_file_bytes(&data) {
-        Ok(analysis) => {
+    match decode_map_payload_bytes(&data) {
+        Ok((container, payload)) => {
+            let primary_section = payload
+                .get(..MAP_PRIMARY_SECTION_LEN)
+                .map(|primary| primary.to_vec());
+            let analysis = MapDatAnalysis {
+                container,
+                payload: analyze_payload(&payload),
+            };
             let diagnostics = match &analysis.payload.primary_grid {
                 Some(grid) => MapReportDiagnostics {
                     word_summary: format_word_summary(grid),
@@ -349,12 +399,18 @@ fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics) {
                         .as_ref()
                         .map(format_inferred_summary)
                         .unwrap_or_else(|| "unavailable".to_string()),
+                    spatial_summary: analysis
+                        .payload
+                        .spatial_correlation
+                        .as_ref()
+                        .map(format_candidate_spatial_summary)
+                        .unwrap_or_else(|| "unavailable".to_string()),
                 },
-                None => fallback,
+                None => fallback.clone(),
             };
-            (analysis.short_label(), diagnostics)
+            (analysis.short_label(), diagnostics, primary_section)
         }
-        Err(err) => (format!("map decode error {err:?}"), fallback),
+        Err(err) => (format!("map decode error {err:?}"), fallback, None),
     }
 }
 
@@ -417,6 +473,154 @@ fn format_inferred_summary(preview: &MapInferredLayerPreview) -> String {
         preview.reference_unique,
         preview.height_lane,
         preview.height_unique
+    )
+}
+
+fn format_candidate_spatial_summary(spatial: &MapSpatialCorrelationAnalysis) -> String {
+    candidate_spatial_lanes(spatial)
+        .into_iter()
+        .map(|(field, stats)| {
+            format!(
+                "{} b{}: continuity {}% (right {}%, down {}%), uniform 2x2 {}%, repeated 2x2 {}%, gentle Δ<=1 {}%",
+                field.provisional_label(),
+                stats.lane,
+                stats.continuity_percent(),
+                stats.right_continuity_percent(),
+                stats.down_continuity_percent(),
+                stats.uniform_2x2_percent(),
+                stats.repeated_2x2_percent(),
+                stats.gentle_gradient_percent()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_global_map_summary(analysis: &MapGlobalCorrelationAnalysis) -> String {
+    format!(
+        "{} decoded MAP primary sections, {} total cells, {} unique exact 12-byte cells; global height candidate lane b{}; word ranges: {}",
+        analysis.map_count,
+        analysis.total_cells,
+        analysis.unique_cells,
+        analysis.spatial_correlation.height_candidate_lane,
+        format_global_word_summary(analysis)
+    )
+}
+
+fn format_global_word_summary(analysis: &MapGlobalCorrelationAnalysis) -> String {
+    analysis
+        .word_stats
+        .iter()
+        .enumerate()
+        .map(|(index, stats)| {
+            format!(
+                "w{index}=0x{:08x}..0x{:08x}, unique {}",
+                stats.min, stats.max, stats.unique_values
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_global_candidate_rows(analysis: &MapGlobalCorrelationAnalysis) -> Vec<String> {
+    candidate_spatial_lanes(&analysis.spatial_correlation)
+        .into_iter()
+        .map(|(field, stats)| {
+            format!(
+                "| {} | b{} | {} | {} | {} | {} | {} |",
+                field.provisional_label(),
+                stats.lane,
+                format_byte_lane(stats.lane, &analysis.byte_stats[stats.lane]),
+                format_spatial_continuity(stats),
+                format_transitions(stats),
+                format_block_patterns(stats),
+                format_height_gradient(stats)
+            )
+        })
+        .collect()
+}
+
+fn candidate_spatial_lanes(
+    spatial: &MapSpatialCorrelationAnalysis,
+) -> Vec<(MapCandidateField, &ByteLaneSpatialStats)> {
+    MapCandidateField::ALL
+        .into_iter()
+        .filter_map(|field| {
+            let lane = match field {
+                MapCandidateField::SurfaceIndex => MAP_CANDIDATE_SURFACE_LANE,
+                MapCandidateField::DetailIndex => MAP_CANDIDATE_DETAIL_LANE,
+                MapCandidateField::Reference => MAP_CANDIDATE_REFERENCE_LANE,
+                MapCandidateField::Height => spatial.height_candidate_lane,
+            };
+            spatial.byte_lanes.get(lane).map(|stats| (field, stats))
+        })
+        .collect()
+}
+
+fn format_spatial_continuity(stats: &ByteLaneSpatialStats) -> String {
+    format!(
+        "{}% same neighbours (right {}%, down {}%; {}/{})",
+        stats.continuity_percent(),
+        stats.right_continuity_percent(),
+        stats.down_continuity_percent(),
+        stats.same_neighbour_pairs(),
+        stats.neighbour_pairs()
+    )
+}
+
+fn format_transitions(stats: &ByteLaneSpatialStats) -> String {
+    if stats.top_transitions.is_empty() {
+        return "no non-identical transitions".to_string();
+    }
+
+    stats
+        .top_transitions
+        .iter()
+        .map(|transition| {
+            format!(
+                "0x{:02x}->0x{:02x}:{}",
+                transition.from, transition.to, transition.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_block_patterns(stats: &ByteLaneSpatialStats) -> String {
+    let top_patterns = stats
+        .top_2x2_patterns
+        .iter()
+        .map(|pattern| {
+            format!(
+                "[{:02x} {:02x}; {:02x} {:02x}]:{}",
+                pattern.values[0],
+                pattern.values[1],
+                pattern.values[2],
+                pattern.values[3],
+                pattern.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        "uniform {}% ({}/{}), repeated {}% across {} repeated patterns; top [{}]",
+        stats.uniform_2x2_percent(),
+        stats.uniform_2x2_blocks,
+        stats.total_2x2_blocks,
+        stats.repeated_2x2_percent(),
+        stats.repeated_2x2_patterns,
+        top_patterns
+    )
+}
+
+fn format_height_gradient(stats: &ByteLaneSpatialStats) -> String {
+    format!(
+        "gentle Δ<=1 {}%, moderate Δ<=4 {}%, max Δ {}, mean Δ {:.3}",
+        stats.gentle_gradient_percent(),
+        stats.moderate_gradient_percent(),
+        stats.max_abs_gradient,
+        stats.mean_abs_gradient_milli as f32 / 1000.0
     )
 }
 

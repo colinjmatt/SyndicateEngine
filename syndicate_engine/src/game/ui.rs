@@ -1,6 +1,6 @@
 use crate::engine::{
     assets::AssetIndex,
-    map_decode::{MapInferredLayerPreview, MapSignaturePreview},
+    map_decode::{MapCandidateField, MapInferredLayerPreview, MapSignaturePreview},
     palette_decode::Rgb8,
 };
 use macroquad::prelude::*;
@@ -86,7 +86,7 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         SKYBLUE,
     );
     draw_text(
-        "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M map views | Space pause | . step | +/- speed | F5/F9 | Esc",
+        "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M MAP field explorer | Space pause | . step | +/- speed | F5/F9 | Esc",
         28.0,
         330.0,
         15.0,
@@ -160,7 +160,13 @@ fn draw_signature_minimap(origin: Vec2, scale: f32, preview: Option<&MapSignatur
 }
 
 fn draw_inferred_minimap(origin: Vec2, scale: f32, preview: Option<&MapInferredLayerPreview>) {
-    draw_text("MAP01 inferred", origin.x, origin.y - 8.0, 13.0, LIGHTGRAY);
+    draw_text(
+        "MAP01 inferred/fields",
+        origin.x,
+        origin.y - 8.0,
+        13.0,
+        LIGHTGRAY,
+    );
 
     let Some(preview) = preview else {
         draw_text("unavailable", origin.x, origin.y + 18.0, 13.0, DARKGRAY);
@@ -192,14 +198,38 @@ fn draw_inferred_minimap(origin: Vec2, scale: f32, preview: Option<&MapInferredL
     );
     draw_text(
         &format!(
-            "{} classes, h b{}",
-            preview.visual_classes, preview.height_lane
+            "{} classes; field lanes {}",
+            preview.visual_classes,
+            candidate_field_lane_summary(preview)
         ),
         origin.x,
         origin.y + preview.height as f32 * scale + 14.0,
         13.0,
         LIGHTGRAY,
     );
+}
+
+fn candidate_field_lane_summary(preview: &MapInferredLayerPreview) -> String {
+    MapCandidateField::ALL
+        .into_iter()
+        .map(|field| {
+            format!(
+                "{}:b{}",
+                short_field_label(field),
+                preview.field_lane(field)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn short_field_label(field: MapCandidateField) -> &'static str {
+    match field {
+        MapCandidateField::SurfaceIndex => "surf",
+        MapCandidateField::DetailIndex => "detail",
+        MapCandidateField::Reference => "ref",
+        MapCandidateField::Height => "h",
+    }
 }
 
 fn inferred_color(class: u8, height_class: u8) -> Color {

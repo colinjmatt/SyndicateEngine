@@ -22,6 +22,11 @@ pub const MAP_INFERRED_CLASS_DETAIL: u8 = 2;
 pub const MAP_INFERRED_CLASS_REFERENCE: u8 = 3;
 pub const MAP_INFERRED_CLASS_HEIGHT: u8 = 4;
 pub const MAP_INFERRED_CLASS_MIXED: u8 = 5;
+pub const MAP_CANDIDATE_SURFACE_LANE: usize = 0;
+pub const MAP_CANDIDATE_DETAIL_LANE: usize = 4;
+pub const MAP_CANDIDATE_REFERENCE_LANE: usize = 8;
+pub const MAP_SPATIAL_TOP_TRANSITIONS: usize = 6;
+pub const MAP_SPATIAL_TOP_BLOCKS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapDatAnalysis {
@@ -47,6 +52,7 @@ pub struct MapPayloadAnalysis {
     pub tail: MapTailAnalysis,
     pub signature_preview: Option<MapSignaturePreview>,
     pub inferred_layer_preview: Option<MapInferredLayerPreview>,
+    pub spatial_correlation: Option<MapSpatialCorrelationAnalysis>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +118,10 @@ pub struct MapInferredLayerPreview {
     pub height: usize,
     pub cells: Vec<u8>,
     pub height_classes: Vec<u8>,
+    pub surface_values: Vec<u8>,
+    pub detail_values: Vec<u8>,
+    pub reference_values: Vec<u8>,
+    pub height_values: Vec<u8>,
     pub visual_classes: usize,
     pub class_counts: [usize; MAP_INFERRED_LAYER_CLASSES],
     pub surface_baseline: u8,
@@ -131,6 +141,62 @@ pub struct MapInferredLayerCell {
     pub height_class: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapCandidateField {
+    SurfaceIndex,
+    DetailIndex,
+    Reference,
+    Height,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapSpatialCorrelationAnalysis {
+    pub byte_lanes: [ByteLaneSpatialStats; MAP_CELL_BYTES],
+    pub height_candidate_lane: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteLaneSpatialStats {
+    pub lane: usize,
+    pub right_pairs: usize,
+    pub down_pairs: usize,
+    pub right_same_pairs: usize,
+    pub down_same_pairs: usize,
+    pub total_2x2_blocks: usize,
+    pub uniform_2x2_blocks: usize,
+    pub repeated_2x2_patterns: usize,
+    pub repeated_2x2_blocks: usize,
+    pub top_transitions: Vec<ByteTransitionFrequency>,
+    pub top_2x2_patterns: Vec<ByteBlockPatternFrequency>,
+    pub gentle_gradient_pairs: usize,
+    pub moderate_gradient_pairs: usize,
+    pub max_abs_gradient: u8,
+    pub mean_abs_gradient_milli: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteTransitionFrequency {
+    pub from: u8,
+    pub to: u8,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteBlockPatternFrequency {
+    pub values: [u8; 4],
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapGlobalCorrelationAnalysis {
+    pub map_count: usize,
+    pub total_cells: usize,
+    pub unique_cells: usize,
+    pub word_stats: [WordStats; 3],
+    pub byte_stats: [ByteLaneStats; MAP_CELL_BYTES],
+    pub spatial_correlation: MapSpatialCorrelationAnalysis,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MapDecodeError {
     Rnc(RncError),
@@ -138,23 +204,11 @@ pub enum MapDecodeError {
 
 impl MapDatAnalysis {
     pub fn analyze_file_bytes(data: &[u8]) -> Result<Self, MapDecodeError> {
-        if let Some(block) = RncBlock::parse(data) {
-            let decoded = block.decompress().map_err(MapDecodeError::Rnc)?;
-            Ok(Self {
-                container: MapDatContainer::RncVerified {
-                    method: block.header.method,
-                    packed_len: block.header.packed_len,
-                    unpacked_len: block.header.unpacked_len,
-                    block_count: block.header.block_count,
-                },
-                payload: analyze_payload(&decoded),
-            })
-        } else {
-            Ok(Self {
-                container: MapDatContainer::Plain,
-                payload: analyze_payload(data),
-            })
-        }
+        let (container, payload) = decode_map_payload_bytes(data)?;
+        Ok(Self {
+            container,
+            payload: analyze_payload(&payload),
+        })
     }
 
     pub fn short_label(&self) -> String {
@@ -258,6 +312,108 @@ impl MapInferredLayerPreview {
             _ => "unknown candidate",
         }
     }
+
+    pub fn field_value(&self, field: MapCandidateField, x: usize, y: usize) -> Option<u8> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+
+        let index = y * self.width + x;
+        match field {
+            MapCandidateField::SurfaceIndex => self.surface_values.get(index),
+            MapCandidateField::DetailIndex => self.detail_values.get(index),
+            MapCandidateField::Reference => self.reference_values.get(index),
+            MapCandidateField::Height => self.height_values.get(index),
+        }
+        .copied()
+    }
+
+    pub fn field_lane(&self, field: MapCandidateField) -> usize {
+        match field {
+            MapCandidateField::SurfaceIndex => MAP_CANDIDATE_SURFACE_LANE,
+            MapCandidateField::DetailIndex => MAP_CANDIDATE_DETAIL_LANE,
+            MapCandidateField::Reference => MAP_CANDIDATE_REFERENCE_LANE,
+            MapCandidateField::Height => self.height_lane,
+        }
+    }
+
+    pub fn field_baseline(&self, field: MapCandidateField) -> u8 {
+        match field {
+            MapCandidateField::SurfaceIndex => self.surface_baseline,
+            MapCandidateField::DetailIndex => self.detail_baseline,
+            MapCandidateField::Reference => self.reference_baseline,
+            MapCandidateField::Height => self.height_baseline,
+        }
+    }
+
+    pub fn field_unique_values(&self, field: MapCandidateField) -> usize {
+        match field {
+            MapCandidateField::SurfaceIndex => self.surface_unique,
+            MapCandidateField::DetailIndex => self.detail_unique,
+            MapCandidateField::Reference => self.reference_unique,
+            MapCandidateField::Height => self.height_unique,
+        }
+    }
+
+    pub fn field_label(&self, field: MapCandidateField) -> String {
+        format!("{} b{}", field.provisional_label(), self.field_lane(field))
+    }
+}
+
+impl MapCandidateField {
+    pub const ALL: [Self; 4] = [
+        Self::SurfaceIndex,
+        Self::DetailIndex,
+        Self::Reference,
+        Self::Height,
+    ];
+
+    pub fn provisional_label(self) -> &'static str {
+        match self {
+            Self::SurfaceIndex => "surface_index_candidate",
+            Self::DetailIndex => "detail_index_candidate",
+            Self::Reference => "reference_candidate",
+            Self::Height => "height_candidate",
+        }
+    }
+}
+
+impl ByteLaneSpatialStats {
+    pub fn neighbour_pairs(&self) -> usize {
+        self.right_pairs + self.down_pairs
+    }
+
+    pub fn same_neighbour_pairs(&self) -> usize {
+        self.right_same_pairs + self.down_same_pairs
+    }
+
+    pub fn continuity_percent(&self) -> u8 {
+        percent(self.same_neighbour_pairs(), self.neighbour_pairs())
+    }
+
+    pub fn right_continuity_percent(&self) -> u8 {
+        percent(self.right_same_pairs, self.right_pairs)
+    }
+
+    pub fn down_continuity_percent(&self) -> u8 {
+        percent(self.down_same_pairs, self.down_pairs)
+    }
+
+    pub fn uniform_2x2_percent(&self) -> u8 {
+        percent(self.uniform_2x2_blocks, self.total_2x2_blocks)
+    }
+
+    pub fn repeated_2x2_percent(&self) -> u8 {
+        percent(self.repeated_2x2_blocks, self.total_2x2_blocks)
+    }
+
+    pub fn gentle_gradient_percent(&self) -> u8 {
+        percent(self.gentle_gradient_pairs, self.neighbour_pairs())
+    }
+
+    pub fn moderate_gradient_percent(&self) -> u8 {
+        percent(self.moderate_gradient_pairs, self.neighbour_pairs())
+    }
 }
 
 impl MapSignaturePreview {
@@ -292,6 +448,23 @@ impl MapCellRecord {
     }
 }
 
+pub fn decode_map_payload_bytes(data: &[u8]) -> Result<(MapDatContainer, Vec<u8>), MapDecodeError> {
+    if let Some(block) = RncBlock::parse(data) {
+        let decoded = block.decompress().map_err(MapDecodeError::Rnc)?;
+        Ok((
+            MapDatContainer::RncVerified {
+                method: block.header.method,
+                packed_len: block.header.packed_len,
+                unpacked_len: block.header.unpacked_len,
+                block_count: block.header.block_count,
+            },
+            decoded,
+        ))
+    } else {
+        Ok((MapDatContainer::Plain, data.to_vec()))
+    }
+}
+
 pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
     if data.len() < MAP_PRIMARY_SECTION_LEN {
         return MapPayloadAnalysis {
@@ -304,6 +477,7 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             },
             signature_preview: None,
             inferred_layer_preview: None,
+            spatial_correlation: None,
         };
     }
 
@@ -342,20 +516,9 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
         }
     }
 
-    let word_stats = std::array::from_fn(|index| WordStats {
-        min: word_values[index].first().copied().unwrap_or_default(),
-        max: word_values[index].last().copied().unwrap_or_default(),
-        unique_values: word_values[index].len(),
-        zero_values: zero_values[index],
-    });
-
-    let byte_stats = std::array::from_fn(|index| ByteLaneStats {
-        min: byte_values[index].first().copied().unwrap_or_default(),
-        max: byte_values[index].last().copied().unwrap_or_default(),
-        unique_values: byte_values[index].len(),
-        zero_values: byte_zero_values[index],
-        top_values: top_byte_values(&byte_frequencies[index], 4),
-    });
+    let word_stats = build_word_stats(&word_values, &zero_values);
+    let byte_stats = build_byte_stats(&byte_values, &byte_frequencies, &byte_zero_values);
+    let height_lane = select_candidate_height_lane(&byte_frequencies);
 
     MapPayloadAnalysis {
         len: data.len(),
@@ -375,8 +538,94 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             record_count_12: tail_len / MAP_CELL_BYTES,
         },
         signature_preview: Some(build_signature_preview(primary)),
-        inferred_layer_preview: Some(build_inferred_layer_preview(primary, &byte_frequencies)),
+        inferred_layer_preview: Some(build_inferred_layer_preview(
+            primary,
+            &byte_frequencies,
+            height_lane,
+        )),
+        spatial_correlation: Some(build_spatial_correlation(primary, height_lane)),
     }
+}
+
+pub fn analyze_primary_sections<'a, I>(sections: I) -> Option<MapGlobalCorrelationAnalysis>
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
+    let sections = sections
+        .into_iter()
+        .filter(|section| section.len() >= MAP_PRIMARY_SECTION_LEN)
+        .map(|section| &section[..MAP_PRIMARY_SECTION_LEN])
+        .collect::<Vec<_>>();
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    let mut unique_cells = BTreeSet::new();
+    let mut word_values = [BTreeSet::new(), BTreeSet::new(), BTreeSet::new()];
+    let mut zero_values = [0usize; 3];
+    let mut byte_values: [BTreeSet<u8>; MAP_CELL_BYTES] = Default::default();
+    let mut byte_frequencies: [BTreeMap<u8, usize>; MAP_CELL_BYTES] = Default::default();
+    let mut byte_zero_values = [0usize; MAP_CELL_BYTES];
+
+    for primary in &sections {
+        for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
+            let mut record_bytes = [0; MAP_CELL_BYTES];
+            record_bytes.copy_from_slice(chunk);
+            unique_cells.insert(record_bytes);
+
+            for (index, &byte) in record_bytes.iter().enumerate() {
+                if byte == 0 {
+                    byte_zero_values[index] += 1;
+                }
+                byte_values[index].insert(byte);
+                *byte_frequencies[index].entry(byte).or_insert(0) += 1;
+            }
+
+            if let Some(record) = MapCellRecord::parse(chunk) {
+                for (index, value) in record.words.into_iter().enumerate() {
+                    if value == 0 {
+                        zero_values[index] += 1;
+                    }
+                    word_values[index].insert(value);
+                }
+            }
+        }
+    }
+
+    let height_lane = select_candidate_height_lane(&byte_frequencies);
+
+    Some(MapGlobalCorrelationAnalysis {
+        map_count: sections.len(),
+        total_cells: sections.len() * MAP_CELL_COUNT,
+        unique_cells: unique_cells.len(),
+        word_stats: build_word_stats(&word_values, &zero_values),
+        byte_stats: build_byte_stats(&byte_values, &byte_frequencies, &byte_zero_values),
+        spatial_correlation: build_spatial_correlation_for_sections(sections, height_lane),
+    })
+}
+
+fn build_word_stats(word_values: &[BTreeSet<u32>; 3], zero_values: &[usize; 3]) -> [WordStats; 3] {
+    std::array::from_fn(|index| WordStats {
+        min: word_values[index].first().copied().unwrap_or_default(),
+        max: word_values[index].last().copied().unwrap_or_default(),
+        unique_values: word_values[index].len(),
+        zero_values: zero_values[index],
+    })
+}
+
+fn build_byte_stats(
+    byte_values: &[BTreeSet<u8>; MAP_CELL_BYTES],
+    byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES],
+    byte_zero_values: &[usize; MAP_CELL_BYTES],
+) -> [ByteLaneStats; MAP_CELL_BYTES] {
+    std::array::from_fn(|index| ByteLaneStats {
+        min: byte_values[index].first().copied().unwrap_or_default(),
+        max: byte_values[index].last().copied().unwrap_or_default(),
+        unique_values: byte_values[index].len(),
+        zero_values: byte_zero_values[index],
+        top_values: top_byte_values(&byte_frequencies[index], 4),
+    })
 }
 
 fn top_byte_values(frequencies: &BTreeMap<u8, usize>, limit: usize) -> Vec<ByteFrequency> {
@@ -423,21 +672,29 @@ fn select_candidate_height_lane(byte_frequencies: &[BTreeMap<u8, usize>; MAP_CEL
 fn build_inferred_layer_preview(
     primary: &[u8],
     byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES],
+    height_lane: usize,
 ) -> MapInferredLayerPreview {
     let surface_baseline = dominant_byte(&byte_frequencies[0]);
     let detail_baseline = dominant_byte(&byte_frequencies[4]);
     let reference_baseline = dominant_byte(&byte_frequencies[8]);
-    let height_lane = select_candidate_height_lane(byte_frequencies);
     let height_baseline = dominant_byte(&byte_frequencies[height_lane]);
     let mut cells = Vec::with_capacity(MAP_CELL_COUNT);
     let mut height_classes = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut surface_values = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut detail_values = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut reference_values = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut height_values = Vec::with_capacity(MAP_CELL_COUNT);
     let mut class_counts = [0usize; MAP_INFERRED_LAYER_CLASSES];
 
     for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
+        let surface_value = chunk[0];
+        let detail_value = chunk[4];
+        let reference_value = chunk[8];
+        let height_value = chunk[height_lane];
         let surface_changed = chunk[0] != surface_baseline;
         let detail_changed = chunk[4] != detail_baseline;
         let reference_changed = chunk[8] != reference_baseline;
-        let height_changed = chunk[height_lane] != height_baseline;
+        let height_changed = height_value != height_baseline;
         let changed_channels = [
             surface_changed,
             detail_changed,
@@ -461,11 +718,15 @@ fn build_inferred_layer_preview(
         } else {
             MAP_INFERRED_CLASS_HEIGHT
         };
-        let height_class = chunk[height_lane].abs_diff(height_baseline).min(15);
+        let height_class = height_value.abs_diff(height_baseline).min(15);
 
         class_counts[visual_class as usize] += 1;
         cells.push(visual_class);
         height_classes.push(height_class);
+        surface_values.push(surface_value);
+        detail_values.push(detail_value);
+        reference_values.push(reference_value);
+        height_values.push(height_value);
     }
 
     let visual_classes = class_counts.iter().filter(|&&count| count > 0).count();
@@ -475,6 +736,10 @@ fn build_inferred_layer_preview(
         height: MAP_HEIGHT_CANDIDATE,
         cells,
         height_classes,
+        surface_values,
+        detail_values,
+        reference_values,
+        height_values,
         visual_classes,
         class_counts,
         surface_baseline,
@@ -486,6 +751,205 @@ fn build_inferred_layer_preview(
         detail_unique: byte_frequencies[4].len(),
         reference_unique: byte_frequencies[8].len(),
         height_unique: byte_frequencies[height_lane].len(),
+    }
+}
+
+fn build_spatial_correlation(
+    primary: &[u8],
+    height_candidate_lane: usize,
+) -> MapSpatialCorrelationAnalysis {
+    build_spatial_correlation_for_sections(std::iter::once(primary), height_candidate_lane)
+}
+
+fn build_spatial_correlation_for_sections<'a, I>(
+    sections: I,
+    height_candidate_lane: usize,
+) -> MapSpatialCorrelationAnalysis
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
+    let mut accumulators: [LaneSpatialAccumulator; MAP_CELL_BYTES] = Default::default();
+
+    for section in sections {
+        if section.len() < MAP_PRIMARY_SECTION_LEN {
+            continue;
+        }
+        let primary = &section[..MAP_PRIMARY_SECTION_LEN];
+        for (lane, accumulator) in accumulators.iter_mut().enumerate() {
+            accumulator.accumulate_primary(primary, lane);
+        }
+    }
+
+    MapSpatialCorrelationAnalysis {
+        byte_lanes: std::array::from_fn(|lane| accumulators[lane].to_stats(lane)),
+        height_candidate_lane,
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct LaneSpatialAccumulator {
+    right_pairs: usize,
+    down_pairs: usize,
+    right_same_pairs: usize,
+    down_same_pairs: usize,
+    total_2x2_blocks: usize,
+    uniform_2x2_blocks: usize,
+    gradient_sum: usize,
+    gentle_gradient_pairs: usize,
+    moderate_gradient_pairs: usize,
+    max_abs_gradient: u8,
+    transition_frequencies: BTreeMap<(u8, u8), usize>,
+    block_frequencies: BTreeMap<[u8; 4], usize>,
+}
+
+impl LaneSpatialAccumulator {
+    fn accumulate_primary(&mut self, primary: &[u8], lane: usize) {
+        for y in 0..MAP_HEIGHT_CANDIDATE {
+            for x in 0..MAP_WIDTH_CANDIDATE {
+                let value = lane_value(primary, x, y, lane);
+
+                if x + 1 < MAP_WIDTH_CANDIDATE {
+                    let right = lane_value(primary, x + 1, y, lane);
+                    self.accumulate_pair(value, right, true);
+                }
+
+                if y + 1 < MAP_HEIGHT_CANDIDATE {
+                    let down = lane_value(primary, x, y + 1, lane);
+                    self.accumulate_pair(value, down, false);
+                }
+
+                if x + 1 < MAP_WIDTH_CANDIDATE && y + 1 < MAP_HEIGHT_CANDIDATE {
+                    let pattern = [
+                        value,
+                        lane_value(primary, x + 1, y, lane),
+                        lane_value(primary, x, y + 1, lane),
+                        lane_value(primary, x + 1, y + 1, lane),
+                    ];
+                    self.total_2x2_blocks += 1;
+                    if pattern.iter().all(|&candidate| candidate == value) {
+                        self.uniform_2x2_blocks += 1;
+                    }
+                    *self.block_frequencies.entry(pattern).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    fn accumulate_pair(&mut self, from: u8, to: u8, right_pair: bool) {
+        if right_pair {
+            self.right_pairs += 1;
+            if from == to {
+                self.right_same_pairs += 1;
+            }
+        } else {
+            self.down_pairs += 1;
+            if from == to {
+                self.down_same_pairs += 1;
+            }
+        }
+
+        if from != to {
+            *self.transition_frequencies.entry((from, to)).or_insert(0) += 1;
+        }
+
+        let gradient = from.abs_diff(to);
+        self.gradient_sum += gradient as usize;
+        if gradient <= 1 {
+            self.gentle_gradient_pairs += 1;
+        }
+        if gradient <= 4 {
+            self.moderate_gradient_pairs += 1;
+        }
+        self.max_abs_gradient = self.max_abs_gradient.max(gradient);
+    }
+
+    fn to_stats(&self, lane: usize) -> ByteLaneSpatialStats {
+        let repeated_2x2_patterns = self
+            .block_frequencies
+            .values()
+            .filter(|&&count| count > 1)
+            .count();
+        let repeated_2x2_blocks = self
+            .block_frequencies
+            .values()
+            .filter(|&&count| count > 1)
+            .sum();
+        let neighbour_pairs = self.right_pairs + self.down_pairs;
+        let mean_abs_gradient_milli = if neighbour_pairs == 0 {
+            0
+        } else {
+            ((self.gradient_sum * 1000 + neighbour_pairs / 2) / neighbour_pairs) as u32
+        };
+
+        ByteLaneSpatialStats {
+            lane,
+            right_pairs: self.right_pairs,
+            down_pairs: self.down_pairs,
+            right_same_pairs: self.right_same_pairs,
+            down_same_pairs: self.down_same_pairs,
+            total_2x2_blocks: self.total_2x2_blocks,
+            uniform_2x2_blocks: self.uniform_2x2_blocks,
+            repeated_2x2_patterns,
+            repeated_2x2_blocks,
+            top_transitions: top_transitions(
+                &self.transition_frequencies,
+                MAP_SPATIAL_TOP_TRANSITIONS,
+            ),
+            top_2x2_patterns: top_2x2_patterns(&self.block_frequencies, MAP_SPATIAL_TOP_BLOCKS),
+            gentle_gradient_pairs: self.gentle_gradient_pairs,
+            moderate_gradient_pairs: self.moderate_gradient_pairs,
+            max_abs_gradient: self.max_abs_gradient,
+            mean_abs_gradient_milli,
+        }
+    }
+}
+
+fn lane_value(primary: &[u8], x: usize, y: usize, lane: usize) -> u8 {
+    primary[(y * MAP_WIDTH_CANDIDATE + x) * MAP_CELL_BYTES + lane]
+}
+
+fn top_transitions(
+    frequencies: &BTreeMap<(u8, u8), usize>,
+    limit: usize,
+) -> Vec<ByteTransitionFrequency> {
+    let mut ranked = frequencies
+        .iter()
+        .map(|(&(from, to), &count)| ByteTransitionFrequency { from, to, count })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.from.cmp(&right.from))
+            .then_with(|| left.to.cmp(&right.to))
+    });
+    ranked.truncate(limit);
+    ranked
+}
+
+fn top_2x2_patterns(
+    frequencies: &BTreeMap<[u8; 4], usize>,
+    limit: usize,
+) -> Vec<ByteBlockPatternFrequency> {
+    let mut ranked = frequencies
+        .iter()
+        .map(|(&values, &count)| ByteBlockPatternFrequency { values, count })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.values.cmp(&right.values))
+    });
+    ranked.truncate(limit);
+    ranked
+}
+
+fn percent(part: usize, total: usize) -> u8 {
+    if total == 0 {
+        0
+    } else {
+        ((part * 100 + total / 2) / total).min(100) as u8
     }
 }
 
@@ -545,7 +1009,8 @@ mod tests {
         MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_INFERRED_CLASS_BASELINE, MAP_INFERRED_CLASS_DETAIL,
         MAP_INFERRED_CLASS_HEIGHT, MAP_INFERRED_CLASS_MIXED, MAP_INFERRED_CLASS_REFERENCE,
         MAP_INFERRED_CLASS_SURFACE, MAP_PRIMARY_SECTION_LEN, MAP_SIGNATURE_PREVIEW_CLASSES,
-        MapCellRecord, analyze_payload,
+        MAP_WIDTH_CANDIDATE, MapCandidateField, MapCellRecord, analyze_payload,
+        analyze_primary_sections,
     };
 
     #[test]
@@ -612,6 +1077,7 @@ mod tests {
         assert_eq!(analysis.tail.len, 0);
         assert!(analysis.signature_preview.is_none());
         assert!(analysis.inferred_layer_preview.is_none());
+        assert!(analysis.spatial_correlation.is_none());
     }
 
     #[test]
@@ -672,6 +1138,86 @@ mod tests {
             MAP_INFERRED_CLASS_MIXED
         );
         assert_eq!(inferred.cell(5, 0).unwrap().height_class, 3);
+    }
+
+    #[test]
+    fn builds_spatial_correlation_diagnostics_for_candidate_lanes() {
+        let mut payload = vec![0; MAP_PRIMARY_SECTION_LEN];
+        for y in 0..MAP_WIDTH_CANDIDATE {
+            for x in 0..MAP_WIDTH_CANDIDATE {
+                let start = (y * MAP_WIDTH_CANDIDATE + x) * MAP_CELL_BYTES;
+                payload[start] = if x < 32 { 0 } else { 9 };
+                payload[start + 1] = y as u8;
+            }
+        }
+
+        let analysis = analyze_payload(&payload);
+        let inferred = analysis.inferred_layer_preview.unwrap();
+        assert_eq!(inferred.height_lane, 1);
+        assert_eq!(
+            inferred.field_value(MapCandidateField::SurfaceIndex, 40, 0),
+            Some(9)
+        );
+        assert_eq!(
+            inferred.field_value(MapCandidateField::Height, 0, 7),
+            Some(7)
+        );
+        assert_eq!(
+            inferred.field_value(MapCandidateField::Reference, 64, 0),
+            None
+        );
+
+        let spatial = analysis.spatial_correlation.unwrap();
+        assert_eq!(spatial.height_candidate_lane, 1);
+        let surface = &spatial.byte_lanes[0];
+        assert_eq!(surface.right_pairs, 64 * 63);
+        assert_eq!(surface.down_pairs, 64 * 63);
+        assert_eq!(surface.right_same_pairs, 64 * 62);
+        assert_eq!(surface.down_same_pairs, 64 * 63);
+        assert_eq!(surface.continuity_percent(), 99);
+        assert_eq!(surface.uniform_2x2_blocks, 63 * 62);
+        assert_eq!(surface.top_transitions[0].from, 0);
+        assert_eq!(surface.top_transitions[0].to, 9);
+        assert_eq!(surface.top_transitions[0].count, 64);
+
+        let height = &spatial.byte_lanes[1];
+        assert_eq!(height.right_same_pairs, 64 * 63);
+        assert_eq!(height.down_same_pairs, 0);
+        assert_eq!(height.continuity_percent(), 50);
+        assert_eq!(height.gentle_gradient_percent(), 100);
+        assert_eq!(height.moderate_gradient_percent(), 100);
+        assert_eq!(height.max_abs_gradient, 1);
+        assert_eq!(height.mean_abs_gradient_milli, 500);
+    }
+
+    #[test]
+    fn aggregates_primary_sections_without_claiming_semantics() {
+        let first = vec![0; MAP_PRIMARY_SECTION_LEN];
+        let mut second = vec![0; MAP_PRIMARY_SECTION_LEN];
+        for chunk in second.chunks_exact_mut(MAP_CELL_BYTES) {
+            chunk[0] = 7;
+            chunk[4] = 3;
+            chunk[8] = 7;
+        }
+
+        assert!(analyze_primary_sections([].into_iter()).is_none());
+        let aggregate = analyze_primary_sections([first.as_slice(), second.as_slice()]).unwrap();
+
+        assert_eq!(aggregate.map_count, 2);
+        assert_eq!(aggregate.total_cells, MAP_CELL_COUNT * 2);
+        assert_eq!(aggregate.unique_cells, 2);
+        assert_eq!(aggregate.byte_stats[0].unique_values, 2);
+        assert_eq!(aggregate.byte_stats[0].top_values[0].value, 0);
+        assert_eq!(aggregate.byte_stats[0].top_values[0].count, MAP_CELL_COUNT);
+        assert_eq!(aggregate.spatial_correlation.height_candidate_lane, 1);
+        assert_eq!(
+            aggregate.spatial_correlation.byte_lanes[0].continuity_percent(),
+            100
+        );
+        assert_eq!(
+            aggregate.spatial_correlation.byte_lanes[0].repeated_2x2_percent(),
+            100
+        );
     }
 
     fn set_record(payload: &mut [u8], cell_index: usize, record: &[u8; MAP_CELL_BYTES]) {

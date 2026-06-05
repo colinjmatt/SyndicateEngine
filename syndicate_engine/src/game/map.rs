@@ -1,7 +1,7 @@
 use crate::engine::{
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
-    map_decode::{MapInferredLayerPreview, MapSignaturePreview},
+    map_decode::{MapCandidateField, MapInferredLayerPreview, MapSignaturePreview},
     palette,
 };
 use crate::game::pathfinding::GridPos;
@@ -171,6 +171,86 @@ impl TacticalMap {
             }
         }
     }
+
+    pub fn draw_candidate_field_preview(
+        &self,
+        camera: &CameraRig,
+        preview: &MapInferredLayerPreview,
+        field: MapCandidateField,
+    ) {
+        let baseline = preview.field_baseline(field);
+        for y in 0..preview.height {
+            for x in 0..preview.width {
+                let Some(value) = preview.field_value(field, x, y) else {
+                    continue;
+                };
+                let height_value = preview
+                    .field_value(MapCandidateField::Height, x, y)
+                    .unwrap_or(baseline);
+                let height_delta = height_value.abs_diff(preview.height_baseline).min(15);
+                let z = if field == MapCandidateField::Height {
+                    value.abs_diff(baseline).min(15) as f32 * 0.065
+                } else {
+                    height_delta as f32 * 0.035
+                };
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
+                draw_iso_tile(
+                    center,
+                    candidate_field_color(field, value, baseline, height_delta),
+                    Color::new(0.01, 0.012, 0.016, 0.58),
+                );
+            }
+        }
+    }
+}
+
+fn candidate_field_color(
+    field: MapCandidateField,
+    value: u8,
+    baseline: u8,
+    height_delta: u8,
+) -> Color {
+    if value == baseline {
+        return brighten(
+            Color::from_rgba(35, 41, 47, 255),
+            height_delta as f32 * 0.02,
+        );
+    }
+
+    let hue = value.wrapping_mul(37).wrapping_add(match field {
+        MapCandidateField::SurfaceIndex => 11,
+        MapCandidateField::DetailIndex => 67,
+        MapCandidateField::Reference => 131,
+        MapCandidateField::Height => 193,
+    });
+    let intensity = value.abs_diff(baseline) as f32 / 255.0;
+    let base = match field {
+        MapCandidateField::SurfaceIndex => Color::new(
+            0.18 + intensity * 0.30,
+            0.34 + hue as f32 / 255.0 * 0.42,
+            0.24 + intensity * 0.24,
+            1.0,
+        ),
+        MapCandidateField::DetailIndex => Color::new(
+            0.35 + hue as f32 / 255.0 * 0.35,
+            0.30 + intensity * 0.20,
+            0.18 + intensity * 0.20,
+            1.0,
+        ),
+        MapCandidateField::Reference => Color::new(
+            0.22 + intensity * 0.16,
+            0.34 + intensity * 0.22,
+            0.42 + hue as f32 / 255.0 * 0.36,
+            1.0,
+        ),
+        MapCandidateField::Height => Color::new(
+            0.30 + intensity * 0.36,
+            0.22 + height_delta as f32 * 0.025,
+            0.42 + hue as f32 / 255.0 * 0.30,
+            1.0,
+        ),
+    };
+    brighten(base, height_delta as f32 * 0.025)
 }
 
 fn inferred_tile_color(class: u8, height_class: u8) -> Color {
