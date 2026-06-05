@@ -17,6 +17,7 @@ pub const BLOCK_TILE_DIMENSIONS: [(usize, usize); 6] =
 pub struct BlockGraphicsAnalysis {
     pub container: BlockGraphicsContainer,
     pub decoded_len: usize,
+    pub decoded_hash: u64,
     pub byte_summary: BlockByteSummary,
     pub record_candidates: Vec<BlockRecordCandidate>,
     pub layout_probes: Vec<BlockLayoutProbe>,
@@ -91,6 +92,22 @@ pub struct BlockRegionHint {
     pub unique_values: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockLayoutAlignmentSupport {
+    pub label: BlockLayoutAlignmentLabel,
+    pub support_count: usize,
+    pub dimensions: Vec<(usize, usize)>,
+    pub max_complete_records: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BlockLayoutAlignmentLabel {
+    Exact,
+    LeadingOffset { bytes: usize },
+    TrailingRemainder { bytes: usize },
+    Unaligned,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockIndexPlausibility {
     FitsRecordCount,
@@ -129,6 +146,7 @@ impl BlockGraphicsAnalysis {
         Self {
             container,
             decoded_len,
+            decoded_hash: hash_bytes(&decoded),
             byte_summary: summarize_bytes(&decoded),
             record_candidates: candidate_records(decoded_len),
             layout_probes: probe_layouts(&decoded),
@@ -172,6 +190,10 @@ impl BlockGraphicsAnalysis {
                 probe.bytes_per_record,
             )
         })
+    }
+
+    pub fn layout_alignment_supports(&self) -> Vec<BlockLayoutAlignmentSupport> {
+        summarize_layout_alignment_supports(&self.layout_probes)
     }
 }
 
@@ -220,6 +242,32 @@ impl BlockRecordAlignment {
     }
 }
 
+impl BlockLayoutAlignmentLabel {
+    pub fn label(self) -> String {
+        match self {
+            Self::Exact => "exact alignment".to_string(),
+            Self::LeadingOffset { bytes } => {
+                format!("candidate leading table/header {bytes} bytes")
+            }
+            Self::TrailingRemainder { bytes } => {
+                format!("candidate trailing remainder {bytes} bytes")
+            }
+            Self::Unaligned => "unaligned".to_string(),
+        }
+    }
+}
+
+impl From<BlockRecordAlignment> for BlockLayoutAlignmentLabel {
+    fn from(alignment: BlockRecordAlignment) -> Self {
+        match alignment {
+            BlockRecordAlignment::Exact => Self::Exact,
+            BlockRecordAlignment::LeadingOffset { bytes } => Self::LeadingOffset { bytes },
+            BlockRecordAlignment::TrailingRemainder { bytes } => Self::TrailingRemainder { bytes },
+            BlockRecordAlignment::Unaligned => Self::Unaligned,
+        }
+    }
+}
+
 impl BlockIndexPlausibility {
     pub fn label(self) -> &'static str {
         match self {
@@ -250,6 +298,44 @@ pub fn correlate_map_value_range(
     } else {
         BlockIndexPlausibility::Unknown
     }
+}
+
+pub fn summarize_layout_alignment_supports(
+    probes: &[BlockLayoutProbe],
+) -> Vec<BlockLayoutAlignmentSupport> {
+    let mut grouped: BTreeMap<BlockLayoutAlignmentLabel, BlockLayoutAlignmentSupport> =
+        BTreeMap::new();
+
+    for probe in probes {
+        let label = BlockLayoutAlignmentLabel::from(probe.alignment);
+        let entry = grouped
+            .entry(label)
+            .or_insert_with(|| BlockLayoutAlignmentSupport {
+                label,
+                support_count: 0,
+                dimensions: Vec::new(),
+                max_complete_records: 0,
+            });
+        entry.support_count += 1;
+        entry.dimensions.push((probe.width, probe.height));
+        entry.max_complete_records = entry.max_complete_records.max(probe.complete_records);
+    }
+
+    let mut supports = grouped.into_values().collect::<Vec<_>>();
+    supports.sort_by(|left, right| {
+        right
+            .support_count
+            .cmp(&left.support_count)
+            .then_with(|| right.max_complete_records.cmp(&left.max_complete_records))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    supports
+}
+
+pub fn hash_bytes(data: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn summarize_bytes(data: &[u8]) -> BlockByteSummary {
@@ -437,7 +523,7 @@ fn percent_u32(part: usize, total: usize) -> u32 {
 mod tests {
     use super::{
         BlockGraphicsAnalysis, BlockGraphicsContainer, BlockIndexPlausibility,
-        BlockRecordAlignment, correlate_map_value_range,
+        BlockLayoutAlignmentLabel, BlockRecordAlignment, correlate_map_value_range,
     };
 
     #[test]
@@ -447,6 +533,7 @@ mod tests {
             BlockGraphicsAnalysis::analyze_decoded(BlockGraphicsContainer::Plain, decoded);
 
         assert_eq!(analysis.decoded_len, 140_800);
+        assert_ne!(analysis.decoded_hash, 0);
         assert_eq!(analysis.byte_summary.zero_values, 140_800);
         assert_eq!(analysis.byte_summary.unique_values, 1);
         assert!(
@@ -501,5 +588,25 @@ mod tests {
         assert_eq!(probe.all_zero_records, 2);
         assert_eq!(probe.leading_region_hint.unwrap().bytes, 4);
         assert!(probe.record_entropy_milli_bits.max > probe.record_entropy_milli_bits.min);
+    }
+
+    #[test]
+    fn ranks_layout_alignment_supports_by_aggregate_probe_count() {
+        let mut decoded = Vec::new();
+        decoded.extend_from_slice(&[1u8; 38]);
+        decoded.extend_from_slice(&[2u8; 256]);
+        decoded.extend_from_slice(&[3u8; 256]);
+
+        let analysis =
+            BlockGraphicsAnalysis::analyze_decoded(BlockGraphicsContainer::Plain, decoded);
+        let supports = analysis.layout_alignment_supports();
+
+        let leading = supports
+            .iter()
+            .find(|support| support.label == BlockLayoutAlignmentLabel::LeadingOffset { bytes: 38 })
+            .unwrap();
+        assert!(leading.support_count >= 2);
+        assert!(leading.dimensions.contains(&(8, 8)));
+        assert!(leading.dimensions.contains(&(16, 16)));
     }
 }

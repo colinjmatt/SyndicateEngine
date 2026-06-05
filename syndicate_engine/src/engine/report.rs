@@ -16,7 +16,7 @@ use crate::engine::{
     palette_decode::Palette,
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
-    tab_bank::{TabArchive, TabVariantAnalysis},
+    tab_bank::{TabArchive, TabBank, TabVariantAnalysis},
 };
 
 #[derive(Debug, Clone)]
@@ -36,6 +36,7 @@ pub struct AssetReport {
     tab_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
+    block_cross_container_rows: Vec<String>,
 }
 
 impl AssetReport {
@@ -53,6 +54,7 @@ impl AssetReport {
         let mut tab_rows = Vec::new();
         let mut block_graphics_rows = Vec::new();
         let mut block_analyses = Vec::new();
+        let mut tab_analyses = Vec::new();
 
         for entry in WalkDir::new(root)
             .follow_links(false)
@@ -187,6 +189,8 @@ impl AssetReport {
                 if let (Ok(tab), Ok(dat)) = (fs::read(path), fs::read(&dat_path)) {
                     let analysis = TabVariantAnalysis::analyze(&tab, dat.len());
                     let best = analysis.summary();
+                    let tab_relative = display_relative(root, path);
+                    let archive = TabArchive::parse(&tab, dat.clone());
                     let archive_summary = TabArchive::parse(&tab, dat.clone())
                         .map(|archive| {
                             let sprite = archive
@@ -203,10 +207,16 @@ impl AssetReport {
                             )
                         })
                         .unwrap_or_else(|| "not parsed as 32-bit archive".to_string());
+                    tab_analyses.push(TabBankReportAnalysis {
+                        path: tab_relative.clone(),
+                        dat_len: dat.len(),
+                        best_variant: analysis.best(),
+                        archive_bank: archive.map(|archive| archive.bank),
+                    });
 
                     tab_rows.push(format!(
                         "| `{}` | {} | {} | {} |",
-                        display_relative(root, path),
+                        tab_relative,
                         tab.len(),
                         best,
                         archive_summary
@@ -224,6 +234,7 @@ impl AssetReport {
         tab_rows.sort();
         block_graphics_rows.sort();
         block_analyses.sort_by(|left, right| left.0.cmp(&right.0));
+        tab_analyses.sort_by(|left, right| left.path.cmp(&right.path));
 
         let (
             map_global_summary,
@@ -264,6 +275,10 @@ impl AssetReport {
             tab_rows,
             block_graphics_rows,
             block_map_correlation_rows,
+            block_cross_container_rows: format_block_cross_container_rows(
+                &block_analyses,
+                &tab_analyses,
+            ),
         }
     }
 
@@ -353,6 +368,16 @@ impl AssetReport {
             6,
         );
 
+        markdown.push_str("\n### Cross-container aggregate relation probes\n\n");
+        markdown.push_str("These rows compare BLK-like and TAB/DAT containers using decoded/plain lengths, non-reconstructable content hashes, aggregate layout alignment support, duplicate-file status, and chunk-count compatibility only. Matching values are evidence for candidate relationships, not proof of a render format or semantic role.\n\n");
+        markdown.push_str("| Probe group | Containers | Aggregate relation | Candidate evidence | Conservative note |\n|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.block_cross_container_rows,
+            "no cross-container aggregate relation probes available",
+            5,
+        );
+
         markdown.push_str("\n## Mission inventory\n\n");
         markdown.push_str("| File | Bytes | Container |\n|---|---:|---|\n");
         append_rows_or_empty(
@@ -432,6 +457,14 @@ struct MapReportDiagnostics {
     byte_summary: String,
     inferred_summary: String,
     spatial_summary: String,
+}
+
+#[derive(Debug, Clone)]
+struct TabBankReportAnalysis {
+    path: String,
+    dat_len: usize,
+    best_variant: Option<crate::engine::tab_bank::TabVariantScore>,
+    archive_bank: Option<TabBank>,
 }
 
 fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Option<Vec<u8>>) {
@@ -885,6 +918,182 @@ fn format_block_map_correlation_rows(
         .collect()
 }
 
+fn format_block_cross_container_rows(
+    block_analyses: &[(String, BlockGraphicsAnalysis)],
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    let mut rows = Vec::new();
+    rows.extend(format_duplicate_block_rows(block_analyses));
+    rows.extend(format_mmap_relation_rows(block_analyses));
+    rows.extend(format_layout_support_rows(block_analyses));
+    rows.extend(format_tab_block_relation_rows(block_analyses, tab_analyses));
+    rows
+}
+
+fn format_duplicate_block_rows(block_analyses: &[(String, BlockGraphicsAnalysis)]) -> Vec<String> {
+    let mut by_name: BTreeMap<String, Vec<(&String, &BlockGraphicsAnalysis)>> = BTreeMap::new();
+    for (path, analysis) in block_analyses {
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        by_name.entry(name).or_default().push((path, analysis));
+    }
+
+    by_name
+        .into_iter()
+        .filter_map(|(name, entries)| {
+            (entries.len() > 1).then(|| {
+                let same_decoded_hash = entries
+                    .windows(2)
+                    .all(|pair| pair[0].1.decoded_hash == pair[1].1.decoded_hash);
+                let same_decoded_len = entries
+                    .windows(2)
+                    .all(|pair| pair[0].1.decoded_len == pair[1].1.decoded_len);
+                let containers = entries
+                    .iter()
+                    .map(|(path, _)| format!("`{path}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let lengths = entries
+                    .iter()
+                    .map(|(_, analysis)| analysis.decoded_len.to_string())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let status = if same_decoded_hash {
+                    "matching decoded checksum/hash status"
+                } else if same_decoded_len {
+                    "matching decoded lengths, differing aggregate hash status"
+                } else {
+                    "differing decoded lengths"
+                };
+                format!(
+                    "| duplicate-name candidate `{name}` | {containers} | decoded lengths {lengths}; {status} | non-reconstructable hash comparison only | duplicate status does not prove semantic equivalence across releases |"
+                )
+            })
+        })
+        .collect()
+}
+
+fn format_mmap_relation_rows(block_analyses: &[(String, BlockGraphicsAnalysis)]) -> Vec<String> {
+    let mut rows = Vec::new();
+    for prefix in ["SYNDICAT/DATA", "DATADISK/DATA"] {
+        let mmap = find_block_analysis(block_analyses, &format!("{prefix}/MMAP.DAT"));
+        let mmapout = find_block_analysis(block_analyses, &format!("{prefix}/MMAPOUT.DAT"));
+        let mmapblk = find_block_analysis(block_analyses, &format!("{prefix}/MMAPBLK.DAT"));
+
+        if let (Some(mmap), Some(mmapout)) = (mmap, mmapout) {
+            rows.push(format!(
+                "| MMAP/MMAPOUT length candidate | `{prefix}/MMAP.DAT`, `{prefix}/MMAPOUT.DAT` | decoded/plain length ratio {}:{} ({} permille) | entropy {:.3} vs {:.3} bits/byte; unique {} vs {} | ratio and entropy are aggregate clues only, not a decoded relationship |",
+                mmap.decoded_len,
+                mmapout.decoded_len,
+                ratio_per_mille(mmap.decoded_len, mmapout.decoded_len),
+                mmap.byte_summary.entropy_milli_bits as f32 / 1000.0,
+                mmapout.byte_summary.entropy_milli_bits as f32 / 1000.0,
+                mmap.byte_summary.unique_values,
+                mmapout.byte_summary.unique_values,
+            ));
+        }
+
+        if let (Some(mmap), Some(mmapblk)) = (mmap, mmapblk) {
+            rows.push(format!(
+                "| MMAP/MMAPBLK length candidate | `{prefix}/MMAP.DAT`, `{prefix}/MMAPBLK.DAT` | decoded/plain length ratio {}:{} ({} permille) | MMAPBLK best layout {}; MMAP entropy {:.3}, MMAPBLK entropy {:.3} | low-entropy block data may be masks/metadata; no terrain semantics inferred |",
+                mmap.decoded_len,
+                mmapblk.decoded_len,
+                ratio_per_mille(mmap.decoded_len, mmapblk.decoded_len),
+                mmapblk.best_layout_probe().map(|probe| probe.label()).unwrap_or_else(|| "unavailable".to_string()),
+                mmap.byte_summary.entropy_milli_bits as f32 / 1000.0,
+                mmapblk.byte_summary.entropy_milli_bits as f32 / 1000.0,
+            ));
+        }
+    }
+    rows
+}
+
+fn format_layout_support_rows(block_analyses: &[(String, BlockGraphicsAnalysis)]) -> Vec<String> {
+    block_analyses
+        .iter()
+        .filter_map(|(path, analysis)| {
+            let supports = analysis.layout_alignment_supports();
+            let best = supports.first()?;
+            let dimensions = best
+                .dimensions
+                .iter()
+                .map(|(width, height)| format!("{width}x{height}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!(
+                "| layout-alignment support candidate | `{path}` | {} supported by {} dimensions ({dimensions}) | max complete records {}; decoded length {} | table/header and remainder labels are provisional alignment hints only |",
+                best.label.label(),
+                best.support_count,
+                best.max_complete_records,
+                analysis.decoded_len
+            ))
+        })
+        .collect()
+}
+
+fn format_tab_block_relation_rows(
+    block_analyses: &[(String, BlockGraphicsAnalysis)],
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    let mut rows = Vec::new();
+    for tab in tab_analyses {
+        let Some(bank) = &tab.archive_bank else {
+            continue;
+        };
+        let chunk_count = bank.entry_count();
+        for (path, block) in block_analyses {
+            let candidates = block
+                .record_candidates
+                .iter()
+                .filter(|candidate| candidate.record_count > 0)
+                .filter(|candidate| {
+                    candidate.record_count == chunk_count
+                        || candidate.record_count.abs_diff(chunk_count) <= 2
+                })
+                .map(|candidate| {
+                    format!(
+                        "{}x{}:{}",
+                        candidate.width, candidate.height, candidate.record_count
+                    )
+                })
+                .collect::<Vec<_>>();
+            if candidates.is_empty() {
+                continue;
+            }
+
+            rows.push(format!(
+                "| TAB/DAT chunk-count compatibility candidate | `{}`, `{}` | {} chunks vs block record candidates [{}] | TAB DAT bytes {}; chunk-size range {}..{}; best variant {} | chunk count compatibility is aggregate-only and does not imply sprite/tile format equivalence |",
+                tab.path,
+                path,
+                chunk_count,
+                candidates.join(", "),
+                tab.dat_len,
+                bank.min_chunk_len().unwrap_or(0),
+                bank.max_chunk_len().unwrap_or(0),
+                tab.best_variant
+                    .map(|score| format!("TAB{}", score.offset_width * 8))
+                    .unwrap_or_else(|| "unknown".to_string())
+            ));
+        }
+    }
+    rows
+}
+
+fn find_block_analysis<'a>(
+    block_analyses: &'a [(String, BlockGraphicsAnalysis)],
+    path: &str,
+) -> Option<&'a BlockGraphicsAnalysis> {
+    block_analyses
+        .iter()
+        .find_map(|(candidate_path, analysis)| (candidate_path == path).then_some(analysis))
+}
+
+fn ratio_per_mille(numerator: usize, denominator: usize) -> usize {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator.saturating_mul(1000) / denominator
+}
+
 fn format_block_correlation_note(
     plausibility: BlockIndexPlausibility,
     field: MapCandidateField,
@@ -943,5 +1152,6 @@ mod tests {
         assert!(markdown.contains("Block/tile graphics container candidates"));
         assert!(markdown.contains("Aggregate layout probes"));
         assert!(markdown.contains("MAP substrate to block/tile candidate correlations"));
+        assert!(markdown.contains("Cross-container aggregate relation probes"));
     }
 }
