@@ -10,5 +10,6 @@ pub mod palette;
 pub mod palette_decode;
 pub mod report;
 pub mod rnc;
+pub mod runtime_probe;
 pub mod sprite_decode;
 pub mod tab_bank;

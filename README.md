@@ -56,6 +56,15 @@ cargo run --bin inspect_assets -- ../original_assets ../docs/generated/asset-rep
 
 The report summarizes verified RNC decompression, decoded palettes, and `.TAB`/`.DAT` bank variant scores without copying copyrighted asset bytes into the repository.
 
+Preview the local TAB/sprite runtime-probe manifest without generating the full report:
+
+```bash
+cd syndicate_engine
+cargo run --bin probe_manifest -- ../original_assets
+```
+
+This prints capped aggregate selector IDs, dry-run phases, support tiers, and stop conditions for local clean-room decoder probes. It does not print asset bytes, chunk data, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics.
+
 ## Roadmap
 
 1. Decode Bullfrog `.TAB`/`.DAT` sprite banks into runtime textures.

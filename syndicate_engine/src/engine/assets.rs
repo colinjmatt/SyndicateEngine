@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 use walkdir::WalkDir;
 
-use crate::engine::formats::DecodeDiagnostics;
+use crate::engine::{formats::DecodeDiagnostics, runtime_probe::TabRuntimeProbeManifest};
 
 #[derive(Debug, Clone, Default)]
 pub struct AssetIndex {
@@ -13,6 +13,7 @@ pub struct AssetIndex {
     sprites: Vec<PathBuf>,
     sounds: Vec<PathBuf>,
     diagnostics: DecodeDiagnostics,
+    tab_probe_manifest: TabRuntimeProbeManifest,
     total_files: usize,
 }
 
@@ -60,6 +61,7 @@ impl AssetIndex {
         }
 
         index.diagnostics = DecodeDiagnostics::inspect(&root);
+        index.tab_probe_manifest = TabRuntimeProbeManifest::from_root(&root);
         index.maps.sort();
         index.missions.sort();
         index.palettes.sort();
@@ -91,6 +93,9 @@ impl AssetIndex {
     }
     pub fn diagnostics(&self) -> &DecodeDiagnostics {
         &self.diagnostics
+    }
+    pub fn tab_probe_manifest(&self) -> &TabRuntimeProbeManifest {
+        &self.tab_probe_manifest
     }
 
     pub fn sample_map_name(&self) -> &str {
