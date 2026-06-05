@@ -40,6 +40,8 @@ pub struct AssetReport {
     tab_family_dashboard_rows: Vec<String>,
     tab_family_runtime_probe_rows: Vec<String>,
     tab_family_runtime_probe_queue_rows: Vec<String>,
+    tab_family_runtime_probe_selector_rows: Vec<String>,
+    tab_family_runtime_probe_dry_run_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -282,6 +284,11 @@ impl AssetReport {
             tab_family_runtime_probe_queue_rows: format_tab_family_runtime_probe_queue_rows(
                 &tab_analyses,
             ),
+            tab_family_runtime_probe_selector_rows:
+                format_tab_family_runtime_probe_selector_catalog_rows(&tab_analyses),
+            tab_family_runtime_probe_dry_run_rows: format_tab_family_runtime_probe_dry_run_rows(
+                &tab_analyses,
+            ),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -448,6 +455,26 @@ impl AssetReport {
             6,
         );
 
+        markdown.push_str("\n### TAB/sprite runtime probe selector catalog\n\n");
+        markdown.push_str("These rows assign stable aggregate selector IDs to the capped TAB/sprite runtime-probe workbench tasks. Selector IDs are derived only from family candidate, probe category, support tier, and capped aggregate rank. They are local runtime dry-run handles, not decoded asset identifiers.\n\n");
+        markdown.push_str("| Selector ID | Family candidate | Support tier | Aggregate selector focus | Aggregate evidence | Runtime preconditions | Stop conditions | Conservative limitation |\n|---|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_runtime_probe_selector_rows,
+            "no aggregate TAB/sprite runtime probe selectors available",
+            8,
+        );
+
+        markdown.push_str("\n### TAB/sprite local runtime dry-run ordering\n\n");
+        markdown.push_str("These rows group the selector catalog into capped local-only dry-run phases. Phase ordering keeps metadata grouping, classifier separation, repeated-length buckets, sibling/common-bucket checks, and mixed/unknown audits separate before any decode or render attempt.\n\n");
+        markdown.push_str("| Dry-run phase | Selector IDs | Aggregate phase evidence | Phase ordering rationale | Runtime stop condition | Conservative limitation |\n|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_runtime_probe_dry_run_rows,
+            "no aggregate TAB/sprite runtime dry-run phases available",
+            6,
+        );
+
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
         markdown.push_str("These rows compare the top-ranked sprite-like filename-family candidates using aggregate ratios and bucket sets only. Output is capped to the top three selected families to avoid noisy all-pairs listings. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
         markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Strongest shared compatibility clues | Strongest distinguishing clues | Conservative note |\n|---|---|---|---|---|---|---|---|---|\n");
@@ -599,12 +626,37 @@ struct TabFamilyComparisonSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TabFamilyRuntimeProbeQueueEntry {
+struct TabRuntimeProbeWorkbench {
+    selectors: Vec<TabRuntimeProbeSelector>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabRuntimeProbeSelector {
+    id: String,
+    rank: usize,
     family: &'static str,
+    category: TabRuntimeProbeCategory,
+    support_tier: TabRuntimeProbeSupportTier,
     focus: String,
     evidence: String,
     rationale: String,
     priority: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TabRuntimeProbeCategory {
+    MetadataShape,
+    ClassifierGrouping,
+    FixedLengthBuckets,
+    SiblingCommonBuckets,
+    MixedUnknownAudit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TabRuntimeProbeSupportTier {
+    Strong,
+    Medium,
+    Limited,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2409,11 +2461,47 @@ fn format_runtime_sibling_bucket_probe_group(summary: &TabFamilyRankingSummary) 
 fn format_tab_family_runtime_probe_queue_rows(
     tab_analyses: &[TabBankReportAnalysis],
 ) -> Vec<String> {
-    const MAX_FAMILIES: usize = 3;
-    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
     const MAX_QUEUE_ROWS: usize = 6;
 
-    let mut entries = Vec::new();
+    tab_runtime_probe_workbench(tab_analyses)
+        .selectors
+        .into_iter()
+        .take(MAX_QUEUE_ROWS)
+        .map(|selector| format_runtime_probe_queue_row(&selector))
+        .collect()
+}
+
+fn format_tab_family_runtime_probe_selector_catalog_rows(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    const MAX_SELECTOR_ROWS: usize = 10;
+
+    tab_runtime_probe_workbench(tab_analyses)
+        .selectors
+        .into_iter()
+        .take(MAX_SELECTOR_ROWS)
+        .map(|selector| format_runtime_probe_selector_catalog_row(&selector))
+        .collect()
+}
+
+fn format_tab_family_runtime_probe_dry_run_rows(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    const MAX_DRY_RUN_PHASES: usize = 5;
+
+    let workbench = tab_runtime_probe_workbench(tab_analyses);
+    format_runtime_probe_dry_run_rows(&workbench.selectors)
+        .into_iter()
+        .take(MAX_DRY_RUN_PHASES)
+        .collect()
+}
+
+fn tab_runtime_probe_workbench(tab_analyses: &[TabBankReportAnalysis]) -> TabRuntimeProbeWorkbench {
+    const MAX_FAMILIES: usize = 3;
+    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
+    const MAX_WORKBENCH_SELECTORS: usize = 15;
+
+    let mut selectors = Vec::new();
     for summary in tab_family_ranking_summaries(tab_analyses)
         .into_iter()
         .filter(is_sprite_like_family_candidate)
@@ -2424,89 +2512,102 @@ fn format_tab_family_runtime_probe_queue_rows(
         if archives.is_empty() {
             continue;
         }
+
         let inclusion = format_dashboard_archive_inclusion(
             summary.family,
             archives.len(),
             count_parsed_family_archives(tab_analyses, summary.family),
             MAX_ARCHIVES_PER_FAMILY,
         );
-        entries.extend(runtime_probe_queue_entries_for_family(
+        selectors.extend(runtime_probe_selectors_for_family(
             &summary, &archives, &inclusion,
         ));
     }
 
-    entries.sort_by(|left, right| {
+    selectors.sort_by(|left, right| {
         right
             .priority
             .cmp(&left.priority)
             .then_with(|| left.family.cmp(right.family))
+            .then_with(|| left.category.cmp(&right.category))
             .then_with(|| left.focus.cmp(&right.focus))
     });
-    entries.truncate(MAX_QUEUE_ROWS);
+    selectors.truncate(MAX_WORKBENCH_SELECTORS);
 
-    entries
-        .into_iter()
-        .enumerate()
-        .map(|(index, entry)| format_runtime_probe_queue_row(index + 1, &entry))
-        .collect()
+    for (index, selector) in selectors.iter_mut().enumerate() {
+        selector.rank = index + 1;
+        selector.id = format_runtime_selector_id(
+            selector.family,
+            selector.category,
+            selector.support_tier,
+            selector.rank,
+        );
+    }
+
+    TabRuntimeProbeWorkbench { selectors }
 }
 
-fn runtime_probe_queue_entries_for_family(
+fn runtime_probe_selectors_for_family(
     summary: &TabFamilyRankingSummary,
     archives: &[&TabArchiveSummary],
     inclusion: &str,
-) -> Vec<TabFamilyRuntimeProbeQueueEntry> {
-    let mut entries = Vec::new();
+) -> Vec<TabRuntimeProbeSelector> {
+    let mut selectors = Vec::new();
 
     if let Some(top_metadata) = summary.metadata_shape_supports.first() {
-        entries.push(TabFamilyRuntimeProbeQueueEntry {
-            family: summary.family,
-            focus: format!(
-                "candidate metadata-shape support grouping for `{}`",
-                top_metadata.label
-            ),
-            evidence: format!(
+        selectors.push(make_runtime_probe_selector(
+            summary.family,
+            TabRuntimeProbeCategory::MetadataShape,
+            support_tier_for_per_mille(top_metadata.per_mille),
+            format!("candidate metadata-shape support grouping for `{}`", top_metadata.label),
+            format!(
                 "{inclusion}; support [{}]; {}",
                 format_runtime_metadata_probe_group(summary),
                 format_runtime_queue_entropy_progression(summary)
             ),
-            rationale: format!(
+            format!(
                 "probe before lower metadata-support tasks because strongest candidate support is {} per mille; run after archive cap review using aggregate groups only",
                 top_metadata.per_mille
             ),
-            priority: 12_000
+            50_000
                 + top_metadata.per_mille * 6
                 + summary.metadata_support_score().min(1_000)
                 + runtime_queue_archive_score(summary, archives)
                 + runtime_queue_entropy_consistency_score(summary),
-        });
+        ));
     }
 
     if summary.equal_run_archives > 0 || summary.repeated_pattern_archives > 0 {
-        entries.push(TabFamilyRuntimeProbeQueueEntry {
-            family: summary.family,
-            focus: "repeated fixed-length bucket candidate grouping".to_string(),
-            evidence: format!(
+        let progression_ratio = runtime_queue_progression_per_mille(summary);
+        selectors.push(make_runtime_probe_selector(
+            summary.family,
+            TabRuntimeProbeCategory::FixedLengthBuckets,
+            support_tier_for_per_mille(progression_ratio),
+            "repeated fixed-length bucket selector grouping".to_string(),
+            format!(
                 "{inclusion}; {}; {}; {}",
                 format_runtime_progression_probe_support(summary, archives),
                 format_runtime_length_bucket_probe_group(archives),
                 format_runtime_queue_entropy_progression(summary)
             ),
-            rationale: "probe before sibling bucket comparison when repeated-record support is present; run after metadata grouping if bounded metadata support is stronger".to_string(),
-            priority: 10_000
-                + runtime_queue_progression_per_mille(summary) * 5
+            "probe before sibling bucket comparison when repeated-record support is present; run after metadata grouping if bounded metadata support is stronger".to_string(),
+            30_000
+                + progression_ratio * 5
                 + runtime_queue_length_bucket_support(archives).min(1_000)
                 + runtime_queue_archive_score(summary, archives)
                 + runtime_queue_entropy_consistency_score(summary),
-        });
+        ));
     }
 
     if summary.command_stream_chunks > 0 || summary.raw_chunks > 0 || summary.unknown_chunks > 0 {
         let command_ratio = ratio_per_mille(summary.command_stream_chunks, summary.total_chunks);
-        entries.push(TabFamilyRuntimeProbeQueueEntry {
-            family: summary.family,
-            focus: "command-stream-heavy versus mixed/raw/unknown classifier grouping".to_string(),
-            evidence: format!(
+        selectors.push(make_runtime_probe_selector(
+            summary.family,
+            TabRuntimeProbeCategory::ClassifierGrouping,
+            support_tier_for_per_mille(command_ratio),
+            "command-stream-heavy versus mixed/raw/unknown classifier selector grouping"
+                .to_string(),
+            format!(
                 "{inclusion}; command-stream {} per mille, raw {} per mille, unknown {} per mille; size bands small/medium/large {}/{}/{}; {}",
                 command_ratio,
                 ratio_per_mille(summary.raw_chunks, summary.total_chunks),
@@ -2516,49 +2617,221 @@ fn runtime_probe_queue_entries_for_family(
                 summary.large_chunks,
                 format_runtime_queue_entropy_progression(summary)
             ),
-            rationale: "probe before rendering experiments that mix classifier groups; run after stronger metadata or fixed-length grouping when those aggregate signals dominate".to_string(),
-            priority: 11_000
+            "probe before rendering experiments that mix classifier groups; run after stronger metadata or fixed-length grouping when those aggregate signals dominate".to_string(),
+            40_000
                 + command_ratio * 4
                 + summary.total_chunks.min(1_000)
                 + runtime_queue_archive_score(summary, archives)
                 + runtime_queue_entropy_consistency_score(summary),
-        });
+        ));
+
+        let mixed_unknown_chunks = summary.raw_chunks.saturating_add(summary.unknown_chunks);
+        if mixed_unknown_chunks > 0 {
+            let mixed_unknown_ratio = ratio_per_mille(mixed_unknown_chunks, summary.total_chunks);
+            selectors.push(make_runtime_probe_selector(
+                summary.family,
+                TabRuntimeProbeCategory::MixedUnknownAudit,
+                support_tier_for_per_mille(mixed_unknown_ratio),
+                "fallback mixed/raw/unknown aggregate selector audit".to_string(),
+                format!(
+                    "{inclusion}; raw+unknown {} chunks ({} per mille); command-stream {} chunks ({} per mille); {}",
+                    mixed_unknown_chunks,
+                    mixed_unknown_ratio,
+                    summary.command_stream_chunks,
+                    command_ratio,
+                    format_runtime_queue_entropy_progression(summary)
+                ),
+                "probe after metadata, classifier, repeated-length, and sibling bucket phases; use only to audit unresolved aggregate groups before any render attempt".to_string(),
+                10_000
+                    + mixed_unknown_ratio * 4
+                    + runtime_queue_archive_score(summary, archives)
+                    + runtime_queue_entropy_consistency_score(summary),
+            ));
+        }
     }
 
     if !summary.common_bucket_overlap.is_empty() {
         let focus = if summary.parsed_archives > 1 {
-            "sibling common-size bucket overlap comparison"
+            "sibling common-size bucket selector comparison"
         } else {
-            "single-archive common-size bucket baseline"
+            "single-archive common-size bucket selector baseline"
         };
         let rationale = if summary.parsed_archives > 1 {
             "probe after per-family metadata/classifier grouping; use before lower-overlap sibling tasks because common buckets recur across parsed archives"
         } else {
             "probe after multi-archive sibling tasks because only one parsed archive is available; keep this as a runtime-only local baseline"
         };
-        entries.push(TabFamilyRuntimeProbeQueueEntry {
-            family: summary.family,
-            focus: focus.to_string(),
-            evidence: format!(
+        selectors.push(make_runtime_probe_selector(
+            summary.family,
+            TabRuntimeProbeCategory::SiblingCommonBuckets,
+            sibling_bucket_support_tier(summary),
+            focus.to_string(),
+            format!(
                 "{inclusion}; common bucket support [{}]; {}",
                 format_tab_family_common_bucket_overlap(summary),
                 format_runtime_queue_entropy_progression(summary)
             ),
-            rationale: rationale.to_string(),
-            priority: 8_000
+            rationale.to_string(),
+            20_000
                 + runtime_queue_common_bucket_score(summary)
                 + runtime_queue_archive_score(summary, archives)
                 + runtime_queue_entropy_consistency_score(summary),
-        });
+        ));
     }
 
-    entries
+    selectors
 }
 
-fn format_runtime_probe_queue_row(rank: usize, entry: &TabFamilyRuntimeProbeQueueEntry) -> String {
+fn make_runtime_probe_selector(
+    family: &'static str,
+    category: TabRuntimeProbeCategory,
+    support_tier: TabRuntimeProbeSupportTier,
+    focus: String,
+    evidence: String,
+    rationale: String,
+    priority: usize,
+) -> TabRuntimeProbeSelector {
+    TabRuntimeProbeSelector {
+        id: String::new(),
+        rank: 0,
+        family,
+        category,
+        support_tier,
+        focus,
+        evidence,
+        rationale,
+        priority,
+    }
+}
+
+fn format_runtime_probe_queue_row(selector: &TabRuntimeProbeSelector) -> String {
     format!(
-        "| {rank} | `{}` | {} | {} | {} | runtime-only aggregate probe queue; local runtime inspection may decode user-supplied assets but report rows do not expose bytes, raw headers/chunks, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics; not proof of decoded layout or semantics |",
-        entry.family, entry.focus, entry.evidence, entry.rationale
+        "| {} | `{}` | {} | {} | {} | runtime-only aggregate probe queue; selector `{}` is a local dry-run handle only; local runtime inspection may decode user-supplied assets but report rows do not expose bytes, raw headers/chunks, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics; not proof of decoded layout or semantics |",
+        selector.rank,
+        selector.family,
+        selector.focus,
+        selector.evidence,
+        selector.rationale,
+        selector.id
+    )
+}
+
+fn format_runtime_probe_selector_catalog_row(selector: &TabRuntimeProbeSelector) -> String {
+    format!(
+        "| `{}` | `{}` | {} | {} | {} | {} | {} | runtime-only aggregate selector; not proof of decoded layout or semantics and not an asset identifier |",
+        selector.id,
+        selector.family,
+        selector.support_tier.label(),
+        selector.focus,
+        selector.evidence,
+        format_runtime_selector_preconditions(selector),
+        format_runtime_selector_stop_conditions(selector)
+    )
+}
+
+fn format_runtime_probe_dry_run_rows(selectors: &[TabRuntimeProbeSelector]) -> Vec<String> {
+    let mut grouped: BTreeMap<TabRuntimeProbeCategory, Vec<&TabRuntimeProbeSelector>> =
+        BTreeMap::new();
+    for selector in selectors {
+        grouped.entry(selector.category).or_default().push(selector);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(category, mut selectors)| {
+            selectors.sort_by(|left, right| {
+                left.rank
+                    .cmp(&right.rank)
+                    .then_with(|| left.family.cmp(right.family))
+            });
+            format!(
+                "| {}. {} | {} | {} | {} | {} | runtime-only dry-run phase; aggregate ordering does not decode, render, or prove asset layout or semantics |",
+                category.phase_order(),
+                category.phase_label(),
+                format_runtime_selector_id_list(&selectors),
+                format_runtime_phase_evidence(category, &selectors),
+                category.phase_rationale(),
+                category.phase_stop_condition()
+            )
+        })
+        .collect()
+}
+
+fn format_runtime_selector_id(
+    family: &'static str,
+    category: TabRuntimeProbeCategory,
+    tier: TabRuntimeProbeSupportTier,
+    rank: usize,
+) -> String {
+    format!(
+        "tab-sprite-{}-{}-{}-r{rank:02}",
+        family.to_ascii_lowercase(),
+        category.slug(),
+        tier.slug()
+    )
+}
+
+fn format_runtime_selector_preconditions(selector: &TabRuntimeProbeSelector) -> String {
+    format!(
+        "local user-supplied assets available at runtime; group by aggregate selector `{}` before any decode or render attempt",
+        selector.id
+    )
+}
+
+fn format_runtime_selector_stop_conditions(selector: &TabRuntimeProbeSelector) -> String {
+    match selector.category {
+        TabRuntimeProbeCategory::MetadataShape => "do not infer dimensions, anchors, or commands from metadata-shape ranges alone; do not commit generated previews or decoded asset-derived bytes".to_string(),
+        TabRuntimeProbeCategory::ClassifierGrouping => "do not treat classifier labels as decoded commands, pixels, audio, UI, or gameplay semantics; do not commit generated previews or decoded asset-derived bytes".to_string(),
+        TabRuntimeProbeCategory::FixedLengthBuckets => "do not treat repeated lengths as decoded records or frame dimensions; do not commit generated previews or decoded asset-derived bytes".to_string(),
+        TabRuntimeProbeCategory::SiblingCommonBuckets => "do not treat common buckets as shared layout proof; do not commit generated previews or decoded asset-derived bytes".to_string(),
+        TabRuntimeProbeCategory::MixedUnknownAudit => "do not promote mixed/raw/unknown groups to render semantics without stronger evidence; do not commit generated previews or decoded asset-derived bytes".to_string(),
+    }
+}
+
+fn format_runtime_selector_id_list(selectors: &[&TabRuntimeProbeSelector]) -> String {
+    const MAX_IDS: usize = 4;
+    let mut ids = selectors
+        .iter()
+        .take(MAX_IDS)
+        .map(|selector| format!("`{}`", selector.id))
+        .collect::<Vec<_>>();
+    if selectors.len() > MAX_IDS {
+        ids.push(format!(
+            "{} more capped selectors",
+            selectors.len() - MAX_IDS
+        ));
+    }
+    ids.join("; ")
+}
+
+fn format_runtime_phase_evidence(
+    category: TabRuntimeProbeCategory,
+    selectors: &[&TabRuntimeProbeSelector],
+) -> String {
+    let mut families = selectors
+        .iter()
+        .map(|selector| selector.family)
+        .collect::<Vec<_>>();
+    families.sort_unstable();
+    families.dedup();
+    let mut tiers = selectors
+        .iter()
+        .map(|selector| selector.support_tier.label())
+        .collect::<Vec<_>>();
+    tiers.sort_unstable();
+    tiers.dedup();
+    let ranks = selectors
+        .iter()
+        .map(|selector| selector.rank.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{} aggregate selectors {}; families [{}]; support tiers [{}]; capped ranks [{}]",
+        category.phase_label(),
+        selectors.len(),
+        families.join(", "),
+        tiers.join(", "),
+        ranks
     )
 }
 
@@ -2633,6 +2906,116 @@ fn runtime_queue_entropy_consistency_score(summary: &TabFamilyRankingSummary) ->
         250
     } else {
         0
+    }
+}
+
+fn support_tier_for_per_mille(value: usize) -> TabRuntimeProbeSupportTier {
+    if value >= 600 {
+        TabRuntimeProbeSupportTier::Strong
+    } else if value >= 250 {
+        TabRuntimeProbeSupportTier::Medium
+    } else {
+        TabRuntimeProbeSupportTier::Limited
+    }
+}
+
+fn sibling_bucket_support_tier(summary: &TabFamilyRankingSummary) -> TabRuntimeProbeSupportTier {
+    if summary.parsed_archives > 1 && summary.common_bucket_overlap.len() >= 3 {
+        TabRuntimeProbeSupportTier::Strong
+    } else if !summary.common_bucket_overlap.is_empty() {
+        TabRuntimeProbeSupportTier::Medium
+    } else {
+        TabRuntimeProbeSupportTier::Limited
+    }
+}
+
+impl TabRuntimeProbeCategory {
+    fn slug(self) -> &'static str {
+        match self {
+            Self::MetadataShape => "metadata-shape",
+            Self::ClassifierGrouping => "classifier-grouping",
+            Self::FixedLengthBuckets => "fixed-length-buckets",
+            Self::SiblingCommonBuckets => "sibling-common-buckets",
+            Self::MixedUnknownAudit => "mixed-unknown-audit",
+        }
+    }
+
+    fn phase_label(self) -> &'static str {
+        match self {
+            Self::MetadataShape => "metadata-shape grouping",
+            Self::ClassifierGrouping => "command-stream-heavy separation",
+            Self::FixedLengthBuckets => "repeated fixed-length bucket grouping",
+            Self::SiblingCommonBuckets => "sibling/common bucket comparison",
+            Self::MixedUnknownAudit => "fallback mixed/unknown audit",
+        }
+    }
+
+    fn phase_order(self) -> usize {
+        match self {
+            Self::MetadataShape => 1,
+            Self::ClassifierGrouping => 2,
+            Self::FixedLengthBuckets => 3,
+            Self::SiblingCommonBuckets => 4,
+            Self::MixedUnknownAudit => 5,
+        }
+    }
+
+    fn phase_rationale(self) -> &'static str {
+        match self {
+            Self::MetadataShape => {
+                "start with bounded aggregate metadata-shape groups before classifier or length probes"
+            }
+            Self::ClassifierGrouping => {
+                "separate command-stream-heavy aggregate groups before any render-oriented experiment"
+            }
+            Self::FixedLengthBuckets => {
+                "group repeated fixed-length candidates after metadata/classifier separation"
+            }
+            Self::SiblingCommonBuckets => {
+                "compare sibling/common buckets only after per-family groups are established"
+            }
+            Self::MixedUnknownAudit => {
+                "audit unresolved mixed/raw/unknown selectors last and keep them local-only"
+            }
+        }
+    }
+
+    fn phase_stop_condition(self) -> &'static str {
+        match self {
+            Self::MetadataShape => {
+                "stop before treating ranges as decoded dimensions, anchors, or commands"
+            }
+            Self::ClassifierGrouping => {
+                "stop before treating classifier labels as decoded commands, pixels, audio, UI, or gameplay semantics"
+            }
+            Self::FixedLengthBuckets => {
+                "stop before treating repeated lengths as decoded records or frame dimensions"
+            }
+            Self::SiblingCommonBuckets => {
+                "stop before treating common buckets as proof of shared layout"
+            }
+            Self::MixedUnknownAudit => {
+                "stop before promoting mixed/raw/unknown aggregates to render semantics"
+            }
+        }
+    }
+}
+
+impl TabRuntimeProbeSupportTier {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Strong => "strong aggregate support",
+            Self::Medium => "medium aggregate support",
+            Self::Limited => "limited aggregate support",
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Strong => "strong",
+            Self::Medium => "medium",
+            Self::Limited => "limited",
+        }
     }
 }
 
@@ -3774,6 +4157,155 @@ mod tests {
     }
 
     #[test]
+    fn formats_runtime_probe_selector_catalog_with_stable_ids_and_stop_conditions() {
+        let id = super::format_runtime_selector_id(
+            "HSPR",
+            super::TabRuntimeProbeCategory::MetadataShape,
+            super::TabRuntimeProbeSupportTier::Strong,
+            1,
+        );
+        assert_eq!(id, "tab-sprite-hspr-metadata-shape-strong-r01");
+
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows = super::format_tab_family_runtime_probe_selector_catalog_rows(&[
+            hspr_a, hspr_b, mspr, sound,
+        ]);
+        let joined = rows.join("\n");
+
+        assert!(!rows.is_empty());
+        assert!(rows.len() <= 10);
+        assert!(joined.contains("tab-sprite-"));
+        assert!(joined.contains("-r01"));
+        assert!(
+            joined.contains("strong aggregate support")
+                || joined.contains("medium aggregate support")
+        );
+        assert!(joined.contains("local user-supplied assets available at runtime"));
+        assert!(joined.contains("group by aggregate selector"));
+        assert!(joined.contains("do not infer dimensions, anchors, or commands"));
+        assert!(joined.contains("do not commit generated previews or decoded asset-derived bytes"));
+        assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn orders_runtime_probe_dry_run_phases_from_selector_workbench() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+
+        let rows = super::format_tab_family_runtime_probe_dry_run_rows(&[hspr_a, hspr_b, mspr]);
+        let joined = rows.join("\n");
+
+        assert!(!rows.is_empty());
+        assert!(rows[0].starts_with("| 1. metadata-shape grouping |"));
+        assert!(joined.contains("2. command-stream-heavy separation"));
+        assert!(joined.contains("3. repeated fixed-length bucket grouping"));
+        assert!(joined.contains("4. sibling/common bucket comparison"));
+        assert!(joined.contains("5. fallback mixed/unknown audit"));
+        assert!(joined.contains("tab-sprite-"));
+        assert!(joined.contains("support tiers"));
+        assert!(joined.contains("capped ranks"));
+        assert!(joined.contains("stop before"));
+        assert!(joined.contains("runtime-only dry-run phase"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_runtime_probe_selector_catalog_families_archives_and_rows_without_bytes() {
+        let mut analyses = (0..6)
+            .map(|index| {
+                make_tab_report_analysis(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        analyses.push(make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![chunk_with_prefix([8, 12, 0, 0], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![chunk_with_prefix([8, 12, 1, 1], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        ));
+
+        let rows = super::format_tab_family_runtime_probe_selector_catalog_rows(&analyses);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 10);
+        assert!(joined.contains("capped at 4/6 parsed archives"));
+        assert!(joined.contains("tab-sprite-hspr"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("aggregate selector"));
+        assert!(joined.contains("do not commit generated previews"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
@@ -3784,6 +4316,8 @@ mod tests {
         assert!(markdown.contains("TAB/sprite investigation dashboard"));
         assert!(markdown.contains("TAB/sprite runtime-probe planning diagnostics"));
         assert!(markdown.contains("TAB/sprite cross-family runtime-probe queue diagnostics"));
+        assert!(markdown.contains("TAB/sprite runtime probe selector catalog"));
+        assert!(markdown.contains("TAB/sprite local runtime dry-run ordering"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
@@ -3793,6 +4327,8 @@ mod tests {
         );
         assert!(markdown.contains("no aggregate TAB/sprite runtime-probe plans available"));
         assert!(markdown.contains("no aggregate TAB/sprite runtime-probe queue entries available"));
+        assert!(markdown.contains("no aggregate TAB/sprite runtime probe selectors available"));
+        assert!(markdown.contains("no aggregate TAB/sprite runtime dry-run phases available"));
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
