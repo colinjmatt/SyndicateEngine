@@ -67,6 +67,21 @@ pub struct SpriteHeaderShapeCount {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpriteMetadataShapeKind {
+    LeadingU8Dimensions,
+    LeadingLeU16Dimensions,
+    LeadingLeU16Offsets,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteMetadataShapeProbe {
+    pub kind: SpriteMetadataShapeKind,
+    pub support_count: usize,
+    pub first_value: SpriteDistributionSummary,
+    pub second_value: SpriteDistributionSummary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpriteSizeBandCounts {
     pub small: usize,
     pub medium: usize,
@@ -80,6 +95,7 @@ pub struct SpriteBankAggregateSummary {
     pub kind_aggregates: Vec<SpriteKindAggregate>,
     pub kind_by_size_bucket: Vec<SpriteKindBySizeBucket>,
     pub header_shape_counts: Vec<SpriteHeaderShapeCount>,
+    pub metadata_shape_probes: Vec<SpriteMetadataShapeProbe>,
 }
 
 impl SpriteChunkKind {
@@ -125,6 +141,16 @@ impl SpriteChunkHeaderShape {
             Self::StartsWithHighByteCandidate => "leading-high-byte command candidate",
             Self::CompactPairCandidate => "compact leading-pair metadata candidate",
             Self::Other => "other leading-byte pattern",
+        }
+    }
+}
+
+impl SpriteMetadataShapeKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LeadingU8Dimensions => "candidate leading u8 width/height range",
+            Self::LeadingLeU16Dimensions => "candidate leading le-u16 width/height range",
+            Self::LeadingLeU16Offsets => "candidate leading le-u16 offset-pair range",
         }
     }
 }
@@ -252,6 +278,74 @@ impl SpriteBankAggregateSummary {
             kind_aggregates,
             kind_by_size_bucket,
             header_shape_counts,
+            metadata_shape_probes: probe_metadata_shapes(infos),
+        }
+    }
+}
+
+fn probe_metadata_shapes(infos: &[SpriteChunkInfo]) -> Vec<SpriteMetadataShapeProbe> {
+    [
+        SpriteMetadataShapeKind::LeadingU8Dimensions,
+        SpriteMetadataShapeKind::LeadingLeU16Dimensions,
+        SpriteMetadataShapeKind::LeadingLeU16Offsets,
+    ]
+    .into_iter()
+    .filter_map(|kind| probe_metadata_shape(kind, infos))
+    .collect()
+}
+
+fn probe_metadata_shape(
+    kind: SpriteMetadataShapeKind,
+    infos: &[SpriteChunkInfo],
+) -> Option<SpriteMetadataShapeProbe> {
+    let values = infos
+        .iter()
+        .filter_map(|info| metadata_shape_values(kind, info))
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then(|| SpriteMetadataShapeProbe {
+        kind,
+        support_count: values.len(),
+        first_value: distribution_summary(values.iter().map(|(first, _)| *first)),
+        second_value: distribution_summary(values.iter().map(|(_, second)| *second)),
+    })
+}
+
+fn metadata_shape_values(
+    kind: SpriteMetadataShapeKind,
+    info: &SpriteChunkInfo,
+) -> Option<(u32, u32)> {
+    match kind {
+        SpriteMetadataShapeKind::LeadingU8Dimensions => {
+            if info.len < 2 {
+                return None;
+            }
+            let width = info.first_bytes[0] as u32;
+            let height = info.first_bytes[1] as u32;
+            let area = width.saturating_mul(height);
+            ((1..=128).contains(&width)
+                && (1..=128).contains(&height)
+                && area <= info.len.saturating_mul(4) as u32)
+                .then_some((width, height))
+        }
+        SpriteMetadataShapeKind::LeadingLeU16Dimensions => {
+            if info.len < 4 {
+                return None;
+            }
+            let width = u16::from_le_bytes([info.first_bytes[0], info.first_bytes[1]]) as u32;
+            let height = u16::from_le_bytes([info.first_bytes[2], info.first_bytes[3]]) as u32;
+            let area = width.saturating_mul(height);
+            ((1..=512).contains(&width)
+                && (1..=512).contains(&height)
+                && area <= info.len.saturating_mul(8) as u32)
+                .then_some((width, height))
+        }
+        SpriteMetadataShapeKind::LeadingLeU16Offsets => {
+            if info.len < 4 {
+                return None;
+            }
+            let first = u16::from_le_bytes([info.first_bytes[0], info.first_bytes[1]]) as u32;
+            let second = u16::from_le_bytes([info.first_bytes[2], info.first_bytes[3]]) as u32;
+            (first <= info.len as u32 && second <= info.len as u32).then_some((first, second))
         }
     }
 }
@@ -380,5 +474,25 @@ mod tests {
                 .sum::<usize>()
                 > 0
         }));
+        assert!(!summary.metadata_shape_probes.is_empty());
+    }
+
+    #[test]
+    fn probes_candidate_metadata_shapes_without_exposing_header_bytes() {
+        let mut chunk_a = vec![1; 128];
+        chunk_a[..4].copy_from_slice(&[16, 24, 8, 0]);
+        let mut chunk_b = vec![2; 256];
+        chunk_b[..4].copy_from_slice(&[32, 32, 10, 0]);
+        let chunks = [chunk_a.as_slice(), chunk_b.as_slice()];
+        let summary = SpriteBankAggregateSummary::from_chunks(chunks);
+
+        let u8_dims = summary
+            .metadata_shape_probes
+            .iter()
+            .find(|probe| probe.kind == super::SpriteMetadataShapeKind::LeadingU8Dimensions)
+            .unwrap();
+        assert_eq!(u8_dims.support_count, 2);
+        assert_eq!(u8_dims.first_value.min, 16);
+        assert_eq!(u8_dims.second_value.max, 32);
     }
 }

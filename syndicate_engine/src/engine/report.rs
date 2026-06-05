@@ -1034,7 +1034,7 @@ fn format_tab_archive_summary(summary: &TabArchiveSummary) -> String {
 
 fn format_tab_bank_summary(summary: &TabBankSummary) -> String {
     format!(
-        "{} chunks; len min/med/max {}/{}/{} bytes; size entropy {:.3} bits; offsets first/last {}; duplicate offsets {}, zero-length candidates {}; common sizes [{}]",
+        "{} chunks; len min/med/max {}/{}/{} bytes; size entropy {:.3} bits; offsets first/last {}; duplicate offsets {}, zero-length candidates {}; common sizes [{}]; chunk-length progression [{}]",
         summary.chunk_count,
         summary.min_chunk_len,
         summary.median_chunk_len,
@@ -1043,7 +1043,8 @@ fn format_tab_bank_summary(summary: &TabBankSummary) -> String {
         format_tab_offset_sanity(summary),
         summary.duplicate_offset_count,
         summary.zero_len_chunks,
-        format_tab_common_size_buckets(summary)
+        format_tab_common_size_buckets(summary),
+        format_tab_chunk_length_progression(summary)
     )
 }
 
@@ -1088,16 +1089,61 @@ fn format_tab_candidate_size_matches(summary: &TabBankSummary) -> String {
     format!("exact fixed tile-byte candidate matches [{matches}]")
 }
 
+fn format_tab_chunk_length_progression(summary: &TabBankSummary) -> String {
+    let longest_run = if summary.longest_equal_len_run.run_chunks > 0 {
+        format!(
+            "longest equal-size run {} chunks of {} bytes",
+            summary.longest_equal_len_run.run_chunks, summary.longest_equal_len_run.len
+        )
+    } else {
+        "no equal-size run candidates".to_string()
+    };
+    let deltas = if summary.common_adjacent_len_deltas.is_empty() {
+        "adjacent deltas none".to_string()
+    } else {
+        format!(
+            "common adjacent deltas {}",
+            summary
+                .common_adjacent_len_deltas
+                .iter()
+                .map(|delta| format!("{:+}:{}", delta.delta, delta.count))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let patterns = if summary.repeated_len_patterns.is_empty() {
+        "repeated size-pattern candidates none".to_string()
+    } else {
+        format!(
+            "repeated size-pattern candidates {}",
+            summary
+                .repeated_len_patterns
+                .iter()
+                .map(|pattern| format!(
+                    "len{} x{} range {}..{}",
+                    pattern.pattern_len,
+                    pattern.repeats,
+                    pattern.min_chunk_len,
+                    pattern.max_chunk_len
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!("{longest_run}; {deltas}; {patterns}")
+}
+
 fn format_sprite_bank_aggregate(summary: &SpriteBankAggregateSummary) -> String {
     format!(
-        "classifier counts [{}]; size bands small/medium/large {}/{}/{}; classifier-by-size [{}]; zero/high-byte ratio min/med/max by classifier [{}]; candidate header-shapes [{}]",
+        "classifier counts [{}]; size bands small/medium/large {}/{}/{}; classifier-by-size [{}]; zero/high-byte ratio min/med/max by classifier [{}]; candidate header-shapes [{}]; candidate metadata-shapes [{}]",
         format_tab_sprite_kind_counts_from_aggregate(summary),
         summary.size_band_counts.small,
         summary.size_band_counts.medium,
         summary.size_band_counts.large,
         format_sprite_kind_by_size_buckets(summary),
         format_sprite_kind_ratio_summaries(summary),
-        format_sprite_header_shapes(summary)
+        format_sprite_header_shapes(summary),
+        format_sprite_metadata_shapes(summary)
     )
 }
 
@@ -1168,6 +1214,27 @@ fn format_sprite_header_shapes(summary: &SpriteBankAggregateSummary) -> String {
         .join(", ")
 }
 
+fn format_sprite_metadata_shapes(summary: &SpriteBankAggregateSummary) -> String {
+    if summary.metadata_shape_probes.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .metadata_shape_probes
+        .iter()
+        .map(|probe| {
+            format!(
+                "{}:{} chunks, first min/med/max {}, second min/med/max {}",
+                probe.kind.label(),
+                probe.support_count,
+                format_u32_distribution(probe.first_value),
+                format_u32_distribution(probe.second_value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn format_per_mille_distribution(summary: SpriteDistributionSummary) -> String {
     format!(
         "{:.3}/{:.3}/{:.3}",
@@ -1175,6 +1242,10 @@ fn format_per_mille_distribution(summary: SpriteDistributionSummary) -> String {
         summary.median as f32 / 1000.0,
         summary.max as f32 / 1000.0
     )
+}
+
+fn format_u32_distribution(summary: SpriteDistributionSummary) -> String {
+    format!("{}/{}/{}", summary.min, summary.median, summary.max)
 }
 
 fn format_tab_family_relation_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
@@ -1416,6 +1487,7 @@ mod tests {
         assert!(formatted.contains("classifier-by-size"));
         assert!(formatted.contains("zero/high-byte ratio min/med/max"));
         assert!(formatted.contains("candidate header-shapes"));
+        assert!(formatted.contains("candidate metadata-shapes"));
         assert!(!formatted.contains("ff 00 fe 00"));
     }
 }

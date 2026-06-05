@@ -41,6 +41,9 @@ pub struct TabBankSummary {
     pub chunk_len_entropy_milli_bits: u32,
     pub common_chunk_len_buckets: Vec<TabChunkLenBucket>,
     pub exact_candidate_size_matches: Vec<TabCandidateSizeMatch>,
+    pub longest_equal_len_run: TabEqualLenRun,
+    pub common_adjacent_len_deltas: Vec<TabAdjacentLenDelta>,
+    pub repeated_len_patterns: Vec<TabRepeatedLenPattern>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +56,26 @@ pub struct TabChunkLenBucket {
 pub struct TabCandidateSizeMatch {
     pub bytes_per_chunk: usize,
     pub count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabEqualLenRun {
+    pub len: u32,
+    pub run_chunks: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabAdjacentLenDelta {
+    pub delta: i32,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabRepeatedLenPattern {
+    pub pattern_len: usize,
+    pub repeats: usize,
+    pub min_chunk_len: u32,
+    pub max_chunk_len: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,11 +288,16 @@ fn ratio_per_mille(numerator: usize, denominator: usize) -> usize {
 }
 
 fn summarize_bank(bank: &TabBank, _dat: Option<&[u8]>) -> TabBankSummary {
-    let mut lengths = bank
+    let ordered_lengths = bank
         .entries
         .iter()
         .map(|entry| entry.len)
         .collect::<Vec<_>>();
+    let longest_equal_len_run = longest_equal_len_run(&ordered_lengths);
+    let common_adjacent_len_deltas = common_adjacent_len_deltas(&ordered_lengths);
+    let repeated_len_patterns = repeated_len_patterns(&ordered_lengths);
+
+    let mut lengths = ordered_lengths.clone();
     lengths.sort_unstable();
 
     let mut offsets = bank
@@ -324,7 +352,105 @@ fn summarize_bank(bank: &TabBank, _dat: Option<&[u8]>) -> TabBankSummary {
         chunk_len_entropy_milli_bits: chunk_len_entropy_milli_bits(&frequency, lengths.len()),
         common_chunk_len_buckets,
         exact_candidate_size_matches,
+        longest_equal_len_run,
+        common_adjacent_len_deltas,
+        repeated_len_patterns,
     }
+}
+
+fn longest_equal_len_run(lengths: &[u32]) -> TabEqualLenRun {
+    let Some(&first) = lengths.first() else {
+        return TabEqualLenRun {
+            len: 0,
+            run_chunks: 0,
+        };
+    };
+
+    let mut best = TabEqualLenRun {
+        len: first,
+        run_chunks: 1,
+    };
+    let mut current = best;
+    for &len in &lengths[1..] {
+        if len == current.len {
+            current.run_chunks += 1;
+        } else {
+            if current.run_chunks > best.run_chunks {
+                best = current;
+            }
+            current = TabEqualLenRun { len, run_chunks: 1 };
+        }
+    }
+    if current.run_chunks > best.run_chunks {
+        best = current;
+    }
+    best
+}
+
+fn common_adjacent_len_deltas(lengths: &[u32]) -> Vec<TabAdjacentLenDelta> {
+    let mut counts = BTreeMap::new();
+    for pair in lengths.windows(2) {
+        let delta = pair[1] as i64 - pair[0] as i64;
+        if let Ok(delta) = i32::try_from(delta) {
+            *counts.entry(delta).or_insert(0usize) += 1;
+        }
+    }
+    let mut deltas = counts
+        .into_iter()
+        .map(|(delta, count)| TabAdjacentLenDelta { delta, count })
+        .collect::<Vec<_>>();
+    deltas.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.delta.abs().cmp(&right.delta.abs()))
+            .then_with(|| left.delta.cmp(&right.delta))
+    });
+    deltas.truncate(5);
+    deltas
+}
+
+fn repeated_len_patterns(lengths: &[u32]) -> Vec<TabRepeatedLenPattern> {
+    let mut candidates = Vec::new();
+    for pattern_len in 2..=4 {
+        if lengths.len() < pattern_len * 2 {
+            continue;
+        }
+        let mut index = 0;
+        while index + pattern_len * 2 <= lengths.len() {
+            let pattern = &lengths[index..index + pattern_len];
+            let mut repeats = 1;
+            while index + (repeats + 1) * pattern_len <= lengths.len()
+                && &lengths[index + repeats * pattern_len..index + (repeats + 1) * pattern_len]
+                    == pattern
+            {
+                repeats += 1;
+            }
+            if repeats >= 2 {
+                let min_chunk_len = pattern.iter().copied().min().unwrap_or(0);
+                let max_chunk_len = pattern.iter().copied().max().unwrap_or(0);
+                candidates.push(TabRepeatedLenPattern {
+                    pattern_len,
+                    repeats,
+                    min_chunk_len,
+                    max_chunk_len,
+                });
+                index += repeats * pattern_len;
+            } else {
+                index += 1;
+            }
+        }
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .repeats
+            .cmp(&left.repeats)
+            .then_with(|| left.pattern_len.cmp(&right.pattern_len))
+            .then_with(|| left.min_chunk_len.cmp(&right.min_chunk_len))
+            .then_with(|| left.max_chunk_len.cmp(&right.max_chunk_len))
+    });
+    candidates.truncate(5);
+    candidates
 }
 
 fn chunk_len_entropy_milli_bits(frequency: &BTreeMap<u32, usize>, total: usize) -> u32 {
@@ -414,6 +540,33 @@ mod tests {
                 .map(|entry| entry.count)
                 .sum::<usize>(),
             4
+        );
+    }
+
+    #[test]
+    fn summarizes_chunk_length_progression_without_bytes() {
+        let offsets = [0u32, 10, 20, 25, 35, 45, 50, 60, 70]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        let archive = TabArchive::parse(&offsets, vec![1; 70]).unwrap();
+        let summary = archive.aggregate_summary();
+
+        assert_eq!(summary.bank.longest_equal_len_run.len, 10);
+        assert_eq!(summary.bank.longest_equal_len_run.run_chunks, 2);
+        assert!(
+            summary
+                .bank
+                .common_adjacent_len_deltas
+                .iter()
+                .any(|delta| delta.delta == 0 && delta.count >= 1)
+        );
+        assert!(
+            summary
+                .bank
+                .repeated_len_patterns
+                .iter()
+                .any(|pattern| pattern.pattern_len == 3 && pattern.repeats == 2)
         );
     }
 }
