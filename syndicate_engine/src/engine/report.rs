@@ -38,6 +38,7 @@ pub struct AssetReport {
     tab_family_hint_rows: Vec<String>,
     tab_family_archive_evidence_rows: Vec<String>,
     tab_family_dashboard_rows: Vec<String>,
+    tab_family_runtime_probe_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -276,6 +277,7 @@ impl AssetReport {
             tab_family_dashboard_rows: format_tab_family_investigation_dashboard_rows(
                 &tab_analyses,
             ),
+            tab_family_runtime_probe_rows: format_tab_family_runtime_probe_plan_rows(&tab_analyses),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -420,6 +422,16 @@ impl AssetReport {
             &self.tab_family_dashboard_rows,
             "no aggregate TAB/sprite investigation dashboard rows available",
             6,
+        );
+
+        markdown.push_str("\n### TAB/sprite runtime-probe planning diagnostics\n\n");
+        markdown.push_str("These rows convert the top selected TAB/sprite dashboard families into capped aggregate-only runtime probe plans. They identify safe local-only probe groups by chunk-length buckets, candidate leading metadata-shape support, classifier grouping, and sibling common-bucket comparison. They do not decode or render assets and do not expose bytes, raw headers/chunks, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics.\n\n");
+        markdown.push_str("| Family candidate | Probe category | Archive inclusion and cap | Aggregate probe group | Support summary | Runtime-only probe note | Conservative limitation |\n|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_runtime_probe_rows,
+            "no aggregate TAB/sprite runtime-probe plans available",
+            7,
         );
 
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
@@ -2187,6 +2199,190 @@ fn format_dashboard_next_probes(summary: &TabFamilyRankingSummary) -> String {
     probes.join("; ")
 }
 
+fn format_tab_family_runtime_probe_plan_rows(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    const MAX_FAMILIES: usize = 3;
+    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
+    const MAX_ROWS_PER_FAMILY: usize = 4;
+
+    tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .filter(is_sprite_like_family_candidate)
+        .take(MAX_FAMILIES)
+        .flat_map(|summary| {
+            let archives =
+                selected_family_archives(tab_analyses, summary.family, MAX_ARCHIVES_PER_FAMILY);
+            let inclusion = format_dashboard_archive_inclusion(
+                summary.family,
+                archives.len(),
+                count_parsed_family_archives(tab_analyses, summary.family),
+                MAX_ARCHIVES_PER_FAMILY,
+            );
+            runtime_probe_plan_rows_for_family(&summary, &archives, &inclusion)
+                .into_iter()
+                .take(MAX_ROWS_PER_FAMILY)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn runtime_probe_plan_rows_for_family(
+    summary: &TabFamilyRankingSummary,
+    archives: &[&TabArchiveSummary],
+    inclusion: &str,
+) -> Vec<String> {
+    if archives.is_empty() {
+        return Vec::new();
+    }
+
+    vec![
+        format_runtime_probe_plan_row(
+            summary.family,
+            "fixed-length repeated-record candidate groups",
+            inclusion,
+            format_runtime_length_bucket_probe_group(archives),
+            format_runtime_progression_probe_support(summary, archives),
+            "runtime-only aggregate probe plan: group local chunks by repeated chunk-length buckets before any decode/render attempt",
+        ),
+        format_runtime_probe_plan_row(
+            summary.family,
+            "candidate leading metadata-shape groups",
+            inclusion,
+            format_runtime_metadata_probe_group(summary),
+            format_tab_family_metadata_support(summary),
+            "runtime-only aggregate probe plan: compare bounded leading metadata-shape support groups without treating ranges as decoded dimensions or anchors",
+        ),
+        format_runtime_probe_plan_row(
+            summary.family,
+            "classifier grouping",
+            inclusion,
+            format_runtime_classifier_probe_group(summary),
+            format!(
+                "command-stream {} per mille, raw {} per mille, unknown {} per mille",
+                ratio_per_mille(summary.command_stream_chunks, summary.total_chunks),
+                ratio_per_mille(summary.raw_chunks, summary.total_chunks),
+                ratio_per_mille(summary.unknown_chunks, summary.total_chunks)
+            ),
+            "runtime-only aggregate probe plan: separate command-stream-heavy candidates from mixed/raw/unknown groups before rendering experiments",
+        ),
+        format_runtime_probe_plan_row(
+            summary.family,
+            "sibling common-bucket comparison",
+            inclusion,
+            format_runtime_sibling_bucket_probe_group(summary),
+            format!(
+                "{} parsed archives; common bucket support [{}]",
+                summary.parsed_archives,
+                format_tab_family_common_bucket_overlap(summary)
+            ),
+            "runtime-only aggregate probe plan: compare sibling archive common-size buckets locally; matching buckets are not proof of shared layout or semantics",
+        ),
+    ]
+}
+
+fn format_runtime_probe_plan_row(
+    family: &'static str,
+    category: &str,
+    inclusion: &str,
+    group: String,
+    support: String,
+    note: &str,
+) -> String {
+    format!(
+        "| `{family}` | {category} | {inclusion} | {group} | {support} | {note} | aggregate probe plan only; local runtime inspection may decode user-supplied assets but report rows do not expose bytes, raw headers/chunks, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics |"
+    )
+}
+
+fn format_runtime_length_bucket_probe_group(archives: &[&TabArchiveSummary]) -> String {
+    let mut buckets = BTreeMap::new();
+    for archive in archives {
+        for bucket in &archive.bank.common_chunk_len_buckets {
+            *buckets.entry(bucket.len).or_insert(0usize) += bucket.count;
+        }
+    }
+    let mut buckets = buckets
+        .into_iter()
+        .map(|(len, count)| (count, len))
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    buckets.truncate(4);
+    if buckets.is_empty() {
+        return "no repeated chunk-length buckets selected".to_string();
+    }
+    format!(
+        "candidate chunk-length buckets [{}]",
+        buckets
+            .into_iter()
+            .map(|(count, len)| format!("{len} bytes:{count} chunks"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn format_runtime_progression_probe_support(
+    summary: &TabFamilyRankingSummary,
+    archives: &[&TabArchiveSummary],
+) -> String {
+    let chunk_min = archives
+        .iter()
+        .map(|archive| archive.bank.chunk_count)
+        .min()
+        .unwrap_or(0);
+    let chunk_max = archives
+        .iter()
+        .map(|archive| archive.bank.chunk_count)
+        .max()
+        .unwrap_or(0);
+    format!(
+        "chunk count range {chunk_min}..{chunk_max}; equal-size run archives {}/{}; repeated size-pattern archives {}/{}",
+        summary.equal_run_archives,
+        summary.parsed_archives,
+        summary.repeated_pattern_archives,
+        summary.parsed_archives
+    )
+}
+
+fn format_runtime_metadata_probe_group(summary: &TabFamilyRankingSummary) -> String {
+    if summary.metadata_shape_supports.is_empty() {
+        return "no bounded candidate leading metadata-shape groups selected".to_string();
+    }
+    summary
+        .metadata_shape_supports
+        .iter()
+        .take(3)
+        .map(|support| {
+            format!(
+                "{}:{} chunks ({} per mille)",
+                support.label, support.support_count, support.per_mille
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_runtime_classifier_probe_group(summary: &TabFamilyRankingSummary) -> String {
+    format!(
+        "command-stream-heavy candidates {}; mixed/raw candidates {}; unknown candidates {}; size bands small/medium/large {}/{}/{}",
+        summary.command_stream_chunks,
+        summary.raw_chunks,
+        summary.unknown_chunks,
+        summary.small_chunks,
+        summary.medium_chunks,
+        summary.large_chunks
+    )
+}
+
+fn format_runtime_sibling_bucket_probe_group(summary: &TabFamilyRankingSummary) -> String {
+    if summary.common_bucket_overlap.is_empty() {
+        return "no sibling common-size bucket group selected".to_string();
+    }
+    format!(
+        "sibling archive common-size bucket groups [{}]",
+        format_tab_family_common_bucket_overlap(summary)
+    )
+}
+
 fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
     tab_family_comparison_summaries(tab_analyses)
         .into_iter()
@@ -3133,6 +3329,95 @@ mod tests {
     }
 
     #[test]
+    fn formats_runtime_probe_plans_with_aggregate_groups_and_conservative_language() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows = super::format_tab_family_runtime_probe_plan_rows(&[hspr_a, hspr_b, mspr, sound]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 8);
+        assert!(joined.contains("`HSPR`"));
+        assert!(joined.contains("`MSPR`"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("fixed-length repeated-record candidate groups"));
+        assert!(joined.contains("candidate leading metadata-shape groups"));
+        assert!(joined.contains("classifier grouping"));
+        assert!(joined.contains("sibling common-bucket comparison"));
+        assert!(joined.contains("candidate chunk-length buckets"));
+        assert!(joined.contains("per mille"));
+        assert!(joined.contains("runtime-only aggregate probe plan"));
+        assert!(joined.contains("aggregate probe plan only"));
+        assert!(joined.contains("not proof") || joined.contains("without treating ranges"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_runtime_probe_plan_families_and_archives_without_bytes() {
+        let mut analyses = (0..6)
+            .map(|index| {
+                make_tab_report_analysis(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        analyses.push(make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![chunk_with_prefix([8, 12, 0, 0], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![chunk_with_prefix([8, 12, 1, 1], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        ));
+
+        let rows = super::format_tab_family_runtime_probe_plan_rows(&analyses);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 12);
+        assert!(joined.contains("capped at 4/6 parsed archives"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("do not expose bytes, raw headers/chunks"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
@@ -3141,6 +3426,7 @@ mod tests {
         assert!(markdown.contains("TAB/sprite family next-investigation hints"));
         assert!(markdown.contains("TAB/sprite top-priority archive evidence rows"));
         assert!(markdown.contains("TAB/sprite investigation dashboard"));
+        assert!(markdown.contains("TAB/sprite runtime-probe planning diagnostics"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
@@ -3148,6 +3434,7 @@ mod tests {
         assert!(
             markdown.contains("no aggregate TAB/sprite investigation dashboard rows available")
         );
+        assert!(markdown.contains("no aggregate TAB/sprite runtime-probe plans available"));
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
