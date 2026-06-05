@@ -37,6 +37,7 @@ pub struct AssetReport {
     tab_family_ranking_rows: Vec<String>,
     tab_family_hint_rows: Vec<String>,
     tab_family_archive_evidence_rows: Vec<String>,
+    tab_family_dashboard_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -272,6 +273,9 @@ impl AssetReport {
             tab_family_archive_evidence_rows: format_tab_family_archive_evidence_rows(
                 &tab_analyses,
             ),
+            tab_family_dashboard_rows: format_tab_family_investigation_dashboard_rows(
+                &tab_analyses,
+            ),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -406,6 +410,16 @@ impl AssetReport {
             &self.tab_family_archive_evidence_rows,
             "no capped per-archive TAB/sprite evidence rows available",
             8,
+        );
+
+        markdown.push_str("\n### TAB/sprite investigation dashboard\n\n");
+        markdown.push_str("This compact dashboard combines capped within-family aggregate consistency, selection rationale, and conservative runtime-only next probes for the top selected sprite-like filename families. It uses only counts, ranges, ratios, entropy summaries, progression labels, and common-size bucket overlap/distinction. Hypotheses are clean-room investigation prompts, not decoded layouts or semantics.\n\n");
+        markdown.push_str("| Family candidate | Archive inclusion and cap | Selection rationale | Within-family aggregate consistency | Runtime-only next probes | Conservative limitation |\n|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_dashboard_rows,
+            "no aggregate TAB/sprite investigation dashboard rows available",
+            6,
         );
 
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
@@ -1899,6 +1913,280 @@ fn format_archive_entropy_bucket_summary(summary: &TabArchiveSummary) -> String 
     )
 }
 
+fn format_tab_family_investigation_dashboard_rows(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    const MAX_FAMILIES: usize = 3;
+    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
+
+    tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .filter(is_sprite_like_family_candidate)
+        .take(MAX_FAMILIES)
+        .filter_map(|summary| {
+            let family_archives = selected_family_archives(
+                tab_analyses,
+                summary.family,
+                MAX_ARCHIVES_PER_FAMILY,
+            );
+            (!family_archives.is_empty()).then(|| {
+                format!(
+                    "| `{}` | {} | {} | {} | {} | {} |",
+                    summary.family,
+                    format_dashboard_archive_inclusion(
+                        summary.family,
+                        family_archives.len(),
+                        count_parsed_family_archives(tab_analyses, summary.family),
+                        MAX_ARCHIVES_PER_FAMILY
+                    ),
+                    format_dashboard_selection_rationale(&summary),
+                    format_dashboard_family_consistency(&family_archives, &summary),
+                    format_dashboard_next_probes(&summary),
+                    "aggregate consistency and runtime-only next-probe hypotheses only; no bytes, raw headers, chunks, decoded dimensions, anchors, commands, pixels, audio, UI, or gameplay semantics"
+                )
+            })
+        })
+        .collect()
+}
+
+fn selected_family_archives<'a>(
+    tab_analyses: &'a [TabBankReportAnalysis],
+    family: &'static str,
+    limit: usize,
+) -> Vec<&'a TabArchiveSummary> {
+    tab_analyses
+        .iter()
+        .filter(|analysis| tab_file_family(&analysis.path) == family)
+        .filter_map(|analysis| analysis.archive_summary.as_ref())
+        .take(limit)
+        .collect()
+}
+
+fn count_parsed_family_archives(
+    tab_analyses: &[TabBankReportAnalysis],
+    family: &'static str,
+) -> usize {
+    tab_analyses
+        .iter()
+        .filter(|analysis| tab_file_family(&analysis.path) == family)
+        .filter(|analysis| analysis.archive_summary.is_some())
+        .count()
+}
+
+fn format_dashboard_archive_inclusion(
+    family: &'static str,
+    included_archives: usize,
+    total_archives: usize,
+    cap: usize,
+) -> String {
+    let cap_status = if total_archives > included_archives {
+        format!("capped at {included_archives}/{total_archives} parsed archives")
+    } else {
+        format!("included {included_archives}/{total_archives} parsed archives")
+    };
+    format!(
+        "top selected `{family}` sprite-like family candidate; {cap_status}; per-family dashboard cap {cap} archives"
+    )
+}
+
+fn format_dashboard_selection_rationale(summary: &TabFamilyRankingSummary) -> String {
+    format!(
+        "selected by aggregate ranking: {}; {}; {}; {}",
+        tab_family_investigation_priority(summary),
+        tab_family_metadata_hint(summary),
+        dominant_classifier_hint(summary),
+        tab_family_entropy_bucket_hint(summary)
+    )
+}
+
+fn format_dashboard_family_consistency(
+    archives: &[&TabArchiveSummary],
+    summary: &TabFamilyRankingSummary,
+) -> String {
+    format!(
+        "archive count {}; chunk-count/range {}; shared metadata-shape candidates {}; classifier-by-size-band {}; common bucket overlap/distinction {}; entropy spread {:.3}..{:.3} bits; progression agreement {}",
+        archives.len(),
+        format_dashboard_chunk_range_consistency(archives),
+        format_dashboard_metadata_consistency(archives),
+        format_dashboard_classifier_band_consistency(archives),
+        format_tab_family_common_bucket_overlap(summary),
+        summary.min_entropy_milli_bits as f32 / 1000.0,
+        summary.max_entropy_milli_bits as f32 / 1000.0,
+        format_dashboard_progression_agreement(archives)
+    )
+}
+
+fn format_dashboard_chunk_range_consistency(archives: &[&TabArchiveSummary]) -> String {
+    if archives.is_empty() {
+        return "no parsed archives".to_string();
+    }
+
+    let min_chunks = archives
+        .iter()
+        .map(|archive| archive.bank.chunk_count)
+        .min()
+        .unwrap_or(0);
+    let max_chunks = archives
+        .iter()
+        .map(|archive| archive.bank.chunk_count)
+        .max()
+        .unwrap_or(0);
+    let min_len = archives
+        .iter()
+        .map(|archive| archive.bank.min_chunk_len)
+        .min()
+        .unwrap_or(0);
+    let max_len = archives
+        .iter()
+        .map(|archive| archive.bank.max_chunk_len)
+        .max()
+        .unwrap_or(0);
+    let label = if min_chunks == max_chunks {
+        "consistent chunk counts"
+    } else {
+        "varied chunk counts"
+    };
+    format!("{label} {min_chunks}..{max_chunks}; chunk len range {min_len}..{max_len} bytes")
+}
+
+fn format_dashboard_metadata_consistency(archives: &[&TabArchiveSummary]) -> String {
+    let mut counts = BTreeMap::new();
+    for archive in archives {
+        for probe in &archive.sprite_bank.metadata_shape_probes {
+            *counts.entry(probe.kind.label()).or_insert(0usize) += 1;
+        }
+    }
+    if counts.is_empty() {
+        return "no shared bounded candidate metadata-shapes".to_string();
+    }
+
+    counts
+        .into_iter()
+        .map(|(label, archive_count)| {
+            let ratio = ratio_per_mille(archive_count, archives.len());
+            format!(
+                "{label} in {archive_count}/{} archives ({ratio} per mille)",
+                archives.len()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_dashboard_classifier_band_consistency(archives: &[&TabArchiveSummary]) -> String {
+    let mut dominant_labels = archives
+        .iter()
+        .map(|archive| dominant_archive_classifier_band_label(archive))
+        .collect::<Vec<_>>();
+    dominant_labels.sort();
+    dominant_labels.dedup();
+    if dominant_labels.len() == 1 {
+        format!(
+            "consistent dominant aggregate band `{}`",
+            dominant_labels[0]
+        )
+    } else {
+        format!(
+            "mixed dominant aggregate bands [{}]",
+            dominant_labels.join(", ")
+        )
+    }
+}
+
+fn dominant_archive_classifier_band_label(archive: &TabArchiveSummary) -> String {
+    archive
+        .sprite_bank
+        .kind_by_size_bucket
+        .iter()
+        .flat_map(|bucket| {
+            bucket.kind_counts.iter().map(move |count| {
+                (
+                    count.count,
+                    format!(
+                        "{} {}",
+                        bucket.bucket.label(),
+                        count.kind.conservative_label()
+                    ),
+                )
+            })
+        })
+        .max_by_key(|(count, label)| (*count, std::cmp::Reverse(label.clone())))
+        .map(|(_, label)| label)
+        .unwrap_or_else(|| "no classifier-by-size-band aggregate".to_string())
+}
+
+fn format_dashboard_progression_agreement(archives: &[&TabArchiveSummary]) -> String {
+    let equal_run_archives = archives
+        .iter()
+        .filter(|archive| archive.bank.longest_equal_len_run.run_chunks >= 2)
+        .count();
+    let repeated_pattern_archives = archives
+        .iter()
+        .filter(|archive| !archive.bank.repeated_len_patterns.is_empty())
+        .count();
+    if equal_run_archives == archives.len() && repeated_pattern_archives == archives.len() {
+        "agreement: equal-size runs and repeated size-pattern candidates in all included archives"
+            .to_string()
+    } else if equal_run_archives > 0 || repeated_pattern_archives > 0 {
+        format!(
+            "partial agreement: equal-size runs {}/{}, repeated size-pattern candidates {}/{}",
+            equal_run_archives,
+            archives.len(),
+            repeated_pattern_archives,
+            archives.len()
+        )
+    } else {
+        "disagreement/limited support: no repeated progression pattern selected in included archives".to_string()
+    }
+}
+
+fn format_dashboard_next_probes(summary: &TabFamilyRankingSummary) -> String {
+    let mut probes = Vec::new();
+    if summary.equal_run_archives > 0 || summary.repeated_pattern_archives > 0 {
+        probes.push(
+            "runtime-only next probe: inspect repeated fixed-length command/control-record candidates"
+                .to_string(),
+        );
+    }
+    if summary
+        .metadata_shape_supports
+        .iter()
+        .any(|support| support.label.contains("offset-pair"))
+    {
+        probes.push(
+            "runtime-only next probe: inspect candidate leading offset-pair metadata shape"
+                .to_string(),
+        );
+    } else if summary.metadata_support_score() > 0 {
+        probes.push(
+            "runtime-only next probe: compare bounded candidate leading metadata-shape groups"
+                .to_string(),
+        );
+    }
+
+    let command_ratio = ratio_per_mille(summary.command_stream_chunks, summary.total_chunks);
+    if command_ratio >= 500 {
+        probes.push(
+            "runtime-only next probe: separate command-stream-heavy chunks from mixed raw/unknown chunks before rendering attempts"
+                .to_string(),
+        );
+    }
+    if !summary.common_bucket_overlap.is_empty() {
+        probes.push(
+            "runtime-only next probe: compare common-size bucket groups across sibling archives"
+                .to_string(),
+        );
+    }
+    if probes.is_empty() {
+        probes.push(
+            "runtime-only next probe: gather more aggregate consistency before attempting layout hypotheses"
+                .to_string(),
+        );
+    }
+    probes.truncate(4);
+    probes.join("; ")
+}
+
 fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
     tab_family_comparison_summaries(tab_analyses)
         .into_iter()
@@ -2748,6 +3036,103 @@ mod tests {
     }
 
     #[test]
+    fn formats_investigation_dashboard_with_selection_consistency_and_hypotheses() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows =
+            super::format_tab_family_investigation_dashboard_rows(&[hspr_a, hspr_b, mspr, sound]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 2);
+        assert!(joined.contains("TAB") || joined.contains("HSPR"));
+        assert!(joined.contains("`HSPR`"));
+        assert!(joined.contains("`MSPR`"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("top selected"));
+        assert!(joined.contains("selected by aggregate ranking"));
+        assert!(joined.contains("Within-family") || joined.contains("archive count"));
+        assert!(joined.contains("shared metadata-shape candidates"));
+        assert!(joined.contains("classifier-by-size-band"));
+        assert!(joined.contains("common bucket overlap/distinction"));
+        assert!(joined.contains("progression agreement"));
+        assert!(joined.contains("runtime-only next probe"));
+        assert!(
+            joined.contains("fixed-length command/control-record")
+                || joined.contains("common-size bucket groups")
+        );
+        assert!(
+            joined.contains("aggregate consistency and runtime-only next-probe hypotheses only")
+        );
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_investigation_dashboard_families_and_archives_without_bytes() {
+        let mut analyses = (0..6)
+            .map(|index| {
+                make_tab_report_analysis(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        analyses.push(make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![chunk_with_prefix([8, 12, 0, 0], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![chunk_with_prefix([8, 12, 1, 1], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        ));
+
+        let rows = super::format_tab_family_investigation_dashboard_rows(&analyses);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 3);
+        assert!(joined.contains("capped at 4/6 parsed archives"));
+        assert!(joined.contains("per-family dashboard cap 4 archives"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
@@ -2755,10 +3140,14 @@ mod tests {
         assert!(markdown.contains("TAB/sprite family aggregate ranking candidates"));
         assert!(markdown.contains("TAB/sprite family next-investigation hints"));
         assert!(markdown.contains("TAB/sprite top-priority archive evidence rows"));
+        assert!(markdown.contains("TAB/sprite investigation dashboard"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
         assert!(markdown.contains("no capped per-archive TAB/sprite evidence rows available"));
+        assert!(
+            markdown.contains("no aggregate TAB/sprite investigation dashboard rows available")
+        );
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
