@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use crate::engine::{
-    map_decode::MapDatAnalysis,
+    map_decode::{ByteLaneStats, MapDatAnalysis, MapInferredLayerPreview, MapPrimaryGridAnalysis},
     palette_decode::Palette,
     rnc::RncBlock,
     sprite_decode::SpriteChunkInfo,
@@ -19,6 +19,7 @@ pub struct AssetReport {
     extension_counts: BTreeMap<String, usize>,
     compressed_rows: Vec<String>,
     map_rows: Vec<String>,
+    map_diagnostic_rows: Vec<String>,
     mission_rows: Vec<String>,
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
@@ -32,6 +33,7 @@ impl AssetReport {
         let mut extension_counts = BTreeMap::new();
         let mut compressed_rows = Vec::new();
         let mut map_rows = Vec::new();
+        let mut map_diagnostic_rows = Vec::new();
         let mut mission_rows = Vec::new();
         let mut palette_rows = Vec::new();
         let mut compressed_palette_rows = Vec::new();
@@ -61,11 +63,19 @@ impl AssetReport {
             *extension_counts.entry(ext).or_insert(0) += 1;
 
             if name.starts_with("MAP") && name.ends_with(".DAT") {
+                let (container, diagnostics) = map_decode_report_fields(path);
                 map_rows.push(format!(
                     "| `{}` | {} | {} |",
                     display_relative(root, path),
                     size,
-                    map_decode_status(path)
+                    container
+                ));
+                map_diagnostic_rows.push(format!(
+                    "| `{}` | {} | {} | {} |",
+                    display_relative(root, path),
+                    diagnostics.word_summary,
+                    diagnostics.byte_summary,
+                    diagnostics.inferred_summary
                 ));
             }
 
@@ -171,6 +181,7 @@ impl AssetReport {
 
         compressed_rows.sort();
         map_rows.sort();
+        map_diagnostic_rows.sort();
         mission_rows.sort();
         palette_rows.sort();
         compressed_palette_rows.sort();
@@ -182,6 +193,7 @@ impl AssetReport {
             extension_counts,
             compressed_rows,
             map_rows,
+            map_diagnostic_rows,
             mission_rows,
             palette_rows,
             compressed_palette_rows,
@@ -223,6 +235,16 @@ impl AssetReport {
         markdown.push_str("\n## Map inventory\n\n");
         markdown.push_str("| File | Bytes | Container |\n|---|---:|---|\n");
         append_rows_or_empty(&mut markdown, &self.map_rows, "no MAP*.DAT files found", 3);
+
+        markdown.push_str("\n## MAP primary-cell field diagnostics\n\n");
+        markdown.push_str("These rows summarize aggregate diagnostics over the 64x64x12 primary section only. Word and byte-lane names are provisional candidates, not final terrain semantics.\n\n");
+        markdown.push_str("| File | Three u32 word ranges | Candidate byte lanes | Inferred layer preview |\n|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.map_diagnostic_rows,
+            "no MAP*.DAT diagnostics available",
+            4,
+        );
 
         markdown.push_str("\n## Mission inventory\n\n");
         markdown.push_str("| File | Bytes | Container |\n|---|---:|---|\n");
@@ -297,14 +319,105 @@ fn compressed_status(path: &Path) -> String {
         .unwrap_or_else(|| "plain/unknown".to_string())
 }
 
-fn map_decode_status(path: &Path) -> String {
-    fs::read(path)
-        .ok()
-        .map(|data| match MapDatAnalysis::analyze_file_bytes(&data) {
-            Ok(analysis) => analysis.short_label(),
-            Err(err) => format!("map decode error {err:?}"),
+#[derive(Debug, Clone)]
+struct MapReportDiagnostics {
+    word_summary: String,
+    byte_summary: String,
+    inferred_summary: String,
+}
+
+fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics) {
+    let fallback = MapReportDiagnostics {
+        word_summary: "-".to_string(),
+        byte_summary: "-".to_string(),
+        inferred_summary: "-".to_string(),
+    };
+
+    let Ok(data) = fs::read(path) else {
+        return ("unreadable".to_string(), fallback);
+    };
+
+    match MapDatAnalysis::analyze_file_bytes(&data) {
+        Ok(analysis) => {
+            let diagnostics = match &analysis.payload.primary_grid {
+                Some(grid) => MapReportDiagnostics {
+                    word_summary: format_word_summary(grid),
+                    byte_summary: format_candidate_byte_lanes(grid),
+                    inferred_summary: analysis
+                        .payload
+                        .inferred_layer_preview
+                        .as_ref()
+                        .map(format_inferred_summary)
+                        .unwrap_or_else(|| "unavailable".to_string()),
+                },
+                None => fallback,
+            };
+            (analysis.short_label(), diagnostics)
+        }
+        Err(err) => (format!("map decode error {err:?}"), fallback),
+    }
+}
+
+fn format_word_summary(grid: &MapPrimaryGridAnalysis) -> String {
+    grid.word_stats
+        .iter()
+        .enumerate()
+        .map(|(index, stats)| {
+            format!(
+                "w{index}=0x{:08x}..0x{:08x}, unique {}, zero {}",
+                stats.min, stats.max, stats.unique_values, stats.zero_values
+            )
         })
-        .unwrap_or_else(|| "unreadable".to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_candidate_byte_lanes(grid: &MapPrimaryGridAnalysis) -> String {
+    [0usize, 4, 8]
+        .into_iter()
+        .map(|index| format_byte_lane(index, &grid.byte_stats[index]))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_byte_lane(index: usize, stats: &ByteLaneStats) -> String {
+    let top_values = stats
+        .top_values
+        .iter()
+        .map(|entry| format!("0x{:02x}:{}", entry.value, entry.count))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "b{index}=0x{:02x}..0x{:02x}, unique {}, zero {}, top [{}]",
+        stats.min, stats.max, stats.unique_values, stats.zero_values, top_values
+    )
+}
+
+fn format_inferred_summary(preview: &MapInferredLayerPreview) -> String {
+    let class_counts = preview
+        .class_counts
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count > 0)
+        .map(|(class, count)| {
+            format!(
+                "{}:{}",
+                MapInferredLayerPreview::class_label(class as u8),
+                *count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{}; class counts [{}]; unique low bytes w0/b0 {}, w1/b4 {}, w2/b8 {}, height b{} {}",
+        preview.summary_label(),
+        class_counts,
+        preview.surface_unique,
+        preview.detail_unique,
+        preview.reference_unique,
+        preview.height_lane,
+        preview.height_unique
+    )
 }
 
 fn rnc_decode_status(block: &RncBlock<'_>) -> String {

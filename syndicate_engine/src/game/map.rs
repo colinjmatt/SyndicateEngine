@@ -1,7 +1,7 @@
 use crate::engine::{
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
-    map_decode::MapSignaturePreview,
+    map_decode::{MapInferredLayerPreview, MapSignaturePreview},
     palette,
 };
 use crate::game::pathfinding::GridPos;
@@ -150,6 +150,49 @@ impl TacticalMap {
             }
         }
     }
+
+    pub fn draw_inferred_layer_preview(
+        &self,
+        camera: &CameraRig,
+        preview: &MapInferredLayerPreview,
+    ) {
+        for y in 0..preview.height {
+            for x in 0..preview.width {
+                let Some(cell) = preview.cell(x, y) else {
+                    continue;
+                };
+                let z = cell.height_class as f32 * 0.06;
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
+                draw_iso_tile(
+                    center,
+                    inferred_tile_color(cell.visual_class, cell.height_class),
+                    Color::new(0.01, 0.012, 0.016, 0.58),
+                );
+            }
+        }
+    }
+}
+
+fn inferred_tile_color(class: u8, height_class: u8) -> Color {
+    let base = match class {
+        0 => Color::from_rgba(42, 50, 56, 255),
+        1 => Color::from_rgba(82, 124, 89, 255),
+        2 => Color::from_rgba(126, 116, 76, 255),
+        3 => Color::from_rgba(77, 112, 152, 255),
+        4 => Color::from_rgba(134, 102, 153, 255),
+        5 => Color::from_rgba(165, 107, 70, 255),
+        _ => Color::from_rgba(205, 205, 205, 255),
+    };
+    brighten(base, height_class as f32 * 0.035)
+}
+
+fn brighten(color: Color, amount: f32) -> Color {
+    Color::new(
+        (color.r + amount).min(1.0),
+        (color.g + amount).min(1.0),
+        (color.b + amount).min(1.0),
+        color.a,
+    )
 }
 
 fn signature_tile_color(class: u8) -> Color {

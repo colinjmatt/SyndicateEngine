@@ -30,6 +30,7 @@ const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
 enum MapRenderMode {
     DemoCity,
     DecodedSignature,
+    InferredLayer,
 }
 
 impl MapRenderMode {
@@ -37,6 +38,7 @@ impl MapRenderMode {
         match self {
             Self::DemoCity => "demo city",
             Self::DecodedSignature => "MAP01 signatures",
+            Self::InferredLayer => "MAP01 inferred layer",
         }
     }
 }
@@ -124,7 +126,14 @@ impl WorldState {
 
             self.render_mode = match self.render_mode {
                 MapRenderMode::DemoCity => MapRenderMode::DecodedSignature,
-                MapRenderMode::DecodedSignature => MapRenderMode::DemoCity,
+                MapRenderMode::DecodedSignature => self
+                    .assets
+                    .diagnostics()
+                    .map_inferred_preview
+                    .as_ref()
+                    .map(|_| MapRenderMode::InferredLayer)
+                    .unwrap_or(MapRenderMode::DemoCity),
+                MapRenderMode::InferredLayer => MapRenderMode::DemoCity,
             };
             self.combat_log = format!("View mode: {}", self.render_mode.label());
         }
@@ -260,6 +269,13 @@ impl WorldState {
             MapRenderMode::DecodedSignature => {
                 if let Some(preview) = self.assets.diagnostics().map_preview.as_ref() {
                     self.map.draw_signature_preview(&self.camera, preview);
+                } else {
+                    self.map.draw(&self.camera);
+                }
+            }
+            MapRenderMode::InferredLayer => {
+                if let Some(preview) = self.assets.diagnostics().map_inferred_preview.as_ref() {
+                    self.map.draw_inferred_layer_preview(&self.camera, preview);
                 } else {
                     self.map.draw(&self.camera);
                 }

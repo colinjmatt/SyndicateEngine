@@ -24,7 +24,9 @@ These notes track observed asset-format behaviour from locally supplied original
 - Remaining decoded bytes form a variable tail. Observed tails are aligned to 12-byte records, suggesting additional map/object records, but those records are not semantically decoded yet.
 - The generated report lists primary-cell uniqueness, empty-cell counts, and tail record counts as aggregate diagnostics only; it does not include asset bytes.
 - The HUD can render an abstract 64x64 cell-signature preview for `MAP01.DAT`. Colours represent frequency-ranked exact 12-byte cell signatures, not decoded terrain types.
-- Press `M` in the prototype to toggle the main world view between the playable hand-authored demo city and the decoded `MAP01.DAT` signature preview. Gameplay/pathfinding still uses the demo tactical grid until the map fields are named.
+- The analyzer now also reports per-word ranges and candidate low-byte lanes (`b0`, `b4`, `b8`) for the three 32-bit words, plus top byte-value counts. These are aggregate field diagnostics only.
+- A gated inferred-layer preview derives low-risk visual channels from dominant byte-lane baselines: word-0 low byte as a surface candidate, word-1 low byte as a detail candidate, word-2 low byte as a reference candidate, and the narrowest varying high byte as a height-like candidate. These labels are deliberately provisional and should not be treated as final terrain/building semantics.
+- Press `M` in the prototype to cycle the main world view between the playable hand-authored demo city, the decoded `MAP01.DAT` signature preview, and the provisional inferred-layer preview. Gameplay/pathfinding still uses the demo tactical grid until the map fields are named.
 
 ## TAB/DAT banks
 

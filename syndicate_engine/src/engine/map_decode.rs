@@ -15,6 +15,13 @@ pub const MAP_CELL_BYTES: usize = 12;
 pub const MAP_CELL_COUNT: usize = MAP_WIDTH_CANDIDATE * MAP_HEIGHT_CANDIDATE;
 pub const MAP_PRIMARY_SECTION_LEN: usize = MAP_CELL_COUNT * MAP_CELL_BYTES;
 pub const MAP_SIGNATURE_PREVIEW_CLASSES: usize = 16;
+pub const MAP_INFERRED_LAYER_CLASSES: usize = 6;
+pub const MAP_INFERRED_CLASS_BASELINE: u8 = 0;
+pub const MAP_INFERRED_CLASS_SURFACE: u8 = 1;
+pub const MAP_INFERRED_CLASS_DETAIL: u8 = 2;
+pub const MAP_INFERRED_CLASS_REFERENCE: u8 = 3;
+pub const MAP_INFERRED_CLASS_HEIGHT: u8 = 4;
+pub const MAP_INFERRED_CLASS_MIXED: u8 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapDatAnalysis {
@@ -39,6 +46,7 @@ pub struct MapPayloadAnalysis {
     pub primary_grid: Option<MapPrimaryGridAnalysis>,
     pub tail: MapTailAnalysis,
     pub signature_preview: Option<MapSignaturePreview>,
+    pub inferred_layer_preview: Option<MapInferredLayerPreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +58,7 @@ pub struct MapPrimaryGridAnalysis {
     pub unique_cells: usize,
     pub empty_cells: usize,
     pub word_stats: [WordStats; 3],
+    pub byte_stats: [ByteLaneStats; MAP_CELL_BYTES],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +67,21 @@ pub struct WordStats {
     pub max: u32,
     pub unique_values: usize,
     pub zero_values: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteLaneStats {
+    pub min: u8,
+    pub max: u8,
+    pub unique_values: usize,
+    pub zero_values: usize,
+    pub top_values: Vec<ByteFrequency>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteFrequency {
+    pub value: u8,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +104,31 @@ pub struct MapSignaturePreview {
     pub visual_classes: usize,
     pub unique_signatures: usize,
     pub dominant_signature_cells: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapInferredLayerPreview {
+    pub width: usize,
+    pub height: usize,
+    pub cells: Vec<u8>,
+    pub height_classes: Vec<u8>,
+    pub visual_classes: usize,
+    pub class_counts: [usize; MAP_INFERRED_LAYER_CLASSES],
+    pub surface_baseline: u8,
+    pub detail_baseline: u8,
+    pub reference_baseline: u8,
+    pub height_lane: usize,
+    pub height_baseline: u8,
+    pub surface_unique: usize,
+    pub detail_unique: usize,
+    pub reference_unique: usize,
+    pub height_unique: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapInferredLayerCell {
+    pub visual_class: u8,
+    pub height_class: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,8 +188,13 @@ impl MapPayloadAnalysis {
                     )
                 })
                 .unwrap_or_default();
+            let inferred = self
+                .inferred_layer_preview
+                .as_ref()
+                .map(|preview| format!("; inferred {}", preview.summary_label()))
+                .unwrap_or_default();
             format!(
-                "{}x{}x{} primary cells, {} unique, {} empty; tail {} bytes ({} x 12-byte records){}",
+                "{}x{}x{} primary cells, {} unique, {} empty; tail {} bytes ({} x 12-byte records){}{}",
                 grid.width,
                 grid.height,
                 grid.bytes_per_cell,
@@ -148,13 +202,60 @@ impl MapPayloadAnalysis {
                 grid.empty_cells,
                 self.tail.len,
                 self.tail.record_count_12,
-                preview
+                preview,
+                inferred
             )
         } else {
             format!(
                 "{} bytes; below {}-byte 64x64x12 primary-section candidate",
                 self.len, MAP_PRIMARY_SECTION_LEN
             )
+        }
+    }
+}
+
+impl MapInferredLayerPreview {
+    pub fn cell(&self, x: usize, y: usize) -> Option<MapInferredLayerCell> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let index = y * self.width + x;
+        Some(MapInferredLayerCell {
+            visual_class: *self.cells.get(index)?,
+            height_class: *self.height_classes.get(index)?,
+        })
+    }
+
+    pub fn dominant_class_percent(&self) -> u8 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+        let dominant = self.class_counts.iter().copied().max().unwrap_or(0);
+        ((dominant * 100 + self.cells.len() / 2) / self.cells.len()) as u8
+    }
+
+    pub fn summary_label(&self) -> String {
+        format!(
+            "{} classes, dominant {}%, baselines w0:b0=0x{:02x} w1:b4=0x{:02x} w2:b8=0x{:02x}, height candidate b{}=0x{:02x}",
+            self.visual_classes,
+            self.dominant_class_percent(),
+            self.surface_baseline,
+            self.detail_baseline,
+            self.reference_baseline,
+            self.height_lane,
+            self.height_baseline
+        )
+    }
+
+    pub fn class_label(class: u8) -> &'static str {
+        match class {
+            MAP_INFERRED_CLASS_BASELINE => "baseline candidate",
+            MAP_INFERRED_CLASS_SURFACE => "word0 surface candidate",
+            MAP_INFERRED_CLASS_DETAIL => "word1 detail candidate",
+            MAP_INFERRED_CLASS_REFERENCE => "word2 reference candidate",
+            MAP_INFERRED_CLASS_HEIGHT => "height-lane candidate",
+            MAP_INFERRED_CLASS_MIXED => "mixed candidate",
+            _ => "unknown candidate",
         }
     }
 }
@@ -202,6 +303,7 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
                 record_count_12: 0,
             },
             signature_preview: None,
+            inferred_layer_preview: None,
         };
     }
 
@@ -211,6 +313,9 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
     let mut empty_cells = 0;
     let mut word_values = [BTreeSet::new(), BTreeSet::new(), BTreeSet::new()];
     let mut zero_values = [0usize; 3];
+    let mut byte_values: [BTreeSet<u8>; MAP_CELL_BYTES] = Default::default();
+    let mut byte_frequencies: [BTreeMap<u8, usize>; MAP_CELL_BYTES] = Default::default();
+    let mut byte_zero_values = [0usize; MAP_CELL_BYTES];
 
     for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
         let mut record_bytes = [0; MAP_CELL_BYTES];
@@ -219,6 +324,13 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             empty_cells += 1;
         }
         unique_cells.insert(record_bytes);
+        for (index, &byte) in record_bytes.iter().enumerate() {
+            if byte == 0 {
+                byte_zero_values[index] += 1;
+            }
+            byte_values[index].insert(byte);
+            *byte_frequencies[index].entry(byte).or_insert(0) += 1;
+        }
 
         if let Some(record) = MapCellRecord::parse(chunk) {
             for (index, value) in record.words.into_iter().enumerate() {
@@ -237,6 +349,14 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
         zero_values: zero_values[index],
     });
 
+    let byte_stats = std::array::from_fn(|index| ByteLaneStats {
+        min: byte_values[index].first().copied().unwrap_or_default(),
+        max: byte_values[index].last().copied().unwrap_or_default(),
+        unique_values: byte_values[index].len(),
+        zero_values: byte_zero_values[index],
+        top_values: top_byte_values(&byte_frequencies[index], 4),
+    });
+
     MapPayloadAnalysis {
         len: data.len(),
         primary_grid: Some(MapPrimaryGridAnalysis {
@@ -247,6 +367,7 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             unique_cells: unique_cells.len(),
             empty_cells,
             word_stats,
+            byte_stats,
         }),
         tail: MapTailAnalysis {
             len: tail_len,
@@ -254,6 +375,117 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             record_count_12: tail_len / MAP_CELL_BYTES,
         },
         signature_preview: Some(build_signature_preview(primary)),
+        inferred_layer_preview: Some(build_inferred_layer_preview(primary, &byte_frequencies)),
+    }
+}
+
+fn top_byte_values(frequencies: &BTreeMap<u8, usize>, limit: usize) -> Vec<ByteFrequency> {
+    let mut ranked = frequencies
+        .iter()
+        .map(|(&value, &count)| ByteFrequency { value, count })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    ranked.truncate(limit);
+    ranked
+}
+
+fn dominant_byte(frequencies: &BTreeMap<u8, usize>) -> u8 {
+    top_byte_values(frequencies, 1)
+        .first()
+        .map(|entry| entry.value)
+        .unwrap_or_default()
+}
+
+fn select_candidate_height_lane(byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES]) -> usize {
+    const CANDIDATE_LANES: [usize; 9] = [1, 2, 3, 5, 6, 7, 9, 10, 11];
+
+    CANDIDATE_LANES
+        .into_iter()
+        .min_by_key(|&lane| {
+            let unique = byte_frequencies[lane].len();
+            let max = byte_frequencies[lane]
+                .keys()
+                .next_back()
+                .copied()
+                .unwrap_or_default();
+            let constant_penalty = if unique <= 1 { 1 } else { 0 };
+            let broad_range_penalty = if max <= 31 { 0 } else { 1 };
+            (constant_penalty, broad_range_penalty, unique, max, lane)
+        })
+        .unwrap_or(1)
+}
+
+fn build_inferred_layer_preview(
+    primary: &[u8],
+    byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES],
+) -> MapInferredLayerPreview {
+    let surface_baseline = dominant_byte(&byte_frequencies[0]);
+    let detail_baseline = dominant_byte(&byte_frequencies[4]);
+    let reference_baseline = dominant_byte(&byte_frequencies[8]);
+    let height_lane = select_candidate_height_lane(byte_frequencies);
+    let height_baseline = dominant_byte(&byte_frequencies[height_lane]);
+    let mut cells = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut height_classes = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut class_counts = [0usize; MAP_INFERRED_LAYER_CLASSES];
+
+    for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
+        let surface_changed = chunk[0] != surface_baseline;
+        let detail_changed = chunk[4] != detail_baseline;
+        let reference_changed = chunk[8] != reference_baseline;
+        let height_changed = chunk[height_lane] != height_baseline;
+        let changed_channels = [
+            surface_changed,
+            detail_changed,
+            reference_changed,
+            height_changed,
+        ]
+        .into_iter()
+        .filter(|changed| *changed)
+        .count();
+
+        let visual_class = if changed_channels == 0 {
+            MAP_INFERRED_CLASS_BASELINE
+        } else if changed_channels > 1 {
+            MAP_INFERRED_CLASS_MIXED
+        } else if surface_changed {
+            MAP_INFERRED_CLASS_SURFACE
+        } else if detail_changed {
+            MAP_INFERRED_CLASS_DETAIL
+        } else if reference_changed {
+            MAP_INFERRED_CLASS_REFERENCE
+        } else {
+            MAP_INFERRED_CLASS_HEIGHT
+        };
+        let height_class = chunk[height_lane].abs_diff(height_baseline).min(15);
+
+        class_counts[visual_class as usize] += 1;
+        cells.push(visual_class);
+        height_classes.push(height_class);
+    }
+
+    let visual_classes = class_counts.iter().filter(|&&count| count > 0).count();
+
+    MapInferredLayerPreview {
+        width: MAP_WIDTH_CANDIDATE,
+        height: MAP_HEIGHT_CANDIDATE,
+        cells,
+        height_classes,
+        visual_classes,
+        class_counts,
+        surface_baseline,
+        detail_baseline,
+        reference_baseline,
+        height_lane,
+        height_baseline,
+        surface_unique: byte_frequencies[0].len(),
+        detail_unique: byte_frequencies[4].len(),
+        reference_unique: byte_frequencies[8].len(),
+        height_unique: byte_frequencies[height_lane].len(),
     }
 }
 
@@ -310,7 +542,9 @@ fn build_signature_preview(primary: &[u8]) -> MapSignaturePreview {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_PRIMARY_SECTION_LEN, MAP_SIGNATURE_PREVIEW_CLASSES,
+        MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_INFERRED_CLASS_BASELINE, MAP_INFERRED_CLASS_DETAIL,
+        MAP_INFERRED_CLASS_HEIGHT, MAP_INFERRED_CLASS_MIXED, MAP_INFERRED_CLASS_REFERENCE,
+        MAP_INFERRED_CLASS_SURFACE, MAP_PRIMARY_SECTION_LEN, MAP_SIGNATURE_PREVIEW_CLASSES,
         MapCellRecord, analyze_payload,
     };
 
@@ -336,6 +570,10 @@ mod tests {
         assert_eq!(grid.empty_cells, MAP_CELL_COUNT - 1);
         assert_eq!(grid.word_stats[0].unique_values, 2);
         assert_eq!(grid.word_stats[0].zero_values, MAP_CELL_COUNT - 1);
+        assert_eq!(grid.byte_stats[0].unique_values, 2);
+        assert_eq!(grid.byte_stats[0].zero_values, MAP_CELL_COUNT - 1);
+        assert_eq!(grid.byte_stats[0].top_values[0].value, 0);
+        assert_eq!(grid.byte_stats[0].top_values[0].count, MAP_CELL_COUNT - 1);
         assert_eq!(analysis.tail.len, MAP_CELL_BYTES * 2);
         assert!(analysis.tail.aligned_to_cell_record);
         assert_eq!(analysis.tail.record_count_12, 2);
@@ -347,6 +585,24 @@ mod tests {
         assert_eq!(preview.dominant_signature_cells, MAP_CELL_COUNT - 1);
         assert_eq!(preview.cell(1, 0), Some(1));
         assert!(preview.cell(64, 0).is_none());
+
+        let inferred = analysis.inferred_layer_preview.unwrap();
+        assert_eq!(inferred.width, 64);
+        assert_eq!(inferred.height, 64);
+        assert_eq!(inferred.surface_baseline, 0);
+        assert_eq!(
+            inferred.class_counts[MAP_INFERRED_CLASS_BASELINE as usize],
+            MAP_CELL_COUNT - 1
+        );
+        assert_eq!(
+            inferred.cell(1, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_BASELINE
+        );
+        assert_eq!(
+            inferred.cell(0, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_MIXED
+        );
+        assert!(inferred.cell(64, 0).is_none());
     }
 
     #[test]
@@ -355,6 +611,7 @@ mod tests {
         assert!(analysis.primary_grid.is_none());
         assert_eq!(analysis.tail.len, 0);
         assert!(analysis.signature_preview.is_none());
+        assert!(analysis.inferred_layer_preview.is_none());
     }
 
     #[test]
@@ -371,5 +628,54 @@ mod tests {
         assert_eq!(preview.visual_classes, MAP_SIGNATURE_PREVIEW_CLASSES);
         assert_eq!(preview.cell(20, 0), Some(1));
         assert_eq!(preview.cell(MAP_SIGNATURE_PREVIEW_CLASSES - 1, 0), Some(0));
+    }
+
+    #[test]
+    fn builds_conservative_inferred_layer_from_byte_lanes() {
+        let mut payload = vec![0; MAP_PRIMARY_SECTION_LEN];
+        set_record(&mut payload, 1, &[9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        set_record(&mut payload, 2, &[0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0]);
+        set_record(&mut payload, 3, &[0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0]);
+        set_record(&mut payload, 4, &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        set_record(&mut payload, 5, &[9, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0]);
+
+        let analysis = analyze_payload(&payload);
+        let inferred = analysis.inferred_layer_preview.unwrap();
+
+        assert_eq!(inferred.height_lane, 1);
+        assert_eq!(inferred.height_baseline, 0);
+        assert_eq!(inferred.surface_unique, 2);
+        assert_eq!(inferred.reference_unique, 2);
+        assert_eq!(
+            inferred.cell(0, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_BASELINE
+        );
+        assert_eq!(
+            inferred.cell(1, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_SURFACE
+        );
+        assert_eq!(
+            inferred.cell(2, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_DETAIL
+        );
+        assert_eq!(
+            inferred.cell(3, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_REFERENCE
+        );
+        assert_eq!(
+            inferred.cell(4, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_HEIGHT
+        );
+        assert_eq!(inferred.cell(4, 0).unwrap().height_class, 3);
+        assert_eq!(
+            inferred.cell(5, 0).unwrap().visual_class,
+            MAP_INFERRED_CLASS_MIXED
+        );
+        assert_eq!(inferred.cell(5, 0).unwrap().height_class, 3);
+    }
+
+    fn set_record(payload: &mut [u8], cell_index: usize, record: &[u8; MAP_CELL_BYTES]) {
+        let start = cell_index * MAP_CELL_BYTES;
+        payload[start..start + MAP_CELL_BYTES].copy_from_slice(record);
     }
 }
