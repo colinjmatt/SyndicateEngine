@@ -1,7 +1,10 @@
 use crate::engine::{
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
-    map_decode::{MapCandidateField, MapInferredLayerPreview, MapSignaturePreview},
+    map_decode::{
+        MapCandidateField, MapInferredLayerPreview, MapPrimarySubstrateCandidate,
+        MapSignaturePreview,
+    },
     palette,
 };
 use crate::game::pathfinding::GridPos;
@@ -175,28 +178,35 @@ impl TacticalMap {
     pub fn draw_candidate_field_preview(
         &self,
         camera: &CameraRig,
-        preview: &MapInferredLayerPreview,
+        substrate: &MapPrimarySubstrateCandidate,
         field: MapCandidateField,
     ) {
-        let baseline = preview.field_baseline(field);
-        for y in 0..preview.height {
-            for x in 0..preview.width {
-                let Some(value) = preview.field_value(field, x, y) else {
+        let Some(evidence) = substrate.evidence_for(field) else {
+            return;
+        };
+        let height_baseline = substrate
+            .evidence_for(MapCandidateField::Height)
+            .map(|evidence| evidence.baseline)
+            .unwrap_or(evidence.baseline);
+
+        for y in 0..substrate.height {
+            for x in 0..substrate.width {
+                let Some(value) = substrate.field_value(field, x, y) else {
                     continue;
                 };
-                let height_value = preview
+                let height_value = substrate
                     .field_value(MapCandidateField::Height, x, y)
-                    .unwrap_or(baseline);
-                let height_delta = height_value.abs_diff(preview.height_baseline).min(15);
+                    .unwrap_or(height_baseline);
+                let height_delta = height_value.abs_diff(height_baseline).min(15);
                 let z = if field == MapCandidateField::Height {
-                    value.abs_diff(baseline).min(15) as f32 * 0.065
+                    value.abs_diff(evidence.baseline).min(15) as f32 * 0.065
                 } else {
                     height_delta as f32 * 0.035
                 };
                 let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
                 draw_iso_tile(
                     center,
-                    candidate_field_color(field, value, baseline, height_delta),
+                    candidate_field_color(field, value, evidence.baseline, height_delta),
                     Color::new(0.01, 0.012, 0.016, 0.58),
                 );
             }

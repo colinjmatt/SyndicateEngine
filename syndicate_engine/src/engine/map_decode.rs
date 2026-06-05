@@ -53,6 +53,7 @@ pub struct MapPayloadAnalysis {
     pub signature_preview: Option<MapSignaturePreview>,
     pub inferred_layer_preview: Option<MapInferredLayerPreview>,
     pub spatial_correlation: Option<MapSpatialCorrelationAnalysis>,
+    pub substrate_candidate: Option<MapPrimarySubstrateCandidate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +142,36 @@ pub struct MapInferredLayerCell {
     pub height_class: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapPrimarySubstrateCandidate {
+    pub width: usize,
+    pub height: usize,
+    pub surface_index_candidate: Vec<u8>,
+    pub detail_index_candidate: Vec<u8>,
+    pub reference_candidate: Vec<u8>,
+    pub height_candidate: Vec<u8>,
+    pub field_evidence: [MapCandidateFieldEvidence; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapCandidateFieldEvidence {
+    pub field: MapCandidateField,
+    pub lane: usize,
+    pub baseline: u8,
+    pub unique_values: usize,
+    pub continuity_percent: u8,
+    pub repeated_2x2_percent: u8,
+    pub gentle_gradient_percent: u8,
+    pub confidence: MapCandidateEvidenceConfidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapCandidateEvidenceConfidence {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapCandidateField {
     SurfaceIndex,
@@ -195,6 +226,7 @@ pub struct MapGlobalCorrelationAnalysis {
     pub word_stats: [WordStats; 3],
     pub byte_stats: [ByteLaneStats; MAP_CELL_BYTES],
     pub spatial_correlation: MapSpatialCorrelationAnalysis,
+    pub substrate_evidence: [MapCandidateFieldEvidence; 4],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,6 +410,56 @@ impl MapCandidateField {
     }
 }
 
+impl MapPrimarySubstrateCandidate {
+    pub fn field_value(&self, field: MapCandidateField, x: usize, y: usize) -> Option<u8> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+
+        let index = y * self.width + x;
+        match field {
+            MapCandidateField::SurfaceIndex => self.surface_index_candidate.get(index),
+            MapCandidateField::DetailIndex => self.detail_index_candidate.get(index),
+            MapCandidateField::Reference => self.reference_candidate.get(index),
+            MapCandidateField::Height => self.height_candidate.get(index),
+        }
+        .copied()
+    }
+
+    pub fn evidence_for(&self, field: MapCandidateField) -> Option<MapCandidateFieldEvidence> {
+        self.field_evidence
+            .iter()
+            .copied()
+            .find(|evidence| evidence.field == field)
+    }
+}
+
+impl MapCandidateFieldEvidence {
+    pub fn evidence_label(self) -> String {
+        format!(
+            "{} evidence: {} (b{}, baseline 0x{:02x}, unique {}, continuity {}%, repeated 2x2 {}%, gentle Δ<=1 {}%)",
+            self.field.provisional_label(),
+            self.confidence.label(),
+            self.lane,
+            self.baseline,
+            self.unique_values,
+            self.continuity_percent,
+            self.repeated_2x2_percent,
+            self.gentle_gradient_percent
+        )
+    }
+}
+
+impl MapCandidateEvidenceConfidence {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
 impl ByteLaneSpatialStats {
     pub fn neighbour_pairs(&self) -> usize {
         self.right_pairs + self.down_pairs
@@ -478,6 +560,7 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             signature_preview: None,
             inferred_layer_preview: None,
             spatial_correlation: None,
+            substrate_candidate: None,
         };
     }
 
@@ -519,6 +602,16 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
     let word_stats = build_word_stats(&word_values, &zero_values);
     let byte_stats = build_byte_stats(&byte_values, &byte_frequencies, &byte_zero_values);
     let height_lane = select_candidate_height_lane(&byte_frequencies);
+    let inferred_layer_preview =
+        build_inferred_layer_preview(primary, &byte_frequencies, height_lane);
+    let spatial_correlation = build_spatial_correlation(primary, height_lane);
+    let substrate_candidate = build_substrate_candidate(
+        primary,
+        &byte_frequencies,
+        &byte_stats,
+        &spatial_correlation,
+        height_lane,
+    );
 
     MapPayloadAnalysis {
         len: data.len(),
@@ -538,12 +631,9 @@ pub fn analyze_payload(data: &[u8]) -> MapPayloadAnalysis {
             record_count_12: tail_len / MAP_CELL_BYTES,
         },
         signature_preview: Some(build_signature_preview(primary)),
-        inferred_layer_preview: Some(build_inferred_layer_preview(
-            primary,
-            &byte_frequencies,
-            height_lane,
-        )),
-        spatial_correlation: Some(build_spatial_correlation(primary, height_lane)),
+        inferred_layer_preview: Some(inferred_layer_preview),
+        spatial_correlation: Some(spatial_correlation),
+        substrate_candidate: Some(substrate_candidate),
     }
 }
 
@@ -595,13 +685,20 @@ where
 
     let height_lane = select_candidate_height_lane(&byte_frequencies);
 
+    let map_count = sections.len();
+    let byte_stats = build_byte_stats(&byte_values, &byte_frequencies, &byte_zero_values);
+    let spatial_correlation = build_spatial_correlation_for_sections(sections, height_lane);
+    let substrate_evidence =
+        build_substrate_evidence(&byte_frequencies, &byte_stats, &spatial_correlation);
+
     Some(MapGlobalCorrelationAnalysis {
-        map_count: sections.len(),
-        total_cells: sections.len() * MAP_CELL_COUNT,
+        map_count,
+        total_cells: map_count * MAP_CELL_COUNT,
         unique_cells: unique_cells.len(),
         word_stats: build_word_stats(&word_values, &zero_values),
-        byte_stats: build_byte_stats(&byte_values, &byte_frequencies, &byte_zero_values),
-        spatial_correlation: build_spatial_correlation_for_sections(sections, height_lane),
+        byte_stats,
+        spatial_correlation,
+        substrate_evidence,
     })
 }
 
@@ -751,6 +848,94 @@ fn build_inferred_layer_preview(
         detail_unique: byte_frequencies[4].len(),
         reference_unique: byte_frequencies[8].len(),
         height_unique: byte_frequencies[height_lane].len(),
+    }
+}
+
+fn build_substrate_candidate(
+    primary: &[u8],
+    byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES],
+    byte_stats: &[ByteLaneStats; MAP_CELL_BYTES],
+    spatial_correlation: &MapSpatialCorrelationAnalysis,
+    height_lane: usize,
+) -> MapPrimarySubstrateCandidate {
+    let mut surface_index_candidate = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut detail_index_candidate = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut reference_candidate = Vec::with_capacity(MAP_CELL_COUNT);
+    let mut height_candidate = Vec::with_capacity(MAP_CELL_COUNT);
+
+    for chunk in primary.chunks_exact(MAP_CELL_BYTES) {
+        surface_index_candidate.push(chunk[MAP_CANDIDATE_SURFACE_LANE]);
+        detail_index_candidate.push(chunk[MAP_CANDIDATE_DETAIL_LANE]);
+        reference_candidate.push(chunk[MAP_CANDIDATE_REFERENCE_LANE]);
+        height_candidate.push(chunk[height_lane]);
+    }
+
+    MapPrimarySubstrateCandidate {
+        width: MAP_WIDTH_CANDIDATE,
+        height: MAP_HEIGHT_CANDIDATE,
+        surface_index_candidate,
+        detail_index_candidate,
+        reference_candidate,
+        height_candidate,
+        field_evidence: build_substrate_evidence(byte_frequencies, byte_stats, spatial_correlation),
+    }
+}
+
+fn build_substrate_evidence(
+    byte_frequencies: &[BTreeMap<u8, usize>; MAP_CELL_BYTES],
+    byte_stats: &[ByteLaneStats; MAP_CELL_BYTES],
+    spatial_correlation: &MapSpatialCorrelationAnalysis,
+) -> [MapCandidateFieldEvidence; 4] {
+    std::array::from_fn(|index| {
+        let field = MapCandidateField::ALL[index];
+        let lane = match field {
+            MapCandidateField::SurfaceIndex => MAP_CANDIDATE_SURFACE_LANE,
+            MapCandidateField::DetailIndex => MAP_CANDIDATE_DETAIL_LANE,
+            MapCandidateField::Reference => MAP_CANDIDATE_REFERENCE_LANE,
+            MapCandidateField::Height => spatial_correlation.height_candidate_lane,
+        };
+        let spatial = &spatial_correlation.byte_lanes[lane];
+        MapCandidateFieldEvidence {
+            field,
+            lane,
+            baseline: dominant_byte(&byte_frequencies[lane]),
+            unique_values: byte_stats[lane].unique_values,
+            continuity_percent: spatial.continuity_percent(),
+            repeated_2x2_percent: spatial.repeated_2x2_percent(),
+            gentle_gradient_percent: spatial.gentle_gradient_percent(),
+            confidence: classify_candidate_evidence(field, byte_stats[lane].unique_values, spatial),
+        }
+    })
+}
+
+fn classify_candidate_evidence(
+    field: MapCandidateField,
+    unique_values: usize,
+    spatial: &ByteLaneSpatialStats,
+) -> MapCandidateEvidenceConfidence {
+    let continuity = spatial.continuity_percent();
+    let repeated = spatial.repeated_2x2_percent();
+    let gentle = spatial.gentle_gradient_percent();
+
+    match field {
+        MapCandidateField::Height => {
+            if unique_values > 1 && continuity >= 80 && gentle >= 95 {
+                MapCandidateEvidenceConfidence::High
+            } else if unique_values > 1 && continuity >= 50 && gentle >= 65 {
+                MapCandidateEvidenceConfidence::Medium
+            } else {
+                MapCandidateEvidenceConfidence::Low
+            }
+        }
+        _ => {
+            if unique_values > 1 && continuity >= 50 && repeated >= 60 {
+                MapCandidateEvidenceConfidence::High
+            } else if unique_values > 1 && continuity >= 20 && repeated >= 30 {
+                MapCandidateEvidenceConfidence::Medium
+            } else {
+                MapCandidateEvidenceConfidence::Low
+            }
+        }
     }
 }
 
@@ -1009,8 +1194,8 @@ mod tests {
         MAP_CELL_BYTES, MAP_CELL_COUNT, MAP_INFERRED_CLASS_BASELINE, MAP_INFERRED_CLASS_DETAIL,
         MAP_INFERRED_CLASS_HEIGHT, MAP_INFERRED_CLASS_MIXED, MAP_INFERRED_CLASS_REFERENCE,
         MAP_INFERRED_CLASS_SURFACE, MAP_PRIMARY_SECTION_LEN, MAP_SIGNATURE_PREVIEW_CLASSES,
-        MAP_WIDTH_CANDIDATE, MapCandidateField, MapCellRecord, analyze_payload,
-        analyze_primary_sections,
+        MAP_WIDTH_CANDIDATE, MapCandidateEvidenceConfidence, MapCandidateField, MapCellRecord,
+        analyze_payload, analyze_primary_sections,
     };
 
     #[test]
@@ -1078,6 +1263,7 @@ mod tests {
         assert!(analysis.signature_preview.is_none());
         assert!(analysis.inferred_layer_preview.is_none());
         assert!(analysis.spatial_correlation.is_none());
+        assert!(analysis.substrate_candidate.is_none());
     }
 
     #[test]
@@ -1188,6 +1374,32 @@ mod tests {
         assert_eq!(height.moderate_gradient_percent(), 100);
         assert_eq!(height.max_abs_gradient, 1);
         assert_eq!(height.mean_abs_gradient_milli, 500);
+
+        let substrate = analysis.substrate_candidate.unwrap();
+        let surface_evidence = substrate
+            .evidence_for(MapCandidateField::SurfaceIndex)
+            .unwrap();
+        let height_evidence = substrate.evidence_for(MapCandidateField::Height).unwrap();
+        assert_eq!(
+            substrate.field_value(MapCandidateField::SurfaceIndex, 40, 0),
+            Some(9)
+        );
+        assert_eq!(
+            substrate.field_value(MapCandidateField::Height, 0, 7),
+            Some(7)
+        );
+        assert_eq!(surface_evidence.lane, 0);
+        assert_eq!(surface_evidence.baseline, 0);
+        assert_eq!(
+            surface_evidence.confidence,
+            MapCandidateEvidenceConfidence::High
+        );
+        assert_eq!(height_evidence.lane, 1);
+        assert_eq!(height_evidence.baseline, 0);
+        assert_eq!(
+            height_evidence.confidence,
+            MapCandidateEvidenceConfidence::Medium
+        );
     }
 
     #[test]
@@ -1217,6 +1429,52 @@ mod tests {
         assert_eq!(
             aggregate.spatial_correlation.byte_lanes[0].repeated_2x2_percent(),
             100
+        );
+        assert_eq!(
+            aggregate.substrate_evidence[0].field,
+            MapCandidateField::SurfaceIndex
+        );
+        assert_eq!(aggregate.substrate_evidence[0].lane, 0);
+        assert_eq!(
+            aggregate.substrate_evidence[0].confidence,
+            MapCandidateEvidenceConfidence::High
+        );
+    }
+
+    #[test]
+    fn classifies_substrate_evidence_without_claiming_semantics() {
+        let mut payload = vec![0; MAP_PRIMARY_SECTION_LEN];
+        for y in 0..MAP_WIDTH_CANDIDATE {
+            for x in 0..MAP_WIDTH_CANDIDATE {
+                let start = (y * MAP_WIDTH_CANDIDATE + x) * MAP_CELL_BYTES;
+                payload[start] = if x < 32 { 2 } else { 4 };
+                payload[start + 4] = if (x + y) % 2 == 0 { 6 } else { 8 };
+                payload[start + 8] = if y < 32 { 10 } else { 12 };
+                payload[start + 1] = (y / 16) as u8;
+            }
+        }
+
+        let analysis = analyze_payload(&payload);
+        let substrate = analysis.substrate_candidate.unwrap();
+        let surface = substrate
+            .evidence_for(MapCandidateField::SurfaceIndex)
+            .unwrap();
+        let detail = substrate
+            .evidence_for(MapCandidateField::DetailIndex)
+            .unwrap();
+        let reference = substrate
+            .evidence_for(MapCandidateField::Reference)
+            .unwrap();
+        let height = substrate.evidence_for(MapCandidateField::Height).unwrap();
+
+        assert_eq!(surface.confidence, MapCandidateEvidenceConfidence::High);
+        assert_eq!(detail.confidence, MapCandidateEvidenceConfidence::Low);
+        assert_eq!(reference.confidence, MapCandidateEvidenceConfidence::High);
+        assert_eq!(height.confidence, MapCandidateEvidenceConfidence::High);
+        assert!(
+            surface
+                .evidence_label()
+                .contains("surface_index_candidate evidence")
         );
     }
 

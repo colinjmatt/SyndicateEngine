@@ -300,9 +300,10 @@ impl WorldState {
                 }
             }
             MapRenderMode::CandidateField(field) => {
-                if let Some(preview) = self.assets.diagnostics().map_inferred_preview.as_ref() {
+                if let Some(substrate) = self.assets.diagnostics().map_substrate_candidate.as_ref()
+                {
                     self.map
-                        .draw_candidate_field_preview(&self.camera, preview, field);
+                        .draw_candidate_field_preview(&self.camera, substrate, field);
                 } else {
                     self.map.draw(&self.camera);
                 }

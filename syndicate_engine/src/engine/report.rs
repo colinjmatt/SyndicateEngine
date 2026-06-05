@@ -8,9 +8,9 @@ use crate::engine::{
     map_decode::{
         ByteLaneSpatialStats, ByteLaneStats, MAP_CANDIDATE_DETAIL_LANE,
         MAP_CANDIDATE_REFERENCE_LANE, MAP_CANDIDATE_SURFACE_LANE, MAP_PRIMARY_SECTION_LEN,
-        MapCandidateField, MapDatAnalysis, MapGlobalCorrelationAnalysis, MapInferredLayerPreview,
-        MapPrimaryGridAnalysis, MapSpatialCorrelationAnalysis, analyze_payload,
-        analyze_primary_sections, decode_map_payload_bytes,
+        MapCandidateField, MapCandidateFieldEvidence, MapDatAnalysis, MapGlobalCorrelationAnalysis,
+        MapInferredLayerPreview, MapPrimaryGridAnalysis, MapSpatialCorrelationAnalysis,
+        analyze_payload, analyze_primary_sections, decode_map_payload_bytes,
     },
     palette_decode::Palette,
     rnc::RncBlock,
@@ -28,6 +28,7 @@ pub struct AssetReport {
     map_diagnostic_rows: Vec<String>,
     map_global_summary: String,
     map_global_candidate_rows: Vec<String>,
+    map_global_substrate_rows: Vec<String>,
     mission_rows: Vec<String>,
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
@@ -200,17 +201,19 @@ impl AssetReport {
         compressed_palette_rows.sort();
         tab_rows.sort();
 
-        let (map_global_summary, map_global_candidate_rows) =
+        let (map_global_summary, map_global_candidate_rows, map_global_substrate_rows) =
             analyze_primary_sections(map_primary_sections.iter().map(Vec::as_slice))
                 .map(|analysis| {
                     (
                         format_global_map_summary(&analysis),
                         format_global_candidate_rows(&analysis),
+                        format_global_substrate_rows(&analysis),
                     )
                 })
                 .unwrap_or_else(|| {
                     (
                         "no decoded MAP primary sections available".to_string(),
+                        Vec::new(),
                         Vec::new(),
                     )
                 });
@@ -224,6 +227,7 @@ impl AssetReport {
             map_diagnostic_rows,
             map_global_summary,
             map_global_candidate_rows,
+            map_global_substrate_rows,
             mission_rows,
             palette_rows,
             compressed_palette_rows,
@@ -285,6 +289,16 @@ impl AssetReport {
             &self.map_global_candidate_rows,
             "no global MAP candidate diagnostics available",
             7,
+        );
+
+        markdown.push_str("\n### MAP provisional substrate candidate evidence\n\n");
+        markdown.push_str("This substrate view copies selected byte lanes into diagnostic-only channels and summarizes why each lane was selected. Confidence terms are heuristic evidence labels, not semantic proof.\n\n");
+        markdown.push_str("| Candidate field | Selected lane | Baseline | Unique values | Evidence confidence | Selection rationale |\n|---|---:|---:|---:|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.map_global_substrate_rows,
+            "no global MAP substrate-candidate evidence available",
+            6,
         );
 
         markdown.push_str("\n## Mission inventory\n\n");
@@ -401,9 +415,16 @@ fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Optio
                         .unwrap_or_else(|| "unavailable".to_string()),
                     spatial_summary: analysis
                         .payload
-                        .spatial_correlation
+                        .substrate_candidate
                         .as_ref()
-                        .map(format_candidate_spatial_summary)
+                        .map(format_substrate_summary)
+                        .or_else(|| {
+                            analysis
+                                .payload
+                                .spatial_correlation
+                                .as_ref()
+                                .map(format_candidate_spatial_summary)
+                        })
                         .unwrap_or_else(|| "unavailable".to_string()),
                 },
                 None => fallback.clone(),
@@ -538,6 +559,56 @@ fn format_global_candidate_rows(analysis: &MapGlobalCorrelationAnalysis) -> Vec<
             )
         })
         .collect()
+}
+
+fn format_global_substrate_rows(analysis: &MapGlobalCorrelationAnalysis) -> Vec<String> {
+    analysis
+        .substrate_evidence
+        .iter()
+        .map(|evidence| {
+            format!(
+                "| {} | b{} | 0x{:02x} | {} | {} | {} |",
+                evidence.field.provisional_label(),
+                evidence.lane,
+                evidence.baseline,
+                evidence.unique_values,
+                evidence.confidence.label(),
+                format_selection_rationale(*evidence)
+            )
+        })
+        .collect()
+}
+
+fn format_substrate_summary(
+    candidate: &crate::engine::map_decode::MapPrimarySubstrateCandidate,
+) -> String {
+    candidate
+        .field_evidence
+        .iter()
+        .map(|evidence| evidence.evidence_label())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_selection_rationale(evidence: MapCandidateFieldEvidence) -> String {
+    let lane_family = match evidence.field {
+        MapCandidateField::SurfaceIndex => {
+            "word-0 low byte retained as provisional surface-index channel"
+        }
+        MapCandidateField::DetailIndex => {
+            "word-1 low byte retained as provisional detail-index channel"
+        }
+        MapCandidateField::Reference => "word-2 low byte retained as provisional reference channel",
+        MapCandidateField::Height => {
+            "narrow varying non-low byte selected by height-lane heuristic and gradient checks"
+        }
+    };
+    format!(
+        "{lane_family}; continuity {}%, repeated 2x2 {}%, gentle Δ<=1 {}%",
+        evidence.continuity_percent,
+        evidence.repeated_2x2_percent,
+        evidence.gentle_gradient_percent
+    )
 }
 
 fn candidate_spatial_lanes(

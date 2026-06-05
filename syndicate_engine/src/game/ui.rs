@@ -1,6 +1,9 @@
 use crate::engine::{
     assets::AssetIndex,
-    map_decode::{MapCandidateField, MapInferredLayerPreview, MapSignaturePreview},
+    map_decode::{
+        MapCandidateField, MapInferredLayerPreview, MapPrimarySubstrateCandidate,
+        MapSignaturePreview,
+    },
     palette_decode::Rgb8,
 };
 use macroquad::prelude::*;
@@ -97,18 +100,20 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
     draw_map_previews(
         asset_index.diagnostics().map_preview.as_ref(),
         asset_index.diagnostics().map_inferred_preview.as_ref(),
+        asset_index.diagnostics().map_substrate_candidate.as_ref(),
     );
 }
 
 fn draw_map_previews(
     signature: Option<&MapSignaturePreview>,
     inferred: Option<&MapInferredLayerPreview>,
+    substrate: Option<&MapPrimarySubstrateCandidate>,
 ) {
     let scale = 1.65;
     let signature_origin = vec2(506.0, 118.0);
     let inferred_origin = vec2(632.0, 118.0);
     draw_signature_minimap(signature_origin, scale, signature);
-    draw_inferred_minimap(inferred_origin, scale, inferred);
+    draw_inferred_minimap(inferred_origin, scale, inferred, substrate);
 }
 
 fn draw_signature_minimap(origin: Vec2, scale: f32, preview: Option<&MapSignaturePreview>) {
@@ -159,7 +164,12 @@ fn draw_signature_minimap(origin: Vec2, scale: f32, preview: Option<&MapSignatur
     );
 }
 
-fn draw_inferred_minimap(origin: Vec2, scale: f32, preview: Option<&MapInferredLayerPreview>) {
+fn draw_inferred_minimap(
+    origin: Vec2,
+    scale: f32,
+    preview: Option<&MapInferredLayerPreview>,
+    substrate: Option<&MapPrimarySubstrateCandidate>,
+) {
     draw_text(
         "MAP01 inferred/fields",
         origin.x,
@@ -198,9 +208,9 @@ fn draw_inferred_minimap(origin: Vec2, scale: f32, preview: Option<&MapInferredL
     );
     draw_text(
         &format!(
-            "{} classes; field lanes {}",
+            "{} classes; substrate {}",
             preview.visual_classes,
-            candidate_field_lane_summary(preview)
+            candidate_field_lane_summary(preview, substrate)
         ),
         origin.x,
         origin.y + preview.height as f32 * scale + 14.0,
@@ -209,15 +219,21 @@ fn draw_inferred_minimap(origin: Vec2, scale: f32, preview: Option<&MapInferredL
     );
 }
 
-fn candidate_field_lane_summary(preview: &MapInferredLayerPreview) -> String {
+fn candidate_field_lane_summary(
+    preview: &MapInferredLayerPreview,
+    substrate: Option<&MapPrimarySubstrateCandidate>,
+) -> String {
     MapCandidateField::ALL
         .into_iter()
         .map(|field| {
-            format!(
-                "{}:b{}",
-                short_field_label(field),
-                preview.field_lane(field)
-            )
+            let evidence = substrate.and_then(|candidate| candidate.evidence_for(field));
+            let lane = evidence
+                .map(|evidence| evidence.lane)
+                .unwrap_or_else(|| preview.field_lane(field));
+            let confidence = evidence
+                .map(|evidence| evidence.confidence.label())
+                .unwrap_or("?");
+            format!("{}:b{}/{}", short_field_label(field), lane, confidence)
         })
         .collect::<Vec<_>>()
         .join(" ")
