@@ -2,3 +2,4 @@ original_assets/
 .DS_Store
 /target/
 syndicate_engine/target/
+.clinerules
