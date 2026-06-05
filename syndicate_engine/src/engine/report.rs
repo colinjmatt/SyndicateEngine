@@ -36,6 +36,7 @@ pub struct AssetReport {
     tab_rows: Vec<String>,
     tab_family_ranking_rows: Vec<String>,
     tab_family_hint_rows: Vec<String>,
+    tab_family_archive_evidence_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -268,6 +269,9 @@ impl AssetReport {
             tab_rows,
             tab_family_ranking_rows: format_tab_family_ranking_rows(&tab_analyses),
             tab_family_hint_rows: format_tab_family_hint_rows(&tab_analyses),
+            tab_family_archive_evidence_rows: format_tab_family_archive_evidence_rows(
+                &tab_analyses,
+            ),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -392,6 +396,16 @@ impl AssetReport {
             &self.tab_family_hint_rows,
             "no aggregate TAB/sprite investigation hints available",
             7,
+        );
+
+        markdown.push_str("\n### TAB/sprite top-priority archive evidence rows\n\n");
+        markdown.push_str("These rows expand the highest-priority aggregate family hints into capped per-archive evidence summaries. They include only archive paths, counts, ranges, classifier totals, progression clues, entropy, and common-size buckets. They do not expose chunk bytes, raw headers, decoded dimensions, anchors, commands, pixels, audio, UI, or gameplay semantics.\n\n");
+        markdown.push_str("| Family candidate | Archive | Chunk and size-band evidence | Candidate metadata-shape evidence | Classifier totals by size band | Chunk-length progression clue | Entropy/common-bucket summary | Conservative limitation |\n|---|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_archive_evidence_rows,
+            "no capped per-archive TAB/sprite evidence rows available",
+            8,
         );
 
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
@@ -1793,6 +1807,98 @@ fn tab_family_entropy_bucket_hint(summary: &TabFamilyRankingSummary) -> String {
     )
 }
 
+fn format_tab_family_archive_evidence_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
+    const MAX_FAMILIES: usize = 3;
+    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
+
+    let selected_families = tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .filter(is_sprite_like_family_candidate)
+        .take(MAX_FAMILIES)
+        .map(|summary| summary.family)
+        .collect::<Vec<_>>();
+    if selected_families.is_empty() {
+        return Vec::new();
+    }
+
+    selected_families
+        .into_iter()
+        .flat_map(|family| {
+            tab_analyses
+                .iter()
+                .filter(move |analysis| tab_file_family(&analysis.path) == family)
+                .filter_map(move |analysis| {
+                    analysis
+                        .archive_summary
+                        .as_ref()
+                        .map(|summary| (family, analysis, summary))
+                })
+                .take(MAX_ARCHIVES_PER_FAMILY)
+                .map(|(family, analysis, summary)| {
+                    format!(
+                        "| `{}` | `{}` | {} | {} | {} | {} | {} | {} |",
+                        family,
+                        analysis.path,
+                        format_archive_chunk_size_evidence(summary),
+                        format_archive_metadata_evidence(summary),
+                        format_sprite_kind_by_size_buckets(&summary.sprite_bank),
+                        format_tab_chunk_length_progression(&summary.bank),
+                        format_archive_entropy_bucket_summary(summary),
+                        "capped aggregate archive evidence only; no bytes, raw headers, decoded dimensions, anchors, commands, pixels, audio, UI, or gameplay semantics"
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn format_archive_chunk_size_evidence(summary: &TabArchiveSummary) -> String {
+    format!(
+        "{} chunks; len min/med/max {}/{}/{} bytes; size bands small/medium/large {}/{}/{}; duplicate offsets {}, zero-length candidates {}",
+        summary.bank.chunk_count,
+        summary.bank.min_chunk_len,
+        summary.bank.median_chunk_len,
+        summary.bank.max_chunk_len,
+        summary.sprite_bank.size_band_counts.small,
+        summary.sprite_bank.size_band_counts.medium,
+        summary.sprite_bank.size_band_counts.large,
+        summary.bank.duplicate_offset_count,
+        summary.bank.zero_len_chunks
+    )
+}
+
+fn format_archive_metadata_evidence(summary: &TabArchiveSummary) -> String {
+    if summary.sprite_bank.metadata_shape_probes.is_empty() {
+        return "no bounded candidate metadata-shape support in this archive".to_string();
+    }
+
+    summary
+        .sprite_bank
+        .metadata_shape_probes
+        .iter()
+        .take(3)
+        .map(|probe| {
+            format!(
+                "{}:{} chunks, first range {}, second range {}",
+                probe.kind.label(),
+                probe.support_count,
+                format_u32_distribution(probe.first_value),
+                format_u32_distribution(probe.second_value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_archive_entropy_bucket_summary(summary: &TabArchiveSummary) -> String {
+    format!(
+        "chunk-size entropy {:.3} bits; common-size buckets [{}]; {}",
+        summary.bank.chunk_len_entropy_milli_bits as f32 / 1000.0,
+        format_tab_common_size_buckets(&summary.bank),
+        format_tab_candidate_size_matches(&summary.bank)
+    )
+}
+
 fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
     tab_family_comparison_summaries(tab_analyses)
         .into_iter()
@@ -2550,15 +2656,109 @@ mod tests {
     }
 
     #[test]
+    fn formats_top_priority_archive_evidence_rows_with_caps_without_bytes() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let font = make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 0, 0], 64),
+                chunk_with_prefix([8, 12, 0, 0], 64),
+            ],
+        );
+        let other = make_tab_report_analysis(
+            "DATA/OTHER-0.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 0, 0], 64),
+                chunk_with_prefix([8, 12, 0, 0], 64),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows = super::format_tab_family_archive_evidence_rows(&[
+            hspr_a, hspr_b, mspr, font, other, sound,
+        ]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 4);
+        assert!(joined.contains("`HSPR`"));
+        assert!(joined.contains("`MSPR`"));
+        assert!(joined.contains("`FONT`"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(!joined.contains("`OTHER`"));
+        assert!(joined.contains("len min/med/max"));
+        assert!(joined.contains("size bands small/medium/large"));
+        assert!(joined.contains("candidate leading"));
+        assert!(joined.contains("classifier") || joined.contains("chunk candidate"));
+        assert!(joined.contains("chunk-size entropy"));
+        assert!(joined.contains("capped aggregate archive evidence only"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_archive_evidence_rows_per_family() {
+        let analyses = (0..6)
+            .map(|index| {
+                make_tab_report_analysis(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let rows = super::format_tab_family_archive_evidence_rows(&analyses);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 4);
+        assert!(joined.contains("HSPR-0.TAB"));
+        assert!(joined.contains("HSPR-3.TAB"));
+        assert!(!joined.contains("HSPR-4.TAB"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
 
         assert!(markdown.contains("TAB/sprite family aggregate ranking candidates"));
         assert!(markdown.contains("TAB/sprite family next-investigation hints"));
+        assert!(markdown.contains("TAB/sprite top-priority archive evidence rows"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
+        assert!(markdown.contains("no capped per-archive TAB/sprite evidence rows available"));
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
