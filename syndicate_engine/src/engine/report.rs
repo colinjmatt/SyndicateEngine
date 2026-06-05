@@ -15,7 +15,7 @@ use crate::engine::{
     },
     palette_decode::Palette,
     rnc::RncBlock,
-    sprite_decode::{SpriteBankAggregateSummary, SpriteDistributionSummary},
+    sprite_decode::{SpriteBankAggregateSummary, SpriteChunkKind, SpriteDistributionSummary},
     tab_bank::{TabArchive, TabArchiveSummary, TabBank, TabBankSummary, TabVariantAnalysis},
 };
 
@@ -35,6 +35,7 @@ pub struct AssetReport {
     compressed_palette_rows: Vec<String>,
     tab_rows: Vec<String>,
     tab_family_ranking_rows: Vec<String>,
+    tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
     block_cross_container_rows: Vec<String>,
@@ -265,6 +266,7 @@ impl AssetReport {
             compressed_palette_rows,
             tab_rows,
             tab_family_ranking_rows: format_tab_family_ranking_rows(&tab_analyses),
+            tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
             block_cross_container_rows: format_block_cross_container_rows(
@@ -377,6 +379,16 @@ impl AssetReport {
             &mut markdown,
             &self.tab_family_ranking_rows,
             "no safely parsed TAB/DAT family rankings available",
+            7,
+        );
+
+        markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
+        markdown.push_str("These rows compare top-ranked sprite-like filename families using aggregate ratios and bucket sets only. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
+        markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Conservative note |\n|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_comparison_rows,
+            "no aggregate TAB/sprite family comparisons available",
             7,
         );
 
@@ -498,6 +510,29 @@ struct TabFamilyMetadataShapeSupport {
 struct TabFamilyCommonBucketOverlap {
     len: u32,
     archive_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyComparisonSummary {
+    left_family: &'static str,
+    right_family: &'static str,
+    metadata_differences: Vec<TabFamilyRatioDifference>,
+    classifier_differences: Vec<TabFamilyRatioDifference>,
+    equal_run_archive_ratio_delta: i32,
+    repeated_pattern_archive_ratio_delta: i32,
+    left_entropy_range: (u32, u32),
+    right_entropy_range: (u32, u32),
+    overlapping_common_buckets: Vec<u32>,
+    left_distinct_common_buckets: Vec<u32>,
+    right_distinct_common_buckets: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyRatioDifference {
+    label: String,
+    left_per_mille: usize,
+    right_per_mille: usize,
+    delta_per_mille: i32,
 }
 
 fn map_decode_report_fields(path: &Path) -> (String, MapReportDiagnostics, Option<Vec<u8>>) {
@@ -1593,6 +1628,264 @@ fn format_tab_family_common_bucket_overlap(summary: &TabFamilyRankingSummary) ->
         .join("; ")
 }
 
+fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
+    tab_family_comparison_summaries(tab_analyses)
+        .into_iter()
+        .map(|summary| {
+            format!(
+                "| `{}` vs `{}` | {} | {} | {} | {} | {} | {} |",
+                summary.left_family,
+                summary.right_family,
+                format_tab_family_ratio_differences(&summary.metadata_differences),
+                format_tab_family_ratio_differences(&summary.classifier_differences),
+                format_tab_family_progression_difference(&summary),
+                format_tab_family_entropy_comparison(&summary),
+                format_tab_family_bucket_comparison(&summary),
+                "aggregate comparison only; compatibility clues do not decode or prove family semantics"
+            )
+        })
+        .collect()
+}
+
+fn tab_family_comparison_summaries(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<TabFamilyComparisonSummary> {
+    let rankings = tab_family_ranking_summaries(tab_analyses);
+    let mut comparisons = Vec::new();
+    if let (Some(hspr), Some(mspr)) = (
+        rankings.iter().find(|summary| summary.family == "HSPR"),
+        rankings.iter().find(|summary| summary.family == "MSPR"),
+    ) {
+        comparisons.push(compare_tab_families(hspr, mspr));
+    }
+    comparisons
+}
+
+fn compare_tab_families(
+    left: &TabFamilyRankingSummary,
+    right: &TabFamilyRankingSummary,
+) -> TabFamilyComparisonSummary {
+    let metadata_differences = compare_metadata_ratios(left, right);
+    let classifier_differences = compare_classifier_ratios(left, right);
+    let equal_run_archive_ratio_delta = signed_delta_per_mille(
+        ratio_per_mille(left.equal_run_archives, left.parsed_archives),
+        ratio_per_mille(right.equal_run_archives, right.parsed_archives),
+    );
+    let repeated_pattern_archive_ratio_delta = signed_delta_per_mille(
+        ratio_per_mille(left.repeated_pattern_archives, left.parsed_archives),
+        ratio_per_mille(right.repeated_pattern_archives, right.parsed_archives),
+    );
+    let left_buckets = left
+        .common_bucket_overlap
+        .iter()
+        .map(|bucket| bucket.len)
+        .collect::<Vec<_>>();
+    let right_buckets = right
+        .common_bucket_overlap
+        .iter()
+        .map(|bucket| bucket.len)
+        .collect::<Vec<_>>();
+    let overlapping_common_buckets = sorted_intersection(&left_buckets, &right_buckets);
+    let left_distinct_common_buckets = sorted_difference(&left_buckets, &right_buckets);
+    let right_distinct_common_buckets = sorted_difference(&right_buckets, &left_buckets);
+
+    TabFamilyComparisonSummary {
+        left_family: left.family,
+        right_family: right.family,
+        metadata_differences,
+        classifier_differences,
+        equal_run_archive_ratio_delta,
+        repeated_pattern_archive_ratio_delta,
+        left_entropy_range: (left.min_entropy_milli_bits, left.max_entropy_milli_bits),
+        right_entropy_range: (right.min_entropy_milli_bits, right.max_entropy_milli_bits),
+        overlapping_common_buckets,
+        left_distinct_common_buckets,
+        right_distinct_common_buckets,
+    }
+}
+
+fn compare_metadata_ratios(
+    left: &TabFamilyRankingSummary,
+    right: &TabFamilyRankingSummary,
+) -> Vec<TabFamilyRatioDifference> {
+    let mut labels = left
+        .metadata_shape_supports
+        .iter()
+        .map(|support| support.label)
+        .chain(
+            right
+                .metadata_shape_supports
+                .iter()
+                .map(|support| support.label),
+        )
+        .collect::<Vec<_>>();
+    labels.sort_unstable();
+    labels.dedup();
+
+    let mut differences = labels
+        .into_iter()
+        .map(|label| {
+            let left_per_mille = left
+                .metadata_shape_supports
+                .iter()
+                .find(|support| support.label == label)
+                .map(|support| support.per_mille)
+                .unwrap_or(0);
+            let right_per_mille = right
+                .metadata_shape_supports
+                .iter()
+                .find(|support| support.label == label)
+                .map(|support| support.per_mille)
+                .unwrap_or(0);
+            TabFamilyRatioDifference {
+                label: label.to_string(),
+                left_per_mille,
+                right_per_mille,
+                delta_per_mille: signed_delta_per_mille(left_per_mille, right_per_mille),
+            }
+        })
+        .collect::<Vec<_>>();
+    sort_ratio_differences(&mut differences);
+    differences.truncate(4);
+    differences
+}
+
+fn compare_classifier_ratios(
+    left: &TabFamilyRankingSummary,
+    right: &TabFamilyRankingSummary,
+) -> Vec<TabFamilyRatioDifference> {
+    let classifier_counts = [
+        (
+            SpriteChunkKind::LikelyRleOrCommandStream.conservative_label(),
+            left.command_stream_chunks,
+            right.command_stream_chunks,
+        ),
+        (
+            SpriteChunkKind::LikelyRawIndexed.conservative_label(),
+            left.raw_chunks,
+            right.raw_chunks,
+        ),
+        (
+            SpriteChunkKind::Unknown.conservative_label(),
+            left.unknown_chunks,
+            right.unknown_chunks,
+        ),
+    ];
+    let mut differences = classifier_counts
+        .into_iter()
+        .map(|(label, left_count, right_count)| {
+            let left_per_mille = ratio_per_mille(left_count, left.total_chunks);
+            let right_per_mille = ratio_per_mille(right_count, right.total_chunks);
+            TabFamilyRatioDifference {
+                label: label.to_string(),
+                left_per_mille,
+                right_per_mille,
+                delta_per_mille: signed_delta_per_mille(left_per_mille, right_per_mille),
+            }
+        })
+        .collect::<Vec<_>>();
+    sort_ratio_differences(&mut differences);
+    differences
+}
+
+fn sort_ratio_differences(differences: &mut [TabFamilyRatioDifference]) {
+    differences.sort_by(|left, right| {
+        right
+            .delta_per_mille
+            .abs()
+            .cmp(&left.delta_per_mille.abs())
+            .then_with(|| left.label.cmp(&right.label))
+    });
+}
+
+fn format_tab_family_ratio_differences(differences: &[TabFamilyRatioDifference]) -> String {
+    if differences.is_empty() {
+        return "no aggregate ratio differences available".to_string();
+    }
+
+    differences
+        .iter()
+        .map(|difference| {
+            format!(
+                "{}: left {} per mille, right {} per mille, delta {:+} per mille",
+                difference.label,
+                difference.left_per_mille,
+                difference.right_per_mille,
+                difference.delta_per_mille
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_tab_family_progression_difference(summary: &TabFamilyComparisonSummary) -> String {
+    format!(
+        "equal-size run archive-ratio delta {:+} per mille; repeated size-pattern archive-ratio delta {:+} per mille",
+        summary.equal_run_archive_ratio_delta, summary.repeated_pattern_archive_ratio_delta
+    )
+}
+
+fn format_tab_family_entropy_comparison(summary: &TabFamilyComparisonSummary) -> String {
+    format!(
+        "{} {:.3}..{:.3} bits vs {} {:.3}..{:.3} bits",
+        summary.left_family,
+        summary.left_entropy_range.0 as f32 / 1000.0,
+        summary.left_entropy_range.1 as f32 / 1000.0,
+        summary.right_family,
+        summary.right_entropy_range.0 as f32 / 1000.0,
+        summary.right_entropy_range.1 as f32 / 1000.0
+    )
+}
+
+fn format_tab_family_bucket_comparison(summary: &TabFamilyComparisonSummary) -> String {
+    format!(
+        "overlap [{}]; {} distinct [{}]; {} distinct [{}]",
+        format_bucket_lens(&summary.overlapping_common_buckets),
+        summary.left_family,
+        format_bucket_lens(&summary.left_distinct_common_buckets),
+        summary.right_family,
+        format_bucket_lens(&summary.right_distinct_common_buckets)
+    )
+}
+
+fn format_bucket_lens(lengths: &[u32]) -> String {
+    if lengths.is_empty() {
+        return "none".to_string();
+    }
+
+    lengths
+        .iter()
+        .map(|len| format!("{len} bytes"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn sorted_intersection(left: &[u32], right: &[u32]) -> Vec<u32> {
+    let mut values = left
+        .iter()
+        .copied()
+        .filter(|len| right.contains(len))
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn sorted_difference(left: &[u32], right: &[u32]) -> Vec<u32> {
+    let mut values = left
+        .iter()
+        .copied()
+        .filter(|len| !right.contains(len))
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn signed_delta_per_mille(left: usize, right: usize) -> i32 {
+    left as i32 - right as i32
+}
+
 fn tab_file_family(path: &str) -> &'static str {
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_uppercase();
     if name.starts_with("HSPR") {
@@ -1805,12 +2098,60 @@ mod tests {
     }
 
     #[test]
+    fn compares_hspr_and_mspr_with_aggregate_only_evidence() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-0.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+
+        let rows = super::format_tab_family_comparison_rows(&[hspr_a, hspr_b, mspr]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 1);
+        assert!(joined.contains("`HSPR` vs `MSPR`"));
+        assert!(
+            joined.contains("Candidate metadata-shape ratio differences")
+                || joined.contains("candidate leading")
+        );
+        assert!(joined.contains("likely RLE/command-stream chunk candidate"));
+        assert!(joined.contains("equal-size run archive-ratio delta"));
+        assert!(joined.contains("overlap"));
+        assert!(joined.contains("aggregate comparison only"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
 
         assert!(markdown.contains("TAB/sprite family aggregate ranking candidates"));
+        assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
+        assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
     fn make_tab_report_analysis(path: &str, chunks: Vec<Vec<u8>>) -> TabBankReportAnalysis {

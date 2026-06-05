@@ -398,6 +398,14 @@ These rows rank safely parsed TAB/DAT filename families using non-reconstructabl
 | `FONT` | 1 of 36 chunks | command-stream candidates 36, raw candidates 0, unknown candidates 0 | candidate leading le-u16 offset-pair range 13 chunks (361 per mille) | equal-size runs in 1/1 archives; repeated size-pattern candidates in 0/1 archives | 4.149..4.149 bits | 28 bytes in 1 archives; 57 bytes in 1 archives; 66 bytes in 1 archives; 68 bytes in 1 archives; 74 bytes in 1 archives | candidate ranking only; aggregate support does not decode sprite metadata or prove family semantics |
 | `SOUND` | 10 of 40 chunks | command-stream candidates 0, raw candidates 6, unknown candidates 34 | candidate leading le-u16 offset-pair range 6 chunks (150 per mille); candidate leading u8 width/height range 6 chunks (150 per mille) | equal-size runs in 10/10 archives; repeated size-pattern candidates in 2/10 archives | 0.000..0.811 bits | 1 bytes in 10 archives; 65533 bytes in 6 archives | candidate ranking only; aggregate support does not decode sprite metadata or prove family semantics |
 
+### TAB/sprite family aggregate comparison candidates
+
+These rows compare top-ranked sprite-like filename families using aggregate ratios and bucket sets only. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.
+
+| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Conservative note |
+|---|---|---|---|---|---|---|
+| `HSPR` vs `MSPR` | candidate leading le-u16 offset-pair range: left 649 per mille, right 1 per mille, delta +648 per mille; candidate leading u8 width/height range: left 0 per mille, right 33 per mille, delta -33 per mille; candidate leading le-u16 width/height range: left 32 per mille, right 0 per mille, delta +32 per mille | likely RLE/command-stream chunk candidate: left 987 per mille, right 615 per mille, delta +372 per mille; unknown chunk candidate: left 11 per mille, right 340 per mille, delta -329 per mille; likely raw indexed chunk candidate: left 1 per mille, right 43 per mille, delta -42 per mille | equal-size run archive-ratio delta +0 per mille; repeated size-pattern archive-ratio delta +0 per mille | HSPR 4.843..4.843 bits vs MSPR 7.002..7.002 bits | overlap [none]; HSPR distinct [20 bytes, 120 bytes, 200 bytes, 210 bytes, 320 bytes]; MSPR distinct [16 bytes, 17 bytes, 19 bytes, 89 bytes, 90 bytes] | aggregate comparison only; compatibility clues do not decode or prove family semantics |
+
 ## Mission inventory
 
 | File | Bytes | Container |
