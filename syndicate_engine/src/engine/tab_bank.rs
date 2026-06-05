@@ -1,7 +1,7 @@
 //! Index parser for Bullfrog-style `.TAB` files paired with `.DAT` banks.
 
 use crate::engine::binary::BinaryReader;
-use crate::engine::sprite_decode::{SpriteChunkInfo, SpriteChunkKind};
+use crate::engine::sprite_decode::{SpriteBankAggregateSummary, SpriteChunkInfo, SpriteChunkKind};
 
 use std::collections::BTreeMap;
 
@@ -59,6 +59,7 @@ pub struct TabCandidateSizeMatch {
 pub struct TabArchiveSummary {
     pub bank: TabBankSummary,
     pub sprite_kind_counts: Vec<TabSpriteKindCount>,
+    pub sprite_bank: SpriteBankAggregateSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,16 +159,18 @@ impl TabArchive {
 
     pub fn aggregate_summary(&self) -> TabArchiveSummary {
         let mut kind_counts: BTreeMap<SpriteChunkKind, usize> = BTreeMap::new();
-        for index in 0..self.bank.entry_count() {
-            if let Some(chunk) = self.chunk(index) {
-                *kind_counts
-                    .entry(SpriteChunkInfo::inspect(chunk).kind)
-                    .or_default() += 1;
-            }
+        let chunks = (0..self.bank.entry_count())
+            .filter_map(|index| self.chunk(index))
+            .collect::<Vec<_>>();
+        for chunk in &chunks {
+            *kind_counts
+                .entry(SpriteChunkInfo::inspect(chunk).kind)
+                .or_default() += 1;
         }
 
         TabArchiveSummary {
             bank: summarize_bank(&self.bank, Some(&self.dat)),
+            sprite_bank: SpriteBankAggregateSummary::from_chunks(chunks),
             sprite_kind_counts: kind_counts
                 .into_iter()
                 .map(|(kind, count)| TabSpriteKindCount { kind, count })

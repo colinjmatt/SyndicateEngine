@@ -39,8 +39,8 @@ Observed `.TAB` files are not all the same shape:
 - Some banks look compatible with 32-bit little-endian offsets into paired `.DAT` files.
 - Some files have odd byte lengths or patterns that suggest packed records, 16-bit fields, flags, dimensions, or mixed metadata rather than a plain offset table.
 - The engine now scores 16/24/32-bit little-endian interpretations by valid offset count, unique offset count, and monotonic adjacent pairs.
-- Safely parsed 32-bit TAB/DAT archives now report aggregate-only chunk diagnostics: chunk count, min/median/max chunk size, common chunk-size buckets, chunk-size entropy, duplicate-offset/zero-length candidate counts, first/last offset sanity ranges, exact matches to fixed tile-byte candidates such as 64/256/512/1024/2048/4096 bytes, and aggregate sprite chunk classifier counts. These summaries do not include chunk bytes or render previews.
-- Cross-container probes compare TAB/DAT chunk-size distributions and chunk counts with BLK-like fixed-record candidates. These are compatibility rankings for future investigation only; they do not prove that a TAB/DAT bank is a sprite, tile, font, sound, or map-support format.
+- Safely parsed 32-bit TAB/DAT archives now report aggregate-only chunk diagnostics: chunk count, min/median/max chunk size, common chunk-size buckets, chunk-size entropy, duplicate-offset/zero-length candidate counts, first/last offset sanity ranges, exact matches to fixed tile-byte candidates such as 64/256/512/1024/2048/4096 bytes, aggregate sprite chunk classifier counts, classifier distribution by chunk-size buckets, small/medium/large chunk count bands, zero/high-byte ratio min/median/max summaries by classifier kind, and candidate leading-byte/header-shape frequency counts. These summaries do not include chunk bytes or render previews.
+- Cross-container probes compare TAB/DAT chunk-size distributions and chunk counts with BLK-like fixed-record candidates. The report also groups safely parsed TAB/DAT archives by conservative file-name families such as `HSPR`, `MSPR`, `MFNT`, `FONT`, and `SOUND`, then compares only aggregate classifier totals and candidate header-shape counts. These are compatibility rankings for future investigation only; they do not prove that a TAB/DAT bank is a sprite, tile, font, sound, UI, or map-support format.
 
 Current conservative approach:
 
@@ -59,3 +59,5 @@ Current conservative approach:
 - unknown.
 
 This is diagnostic only. The next milestone is to inspect compatible chunks in `HSPR-1` and identify width/height/anchor metadata before attempting texture generation.
+
+Current aggregate sprite-bank diagnostics intentionally stop at non-reconstructable metadata: chunk counts, size buckets, classifier distributions, zero/high-byte ratio summaries, and candidate header-shape frequencies. Header-shape labels are provisional aggregate patterns only; they should not be interpreted as decoded sprite dimensions, anchors, commands, or audio metadata without stronger cross-file evidence.

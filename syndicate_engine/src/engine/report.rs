@@ -15,6 +15,7 @@ use crate::engine::{
     },
     palette_decode::Palette,
     rnc::RncBlock,
+    sprite_decode::{SpriteBankAggregateSummary, SpriteDistributionSummary},
     tab_bank::{TabArchive, TabArchiveSummary, TabBank, TabBankSummary, TabVariantAnalysis},
 };
 
@@ -917,6 +918,7 @@ fn format_block_cross_container_rows(
     rows.extend(format_duplicate_block_rows(block_analyses));
     rows.extend(format_mmap_relation_rows(block_analyses));
     rows.extend(format_layout_support_rows(block_analyses));
+    rows.extend(format_tab_family_relation_rows(tab_analyses));
     rows.extend(format_tab_block_relation_rows(block_analyses, tab_analyses));
     rows
 }
@@ -1023,10 +1025,10 @@ fn format_layout_support_rows(block_analyses: &[(String, BlockGraphicsAnalysis)]
 
 fn format_tab_archive_summary(summary: &TabArchiveSummary) -> String {
     format!(
-        "{}; {}; sprite classifier counts [{}]",
+        "{}; {}; sprite aggregate [{}]",
         format_tab_bank_summary(&summary.bank),
         format_tab_candidate_size_matches(&summary.bank),
-        format_tab_sprite_kind_counts(summary)
+        format_sprite_bank_aggregate(&summary.sprite_bank)
     )
 }
 
@@ -1086,17 +1088,177 @@ fn format_tab_candidate_size_matches(summary: &TabBankSummary) -> String {
     format!("exact fixed tile-byte candidate matches [{matches}]")
 }
 
-fn format_tab_sprite_kind_counts(summary: &TabArchiveSummary) -> String {
-    if summary.sprite_kind_counts.is_empty() {
+fn format_sprite_bank_aggregate(summary: &SpriteBankAggregateSummary) -> String {
+    format!(
+        "classifier counts [{}]; size bands small/medium/large {}/{}/{}; classifier-by-size [{}]; zero/high-byte ratio min/med/max by classifier [{}]; candidate header-shapes [{}]",
+        format_tab_sprite_kind_counts_from_aggregate(summary),
+        summary.size_band_counts.small,
+        summary.size_band_counts.medium,
+        summary.size_band_counts.large,
+        format_sprite_kind_by_size_buckets(summary),
+        format_sprite_kind_ratio_summaries(summary),
+        format_sprite_header_shapes(summary)
+    )
+}
+
+fn format_tab_sprite_kind_counts_from_aggregate(summary: &SpriteBankAggregateSummary) -> String {
+    if summary.kind_aggregates.is_empty() {
         return "none".to_string();
     }
 
     summary
-        .sprite_kind_counts
+        .kind_aggregates
         .iter()
         .map(|entry| format!("{}:{}", entry.kind.conservative_label(), entry.count))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn format_sprite_kind_by_size_buckets(summary: &SpriteBankAggregateSummary) -> String {
+    if summary.kind_by_size_bucket.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .kind_by_size_bucket
+        .iter()
+        .map(|bucket| {
+            let counts = bucket
+                .kind_counts
+                .iter()
+                .map(|entry| format!("{}:{}", entry.kind.conservative_label(), entry.count))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} => {counts}", bucket.bucket.label())
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_sprite_kind_ratio_summaries(summary: &SpriteBankAggregateSummary) -> String {
+    if summary.kind_aggregates.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .kind_aggregates
+        .iter()
+        .map(|aggregate| {
+            format!(
+                "{} zero {}/ high {}",
+                aggregate.kind.conservative_label(),
+                format_per_mille_distribution(aggregate.zero_ratio_per_mille),
+                format_per_mille_distribution(aggregate.high_byte_ratio_per_mille)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_sprite_header_shapes(summary: &SpriteBankAggregateSummary) -> String {
+    if summary.header_shape_counts.is_empty() {
+        return "none".to_string();
+    }
+
+    summary
+        .header_shape_counts
+        .iter()
+        .map(|entry| format!("{}:{}", entry.shape.label(), entry.count))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_per_mille_distribution(summary: SpriteDistributionSummary) -> String {
+    format!(
+        "{:.3}/{:.3}/{:.3}",
+        summary.min as f32 / 1000.0,
+        summary.median as f32 / 1000.0,
+        summary.max as f32 / 1000.0
+    )
+}
+
+fn format_tab_family_relation_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
+    let mut grouped: BTreeMap<&'static str, Vec<&TabBankReportAnalysis>> = BTreeMap::new();
+    for tab in tab_analyses {
+        grouped
+            .entry(tab_file_family(&tab.path))
+            .or_default()
+            .push(tab);
+    }
+
+    grouped
+        .into_iter()
+        .filter_map(|(family, entries)| {
+            let parsed = entries
+                .iter()
+                .filter_map(|entry| entry.archive_summary.as_ref())
+                .collect::<Vec<_>>();
+            if parsed.is_empty() {
+                return None;
+            }
+
+            let total_chunks = parsed.iter().map(|summary| summary.bank.chunk_count).sum::<usize>();
+            let rle_chunks = parsed
+                .iter()
+                .flat_map(|summary| summary.sprite_bank.kind_aggregates.iter())
+                .filter(|aggregate| {
+                    aggregate.kind
+                        == crate::engine::sprite_decode::SpriteChunkKind::LikelyRleOrCommandStream
+                })
+                .map(|aggregate| aggregate.count)
+                .sum::<usize>();
+            let raw_chunks = parsed
+                .iter()
+                .flat_map(|summary| summary.sprite_bank.kind_aggregates.iter())
+                .filter(|aggregate| {
+                    aggregate.kind == crate::engine::sprite_decode::SpriteChunkKind::LikelyRawIndexed
+                })
+                .map(|aggregate| aggregate.count)
+                .sum::<usize>();
+            let header_shapes = parsed
+                .iter()
+                .flat_map(|summary| summary.sprite_bank.header_shape_counts.iter())
+                .fold(BTreeMap::new(), |mut counts, entry| {
+                    *counts.entry(entry.shape.label()).or_insert(0usize) += entry.count;
+                    counts
+                })
+                .into_iter()
+                .map(|(shape, count)| format!("{shape}:{count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let paths = entries
+                .iter()
+                .map(|entry| format!("`{}`", entry.path))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            Some(format!(
+                "| TAB/DAT filename-family aggregate candidate `{family}` | {paths} | {} parsed archives, {} total chunks | likely command-stream chunks {}, likely raw chunks {}, header-shapes [{}] | filename family and classifier distribution are aggregate clues only; they do not prove sprite, font, sound, or UI semantics |",
+                parsed.len(),
+                total_chunks,
+                rle_chunks,
+                raw_chunks,
+                header_shapes
+            ))
+        })
+        .collect()
+}
+
+fn tab_file_family(path: &str) -> &'static str {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_uppercase();
+    if name.starts_with("HSPR") {
+        "HSPR"
+    } else if name.starts_with("MSPR") {
+        "MSPR"
+    } else if name.starts_with("MFNT") {
+        "MFNT"
+    } else if name.starts_with("FONT") {
+        "FONT"
+    } else if name.starts_with("SOUND") || name.starts_with("GSOUND") || name.starts_with("ISNDS") {
+        "SOUND"
+    } else {
+        "OTHER"
+    }
 }
 
 fn format_tab_block_relation_rows(
@@ -1227,6 +1389,7 @@ fn append_rows_or_empty(markdown: &mut String, rows: &[String], empty: &str, col
 #[cfg(test)]
 mod tests {
     use super::AssetReport;
+    use crate::engine::sprite_decode::SpriteBankAggregateSummary;
 
     #[test]
     fn empty_report_still_renders_markdown() {
@@ -1240,5 +1403,19 @@ mod tests {
         assert!(markdown.contains("Aggregate layout probes"));
         assert!(markdown.contains("MAP substrate to block/tile candidate correlations"));
         assert!(markdown.contains("Cross-container aggregate relation probes"));
+    }
+
+    #[test]
+    fn formats_sprite_bank_aggregate_without_bytes() {
+        let raw = (1..=80).collect::<Vec<u8>>();
+        let command = [0xff, 0x00, 0xfe, 0x00, 0x10, 0x00, 0xf8, 0x01];
+        let chunks = [raw.as_slice(), command.as_slice()];
+        let summary = SpriteBankAggregateSummary::from_chunks(chunks);
+        let formatted = super::format_sprite_bank_aggregate(&summary);
+
+        assert!(formatted.contains("classifier-by-size"));
+        assert!(formatted.contains("zero/high-byte ratio min/med/max"));
+        assert!(formatted.contains("candidate header-shapes"));
+        assert!(!formatted.contains("ff 00 fe 00"));
     }
 }

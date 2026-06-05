@@ -4,12 +4,82 @@
 //! not claim to fully decode sprites yet. It classifies byte chunks and extracts
 //! plausible metadata that can guide reverse engineering and future renderers.
 
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SpriteChunkKind {
     Empty,
     LikelyRawIndexed,
     LikelyRleOrCommandStream,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SpriteChunkSizeBucket {
+    Empty,
+    Tiny,
+    Small,
+    Medium,
+    Large,
+    Huge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SpriteChunkHeaderShape {
+    Empty,
+    StartsWithZeroCandidate,
+    StartsWithHighByteCandidate,
+    CompactPairCandidate,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteDistributionSummary {
+    pub min: u32,
+    pub median: u32,
+    pub max: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpriteKindAggregate {
+    pub kind: SpriteChunkKind,
+    pub count: usize,
+    pub zero_ratio_per_mille: SpriteDistributionSummary,
+    pub high_byte_ratio_per_mille: SpriteDistributionSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpriteKindBySizeBucket {
+    pub bucket: SpriteChunkSizeBucket,
+    pub kind_counts: Vec<SpriteKindCount>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteKindCount {
+    pub kind: SpriteChunkKind,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteHeaderShapeCount {
+    pub shape: SpriteChunkHeaderShape,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteSizeBandCounts {
+    pub small: usize,
+    pub medium: usize,
+    pub large: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpriteBankAggregateSummary {
+    pub chunk_count: usize,
+    pub size_band_counts: SpriteSizeBandCounts,
+    pub kind_aggregates: Vec<SpriteKindAggregate>,
+    pub kind_by_size_bucket: Vec<SpriteKindBySizeBucket>,
+    pub header_shape_counts: Vec<SpriteHeaderShapeCount>,
 }
 
 impl SpriteChunkKind {
@@ -23,12 +93,49 @@ impl SpriteChunkKind {
     }
 }
 
+impl SpriteChunkSizeBucket {
+    pub fn for_len(len: usize) -> Self {
+        match len {
+            0 => Self::Empty,
+            1..=31 => Self::Tiny,
+            32..=127 => Self::Small,
+            128..=511 => Self::Medium,
+            512..=2047 => Self::Large,
+            _ => Self::Huge,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Tiny => "1..31 bytes",
+            Self::Small => "32..127 bytes",
+            Self::Medium => "128..511 bytes",
+            Self::Large => "512..2047 bytes",
+            Self::Huge => ">=2048 bytes",
+        }
+    }
+}
+
+impl SpriteChunkHeaderShape {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty chunk candidate",
+            Self::StartsWithZeroCandidate => "leading-zero header candidate",
+            Self::StartsWithHighByteCandidate => "leading-high-byte command candidate",
+            Self::CompactPairCandidate => "compact leading-pair metadata candidate",
+            Self::Other => "other leading-byte pattern",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpriteChunkInfo {
     pub len: usize,
     pub kind: SpriteChunkKind,
     pub zeroes: usize,
     pub high_bytes: usize,
+    pub header_shape: SpriteChunkHeaderShape,
     pub first_bytes: [u8; 8],
 }
 
@@ -42,12 +149,14 @@ impl SpriteChunkInfo {
         let zeroes = chunk.iter().filter(|&&byte| byte == 0).count();
         let high_bytes = chunk.iter().filter(|&&byte| byte >= 0xf0).count();
         let kind = classify(chunk, zeroes, high_bytes);
+        let header_shape = classify_header_shape(chunk);
 
         Self {
             len: chunk.len(),
             kind,
             zeroes,
             high_bytes,
+            header_shape,
             first_bytes,
         }
     }
@@ -64,6 +173,86 @@ impl SpriteChunkInfo {
             self.first_bytes[2],
             self.first_bytes[3]
         )
+    }
+}
+
+impl SpriteBankAggregateSummary {
+    pub fn from_chunks<'a>(chunks: impl IntoIterator<Item = &'a [u8]>) -> Self {
+        let infos = chunks
+            .into_iter()
+            .map(SpriteChunkInfo::inspect)
+            .collect::<Vec<_>>();
+        Self::from_chunk_infos(&infos)
+    }
+
+    pub fn from_chunk_infos(infos: &[SpriteChunkInfo]) -> Self {
+        let mut by_kind: BTreeMap<SpriteChunkKind, Vec<&SpriteChunkInfo>> = BTreeMap::new();
+        let mut by_bucket: BTreeMap<SpriteChunkSizeBucket, BTreeMap<SpriteChunkKind, usize>> =
+            BTreeMap::new();
+        let mut by_shape: BTreeMap<SpriteChunkHeaderShape, usize> = BTreeMap::new();
+        let mut size_band_counts = SpriteSizeBandCounts {
+            small: 0,
+            medium: 0,
+            large: 0,
+        };
+
+        for info in infos {
+            by_kind.entry(info.kind).or_default().push(info);
+            *by_bucket
+                .entry(SpriteChunkSizeBucket::for_len(info.len))
+                .or_default()
+                .entry(info.kind)
+                .or_default() += 1;
+            *by_shape.entry(info.header_shape).or_default() += 1;
+
+            match info.len {
+                0..=31 => size_band_counts.small += 1,
+                32..=511 => size_band_counts.medium += 1,
+                _ => size_band_counts.large += 1,
+            }
+        }
+
+        let kind_aggregates = by_kind
+            .into_iter()
+            .map(|(kind, infos)| SpriteKindAggregate {
+                kind,
+                count: infos.len(),
+                zero_ratio_per_mille: distribution_summary(
+                    infos
+                        .iter()
+                        .map(|info| ratio_per_mille(info.zeroes, info.len)),
+                ),
+                high_byte_ratio_per_mille: distribution_summary(
+                    infos
+                        .iter()
+                        .map(|info| ratio_per_mille(info.high_bytes, info.len)),
+                ),
+            })
+            .collect();
+
+        let kind_by_size_bucket = by_bucket
+            .into_iter()
+            .map(|(bucket, counts)| SpriteKindBySizeBucket {
+                bucket,
+                kind_counts: counts
+                    .into_iter()
+                    .map(|(kind, count)| SpriteKindCount { kind, count })
+                    .collect(),
+            })
+            .collect();
+
+        let header_shape_counts = by_shape
+            .into_iter()
+            .map(|(shape, count)| SpriteHeaderShapeCount { shape, count })
+            .collect();
+
+        Self {
+            chunk_count: infos.len(),
+            size_band_counts,
+            kind_aggregates,
+            kind_by_size_bucket,
+            header_shape_counts,
+        }
     }
 }
 
@@ -85,9 +274,54 @@ fn classify(chunk: &[u8], zeroes: usize, high_bytes: usize) -> SpriteChunkKind {
     }
 }
 
+fn classify_header_shape(chunk: &[u8]) -> SpriteChunkHeaderShape {
+    let Some(&first) = chunk.first() else {
+        return SpriteChunkHeaderShape::Empty;
+    };
+    if first == 0 {
+        return SpriteChunkHeaderShape::StartsWithZeroCandidate;
+    }
+    if first >= 0xf0 {
+        return SpriteChunkHeaderShape::StartsWithHighByteCandidate;
+    }
+    if chunk
+        .get(1)
+        .is_some_and(|&second| (1..=64).contains(&first) && (1..=64).contains(&second))
+    {
+        return SpriteChunkHeaderShape::CompactPairCandidate;
+    }
+    SpriteChunkHeaderShape::Other
+}
+
+fn ratio_per_mille(numerator: usize, denominator: usize) -> u32 {
+    if denominator == 0 {
+        return 0;
+    }
+    ((numerator * 1000 + denominator / 2) / denominator) as u32
+}
+
+fn distribution_summary(values: impl IntoIterator<Item = u32>) -> SpriteDistributionSummary {
+    let mut values = values.into_iter().collect::<Vec<_>>();
+    if values.is_empty() {
+        return SpriteDistributionSummary {
+            min: 0,
+            median: 0,
+            max: 0,
+        };
+    }
+    values.sort_unstable();
+    SpriteDistributionSummary {
+        min: values[0],
+        median: values[values.len() / 2],
+        max: values[values.len() - 1],
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SpriteChunkInfo, SpriteChunkKind};
+    use super::{
+        SpriteBankAggregateSummary, SpriteChunkHeaderShape, SpriteChunkInfo, SpriteChunkKind,
+    };
 
     #[test]
     fn classifies_empty_chunk() {
@@ -109,5 +343,42 @@ mod tests {
         let chunk = [0xff, 0x00, 0xfe, 0x00, 0x10, 0x00, 0xf8, 0x01];
         let info = SpriteChunkInfo::inspect(&chunk);
         assert_eq!(info.kind, SpriteChunkKind::LikelyRleOrCommandStream);
+        assert_eq!(
+            info.header_shape,
+            SpriteChunkHeaderShape::StartsWithHighByteCandidate
+        );
+    }
+
+    #[test]
+    fn summarizes_sprite_bank_aggregates_without_bytes() {
+        let raw = (1..=80).collect::<Vec<u8>>();
+        let command = [0xff, 0x00, 0xfe, 0x00, 0x10, 0x00, 0xf8, 0x01];
+        let compact = [8, 16, 1, 2, 3, 4, 5, 6];
+        let chunks = [raw.as_slice(), command.as_slice(), compact.as_slice()];
+        let summary = SpriteBankAggregateSummary::from_chunks(chunks);
+
+        assert_eq!(summary.chunk_count, 3);
+        assert_eq!(summary.size_band_counts.small, 2);
+        assert_eq!(summary.size_band_counts.medium, 1);
+        assert!(
+            summary
+                .kind_aggregates
+                .iter()
+                .any(
+                    |aggregate| aggregate.kind == SpriteChunkKind::LikelyRawIndexed
+                        && aggregate.zero_ratio_per_mille.max == 0
+                )
+        );
+        assert!(summary.header_shape_counts.iter().any(|entry| {
+            entry.shape == SpriteChunkHeaderShape::CompactPairCandidate && entry.count >= 1
+        }));
+        assert!(summary.kind_by_size_bucket.iter().any(|bucket| {
+            bucket
+                .kind_counts
+                .iter()
+                .map(|entry| entry.count)
+                .sum::<usize>()
+                > 0
+        }));
     }
 }
