@@ -3,6 +3,7 @@
 use std::{fs, path::Path};
 
 use crate::engine::{
+    block_decode::BlockGraphicsAnalysis,
     map_decode::{
         MapDatAnalysis, MapInferredLayerPreview, MapPrimarySubstrateCandidate, MapSignaturePreview,
     },
@@ -22,6 +23,7 @@ pub struct DecodeDiagnostics {
     pub tab_status: String,
     pub tab_variant_status: String,
     pub sprite_status: String,
+    pub block_graphics_status: String,
     pub palette_preview: Vec<Rgb8>,
 }
 
@@ -40,9 +42,38 @@ impl DecodeDiagnostics {
             tab_status: inspect_tab_bank(root),
             tab_variant_status: inspect_tab_variants(root),
             sprite_status: inspect_sprite_chunks(root),
+            block_graphics_status: inspect_block_graphics(root),
             palette_preview,
         }
     }
+}
+
+fn inspect_block_graphics(root: &Path) -> String {
+    let candidates = [
+        root.join("SYNDICAT/DATA/MMAPBLK.DAT"),
+        root.join("DATADISK/DATA/MMAPBLK.DAT"),
+        root.join("SYNDICAT/DATA/HBLK01.DAT"),
+        root.join("DATADISK/DATA/HBLK01.DAT"),
+    ];
+
+    for path in candidates {
+        if let Ok(data) = fs::read(&path) {
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("BLK");
+            let analysis = BlockGraphicsAnalysis::analyze_file_bytes(&data);
+            let best = analysis
+                .best_aligned_record_candidate()
+                .map(|candidate| candidate.label())
+                .unwrap_or_else(|| "no aligned fixed-size candidate".to_string());
+            return format!(
+                "{name}: {}; decoded {} bytes; {best}; entropy {:.3} bits/byte",
+                analysis.container_label(),
+                analysis.decoded_len,
+                analysis.byte_summary.entropy_milli_bits as f32 / 1000.0
+            );
+        }
+    }
+
+    "block graphics: no BLK candidates".to_string()
 }
 
 fn inspect_map(

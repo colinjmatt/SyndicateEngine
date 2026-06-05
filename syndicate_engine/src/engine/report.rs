@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use crate::engine::{
+    block_decode::{BlockGraphicsAnalysis, BlockIndexPlausibility, correlate_map_value_range},
     map_decode::{
         ByteLaneSpatialStats, ByteLaneStats, MAP_CANDIDATE_DETAIL_LANE,
         MAP_CANDIDATE_REFERENCE_LANE, MAP_CANDIDATE_SURFACE_LANE, MAP_PRIMARY_SECTION_LEN,
@@ -33,6 +34,8 @@ pub struct AssetReport {
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
     tab_rows: Vec<String>,
+    block_graphics_rows: Vec<String>,
+    block_map_correlation_rows: Vec<String>,
 }
 
 impl AssetReport {
@@ -48,6 +51,8 @@ impl AssetReport {
         let mut palette_rows = Vec::new();
         let mut compressed_palette_rows = Vec::new();
         let mut tab_rows = Vec::new();
+        let mut block_graphics_rows = Vec::new();
+        let mut block_analyses = Vec::new();
 
         for entry in WalkDir::new(root)
             .follow_links(false)
@@ -91,6 +96,22 @@ impl AssetReport {
                     diagnostics.inferred_summary,
                     diagnostics.spatial_summary
                 ));
+            }
+
+            if is_block_graphics_candidate(&name) {
+                if let Ok(data) = fs::read(path) {
+                    let analysis = BlockGraphicsAnalysis::analyze_file_bytes(&data);
+                    block_graphics_rows.push(format!(
+                        "| `{}` | {} | {} | {} | {} | {} |",
+                        display_relative(root, path),
+                        size,
+                        analysis.container_label(),
+                        analysis.decoded_len,
+                        format_block_byte_summary(&analysis),
+                        format_block_record_candidates(&analysis)
+                    ));
+                    block_analyses.push((display_relative(root, path), analysis));
+                }
             }
 
             if name.starts_with("MISS") && name.ends_with(".DAT") {
@@ -200,23 +221,31 @@ impl AssetReport {
         palette_rows.sort();
         compressed_palette_rows.sort();
         tab_rows.sort();
+        block_graphics_rows.sort();
+        block_analyses.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let (map_global_summary, map_global_candidate_rows, map_global_substrate_rows) =
-            analyze_primary_sections(map_primary_sections.iter().map(Vec::as_slice))
-                .map(|analysis| {
-                    (
-                        format_global_map_summary(&analysis),
-                        format_global_candidate_rows(&analysis),
-                        format_global_substrate_rows(&analysis),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    (
-                        "no decoded MAP primary sections available".to_string(),
-                        Vec::new(),
-                        Vec::new(),
-                    )
-                });
+        let (
+            map_global_summary,
+            map_global_candidate_rows,
+            map_global_substrate_rows,
+            block_map_correlation_rows,
+        ) = analyze_primary_sections(map_primary_sections.iter().map(Vec::as_slice))
+            .map(|analysis| {
+                (
+                    format_global_map_summary(&analysis),
+                    format_global_candidate_rows(&analysis),
+                    format_global_substrate_rows(&analysis),
+                    format_block_map_correlation_rows(&analysis, &block_analyses),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    "no decoded MAP primary sections available".to_string(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            });
 
         Self {
             root: root.display().to_string(),
@@ -232,6 +261,8 @@ impl AssetReport {
             palette_rows,
             compressed_palette_rows,
             tab_rows,
+            block_graphics_rows,
+            block_map_correlation_rows,
         }
     }
 
@@ -298,6 +329,26 @@ impl AssetReport {
             &mut markdown,
             &self.map_global_substrate_rows,
             "no global MAP substrate-candidate evidence available",
+            6,
+        );
+
+        markdown.push_str("\n## Block/tile graphics container candidates\n\n");
+        markdown.push_str("These diagnostics inspect BLK-like containers using RNC status, decoded length, aggregate byte statistics, and plausible fixed-size indexed-pixel record counts only. They do not include pixel previews or byte dumps. Candidate dimensions are provisional and not yet proven render layouts.\n\n");
+        markdown.push_str("| File | Bytes | Container | Decoded bytes | Aggregate byte summary | Fixed-size record candidates |\n|---|---:|---|---:|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.block_graphics_rows,
+            "no BLK-like graphics candidates found",
+            6,
+        );
+
+        markdown.push_str("\n### MAP substrate to block/tile candidate correlations\n\n");
+        markdown.push_str("These rows compare MAP candidate byte-lane value ranges with possible block/tile record counts. A fit only means the observed byte range could address records in a candidate container; it is not proof of terrain, building, or object semantics.\n\n");
+        markdown.push_str("| Candidate field | MAP lane/range | Block/tile container | Best aligned record candidate | Plausibility | Notes |\n|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.block_map_correlation_rows,
+            "no MAP-to-block candidate correlations available",
             6,
         );
 
@@ -695,6 +746,101 @@ fn format_height_gradient(stats: &ByteLaneSpatialStats) -> String {
     )
 }
 
+fn is_block_graphics_candidate(name: &str) -> bool {
+    name.ends_with(".DAT") && (name.contains("BLK") || name == "MMAP.DAT" || name == "MMAPOUT.DAT")
+}
+
+fn format_block_byte_summary(analysis: &BlockGraphicsAnalysis) -> String {
+    let total = analysis.decoded_len.max(1);
+    let zero_percent = analysis.byte_summary.zero_values * 100 / total;
+    let dominant_percent = analysis.byte_summary.dominant_value_count * 100 / total;
+    format!(
+        "unique {}, zero {} ({}%), dominant {}%, entropy {:.3} bits/byte",
+        analysis.byte_summary.unique_values,
+        analysis.byte_summary.zero_values,
+        zero_percent,
+        dominant_percent,
+        analysis.byte_summary.entropy_milli_bits as f32 / 1000.0
+    )
+}
+
+fn format_block_record_candidates(analysis: &BlockGraphicsAnalysis) -> String {
+    analysis
+        .record_candidates
+        .iter()
+        .filter(|candidate| candidate.record_count > 0)
+        .map(|candidate| {
+            let alignment = if candidate.remainder == 0 {
+                "aligned".to_string()
+            } else {
+                format!("rem {}", candidate.remainder)
+            };
+            format!(
+                "{}x{}:{} records ({alignment})",
+                candidate.width, candidate.height, candidate.record_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_block_map_correlation_rows(
+    map_analysis: &MapGlobalCorrelationAnalysis,
+    block_analyses: &[(String, BlockGraphicsAnalysis)],
+) -> Vec<String> {
+    if block_analyses.is_empty() {
+        return Vec::new();
+    }
+
+    map_analysis
+        .substrate_evidence
+        .iter()
+        .flat_map(|evidence| {
+            let lane_stats = &map_analysis.byte_stats[evidence.lane];
+            block_analyses.iter().map(move |(path, block_analysis)| {
+                let best = block_analysis.best_aligned_record_candidate();
+                let record_count = best.map(|candidate| candidate.record_count);
+                let plausibility =
+                    correlate_map_value_range(lane_stats.min, lane_stats.max, record_count);
+                format!(
+                    "| {} | b{} 0x{:02x}..0x{:02x} ({} unique) | `{}` | {} | {} | {} |",
+                    evidence.field.provisional_label(),
+                    evidence.lane,
+                    lane_stats.min,
+                    lane_stats.max,
+                    lane_stats.unique_values,
+                    path,
+                    best.map(|candidate| candidate.label())
+                        .unwrap_or_else(|| "no aligned fixed-size record candidate".to_string()),
+                    plausibility.label(),
+                    format_block_correlation_note(plausibility, evidence.field)
+                )
+            })
+        })
+        .collect()
+}
+
+fn format_block_correlation_note(
+    plausibility: BlockIndexPlausibility,
+    field: MapCandidateField,
+) -> String {
+    match plausibility {
+        BlockIndexPlausibility::FitsRecordCount => format!(
+            "candidate {} values are within the selected container's aligned record count; this is range evidence only",
+            field.provisional_label()
+        ),
+        BlockIndexPlausibility::FitsByteRangeOnly => format!(
+            "candidate {} values fit an 8-bit range, but no aligned record count was selected",
+            field.provisional_label()
+        ),
+        BlockIndexPlausibility::OutOfRange => format!(
+            "candidate {} values exceed the selected aligned record count",
+            field.provisional_label()
+        ),
+        BlockIndexPlausibility::Unknown => "insufficient aggregate evidence".to_string(),
+    }
+}
+
 fn rnc_decode_status(block: &RncBlock<'_>) -> String {
     let decode_status = match block.decompress() {
         Ok(decoded) => format!("unpacked CRC ok, decoded {} bytes", decoded.len()),
@@ -729,5 +875,7 @@ mod tests {
         assert!(markdown.contains("TAB/DAT bank analysis"));
         assert!(markdown.contains("File extension inventory"));
         assert!(markdown.contains("Map inventory"));
+        assert!(markdown.contains("Block/tile graphics container candidates"));
+        assert!(markdown.contains("MAP substrate to block/tile candidate correlations"));
     }
 }

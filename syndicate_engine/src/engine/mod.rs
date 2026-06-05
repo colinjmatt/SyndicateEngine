@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod binary;
+pub mod block_decode;
 pub mod camera;
 pub mod config;
 pub mod formats;

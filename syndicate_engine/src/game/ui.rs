@@ -9,8 +9,8 @@ use crate::engine::{
 use macroquad::prelude::*;
 
 pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &str, sim: &str) {
-    draw_rectangle(16.0, 16.0, 740.0, 326.0, Color::new(0.0, 0.0, 0.0, 0.62));
-    draw_rectangle_lines(16.0, 16.0, 740.0, 326.0, 2.0, GREEN);
+    draw_rectangle(16.0, 16.0, 840.0, 346.0, Color::new(0.0, 0.0, 0.0, 0.62));
+    draw_rectangle_lines(16.0, 16.0, 840.0, 346.0, 2.0, GREEN);
     draw_text(
         "SYNDICATEENGINE // CLEAN-ROOM PROTOTYPE",
         28.0,
@@ -82,16 +82,26 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         SKYBLUE,
     );
     draw_text(
-        &format!("Variant: {}", asset_index.diagnostics().tab_variant_status),
+        &format!(
+            "Blocks: {}",
+            asset_index.diagnostics().block_graphics_status
+        ),
         28.0,
         284.0,
         15.0,
         SKYBLUE,
     );
     draw_text(
+        &format!("Variant: {}", asset_index.diagnostics().tab_variant_status),
+        28.0,
+        306.0,
+        15.0,
+        SKYBLUE,
+    );
+    draw_text(
         "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M MAP field explorer | Space pause | . step | +/- speed | F5/F9 | Esc",
         28.0,
-        330.0,
+        352.0,
         15.0,
         GRAY,
     );
@@ -289,16 +299,16 @@ fn signature_color(class: u8) -> Color {
 
 fn draw_palette_preview(colors: &[Rgb8]) {
     if colors.is_empty() {
-        draw_text("Palette preview unavailable", 28.0, 308.0, 15.0, DARKGRAY);
+        draw_text("Palette preview unavailable", 28.0, 326.0, 15.0, DARKGRAY);
         return;
     }
 
-    draw_text("Palette", 28.0, 308.0, 15.0, LIGHTGRAY);
+    draw_text("Palette", 28.0, 326.0, 15.0, LIGHTGRAY);
     let swatch_size = 12.0;
     for (i, color) in colors.iter().enumerate() {
         draw_rectangle(
             92.0 + i as f32 * swatch_size,
-            298.0,
+            316.0,
             swatch_size,
             16.0,
             Color::from_rgba(color.r, color.g, color.b, 255),
@@ -306,7 +316,7 @@ fn draw_palette_preview(colors: &[Rgb8]) {
     }
     draw_rectangle_lines(
         92.0,
-        298.0,
+        316.0,
         swatch_size * colors.len() as f32,
         16.0,
         1.0,
