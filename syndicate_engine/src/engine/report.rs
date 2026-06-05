@@ -39,6 +39,7 @@ pub struct AssetReport {
     tab_family_archive_evidence_rows: Vec<String>,
     tab_family_dashboard_rows: Vec<String>,
     tab_family_runtime_probe_rows: Vec<String>,
+    tab_family_runtime_probe_queue_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -278,6 +279,9 @@ impl AssetReport {
                 &tab_analyses,
             ),
             tab_family_runtime_probe_rows: format_tab_family_runtime_probe_plan_rows(&tab_analyses),
+            tab_family_runtime_probe_queue_rows: format_tab_family_runtime_probe_queue_rows(
+                &tab_analyses,
+            ),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
             block_map_correlation_rows,
@@ -434,6 +438,16 @@ impl AssetReport {
             7,
         );
 
+        markdown.push_str("\n### TAB/sprite cross-family runtime-probe queue diagnostics\n\n");
+        markdown.push_str("These rows rank a capped cross-family aggregate probe queue from the selected TAB/sprite dashboard families. Queue order uses counts, ratios, ranges, archive inclusion/capping status, candidate metadata-shape support, classifier ratios, repeated chunk-length bucket support, sibling common-bucket overlap, and entropy/progression consistency only. It is a local clean-room runtime priority list, not decoded layout or semantics.\n\n");
+        markdown.push_str("| Queue rank | Family candidate | Recommended aggregate probe focus | Evidence summary | Probe ordering rationale | Conservative limitation |\n|---:|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_family_runtime_probe_queue_rows,
+            "no aggregate TAB/sprite runtime-probe queue entries available",
+            6,
+        );
+
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
         markdown.push_str("These rows compare the top-ranked sprite-like filename-family candidates using aggregate ratios and bucket sets only. Output is capped to the top three selected families to avoid noisy all-pairs listings. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
         markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Strongest shared compatibility clues | Strongest distinguishing clues | Conservative note |\n|---|---|---|---|---|---|---|---|---|\n");
@@ -582,6 +596,15 @@ struct TabFamilyComparisonSummary {
     right_distinct_common_buckets: Vec<u32>,
     shared_compatibility_clues: Vec<String>,
     distinguishing_clues: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabFamilyRuntimeProbeQueueEntry {
+    family: &'static str,
+    focus: String,
+    evidence: String,
+    rationale: String,
+    priority: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2383,6 +2406,236 @@ fn format_runtime_sibling_bucket_probe_group(summary: &TabFamilyRankingSummary) 
     )
 }
 
+fn format_tab_family_runtime_probe_queue_rows(
+    tab_analyses: &[TabBankReportAnalysis],
+) -> Vec<String> {
+    const MAX_FAMILIES: usize = 3;
+    const MAX_ARCHIVES_PER_FAMILY: usize = 4;
+    const MAX_QUEUE_ROWS: usize = 6;
+
+    let mut entries = Vec::new();
+    for summary in tab_family_ranking_summaries(tab_analyses)
+        .into_iter()
+        .filter(is_sprite_like_family_candidate)
+        .take(MAX_FAMILIES)
+    {
+        let archives =
+            selected_family_archives(tab_analyses, summary.family, MAX_ARCHIVES_PER_FAMILY);
+        if archives.is_empty() {
+            continue;
+        }
+        let inclusion = format_dashboard_archive_inclusion(
+            summary.family,
+            archives.len(),
+            count_parsed_family_archives(tab_analyses, summary.family),
+            MAX_ARCHIVES_PER_FAMILY,
+        );
+        entries.extend(runtime_probe_queue_entries_for_family(
+            &summary, &archives, &inclusion,
+        ));
+    }
+
+    entries.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.family.cmp(right.family))
+            .then_with(|| left.focus.cmp(&right.focus))
+    });
+    entries.truncate(MAX_QUEUE_ROWS);
+
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(index, entry)| format_runtime_probe_queue_row(index + 1, &entry))
+        .collect()
+}
+
+fn runtime_probe_queue_entries_for_family(
+    summary: &TabFamilyRankingSummary,
+    archives: &[&TabArchiveSummary],
+    inclusion: &str,
+) -> Vec<TabFamilyRuntimeProbeQueueEntry> {
+    let mut entries = Vec::new();
+
+    if let Some(top_metadata) = summary.metadata_shape_supports.first() {
+        entries.push(TabFamilyRuntimeProbeQueueEntry {
+            family: summary.family,
+            focus: format!(
+                "candidate metadata-shape support grouping for `{}`",
+                top_metadata.label
+            ),
+            evidence: format!(
+                "{inclusion}; support [{}]; {}",
+                format_runtime_metadata_probe_group(summary),
+                format_runtime_queue_entropy_progression(summary)
+            ),
+            rationale: format!(
+                "probe before lower metadata-support tasks because strongest candidate support is {} per mille; run after archive cap review using aggregate groups only",
+                top_metadata.per_mille
+            ),
+            priority: 12_000
+                + top_metadata.per_mille * 6
+                + summary.metadata_support_score().min(1_000)
+                + runtime_queue_archive_score(summary, archives)
+                + runtime_queue_entropy_consistency_score(summary),
+        });
+    }
+
+    if summary.equal_run_archives > 0 || summary.repeated_pattern_archives > 0 {
+        entries.push(TabFamilyRuntimeProbeQueueEntry {
+            family: summary.family,
+            focus: "repeated fixed-length bucket candidate grouping".to_string(),
+            evidence: format!(
+                "{inclusion}; {}; {}; {}",
+                format_runtime_progression_probe_support(summary, archives),
+                format_runtime_length_bucket_probe_group(archives),
+                format_runtime_queue_entropy_progression(summary)
+            ),
+            rationale: "probe before sibling bucket comparison when repeated-record support is present; run after metadata grouping if bounded metadata support is stronger".to_string(),
+            priority: 10_000
+                + runtime_queue_progression_per_mille(summary) * 5
+                + runtime_queue_length_bucket_support(archives).min(1_000)
+                + runtime_queue_archive_score(summary, archives)
+                + runtime_queue_entropy_consistency_score(summary),
+        });
+    }
+
+    if summary.command_stream_chunks > 0 || summary.raw_chunks > 0 || summary.unknown_chunks > 0 {
+        let command_ratio = ratio_per_mille(summary.command_stream_chunks, summary.total_chunks);
+        entries.push(TabFamilyRuntimeProbeQueueEntry {
+            family: summary.family,
+            focus: "command-stream-heavy versus mixed/raw/unknown classifier grouping".to_string(),
+            evidence: format!(
+                "{inclusion}; command-stream {} per mille, raw {} per mille, unknown {} per mille; size bands small/medium/large {}/{}/{}; {}",
+                command_ratio,
+                ratio_per_mille(summary.raw_chunks, summary.total_chunks),
+                ratio_per_mille(summary.unknown_chunks, summary.total_chunks),
+                summary.small_chunks,
+                summary.medium_chunks,
+                summary.large_chunks,
+                format_runtime_queue_entropy_progression(summary)
+            ),
+            rationale: "probe before rendering experiments that mix classifier groups; run after stronger metadata or fixed-length grouping when those aggregate signals dominate".to_string(),
+            priority: 11_000
+                + command_ratio * 4
+                + summary.total_chunks.min(1_000)
+                + runtime_queue_archive_score(summary, archives)
+                + runtime_queue_entropy_consistency_score(summary),
+        });
+    }
+
+    if !summary.common_bucket_overlap.is_empty() {
+        let focus = if summary.parsed_archives > 1 {
+            "sibling common-size bucket overlap comparison"
+        } else {
+            "single-archive common-size bucket baseline"
+        };
+        let rationale = if summary.parsed_archives > 1 {
+            "probe after per-family metadata/classifier grouping; use before lower-overlap sibling tasks because common buckets recur across parsed archives"
+        } else {
+            "probe after multi-archive sibling tasks because only one parsed archive is available; keep this as a runtime-only local baseline"
+        };
+        entries.push(TabFamilyRuntimeProbeQueueEntry {
+            family: summary.family,
+            focus: focus.to_string(),
+            evidence: format!(
+                "{inclusion}; common bucket support [{}]; {}",
+                format_tab_family_common_bucket_overlap(summary),
+                format_runtime_queue_entropy_progression(summary)
+            ),
+            rationale: rationale.to_string(),
+            priority: 8_000
+                + runtime_queue_common_bucket_score(summary)
+                + runtime_queue_archive_score(summary, archives)
+                + runtime_queue_entropy_consistency_score(summary),
+        });
+    }
+
+    entries
+}
+
+fn format_runtime_probe_queue_row(rank: usize, entry: &TabFamilyRuntimeProbeQueueEntry) -> String {
+    format!(
+        "| {rank} | `{}` | {} | {} | {} | runtime-only aggregate probe queue; local runtime inspection may decode user-supplied assets but report rows do not expose bytes, raw headers/chunks, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics; not proof of decoded layout or semantics |",
+        entry.family, entry.focus, entry.evidence, entry.rationale
+    )
+}
+
+fn format_runtime_queue_entropy_progression(summary: &TabFamilyRankingSummary) -> String {
+    let entropy_spread = summary
+        .max_entropy_milli_bits
+        .saturating_sub(summary.min_entropy_milli_bits);
+    let progression = if summary.equal_run_archives == summary.parsed_archives
+        && summary.repeated_pattern_archives == summary.parsed_archives
+    {
+        "progression consistent across all parsed archives"
+    } else if summary.equal_run_archives > 0 || summary.repeated_pattern_archives > 0 {
+        "partial progression consistency"
+    } else {
+        "limited progression consistency"
+    };
+    format!(
+        "{progression}; equal-size runs {}/{} archives; repeated size-pattern candidates {}/{} archives; entropy spread {:.3} bits",
+        summary.equal_run_archives,
+        summary.parsed_archives,
+        summary.repeated_pattern_archives,
+        summary.parsed_archives,
+        entropy_spread as f32 / 1000.0
+    )
+}
+
+fn runtime_queue_progression_per_mille(summary: &TabFamilyRankingSummary) -> usize {
+    ratio_per_mille(
+        summary
+            .equal_run_archives
+            .saturating_add(summary.repeated_pattern_archives),
+        summary.parsed_archives.saturating_mul(2),
+    )
+}
+
+fn runtime_queue_length_bucket_support(archives: &[&TabArchiveSummary]) -> usize {
+    archives
+        .iter()
+        .flat_map(|archive| archive.bank.common_chunk_len_buckets.iter())
+        .map(|bucket| bucket.count)
+        .sum()
+}
+
+fn runtime_queue_common_bucket_score(summary: &TabFamilyRankingSummary) -> usize {
+    let archive_support = summary
+        .common_bucket_overlap
+        .iter()
+        .map(|bucket| bucket.archive_count)
+        .sum::<usize>();
+    let sibling_bonus = if summary.parsed_archives > 1 {
+        1_000
+    } else {
+        0
+    };
+    sibling_bonus + archive_support * 400 + summary.common_bucket_overlap.len() * 100
+}
+
+fn runtime_queue_archive_score(
+    summary: &TabFamilyRankingSummary,
+    archives: &[&TabArchiveSummary],
+) -> usize {
+    ratio_per_mille(archives.len(), summary.parsed_archives)
+}
+
+fn runtime_queue_entropy_consistency_score(summary: &TabFamilyRankingSummary) -> usize {
+    let spread = summary
+        .max_entropy_milli_bits
+        .saturating_sub(summary.min_entropy_milli_bits);
+    if spread <= 500 {
+        500
+    } else if spread <= 1_500 {
+        250
+    } else {
+        0
+    }
+}
+
 fn format_tab_family_comparison_rows(tab_analyses: &[TabBankReportAnalysis]) -> Vec<String> {
     tab_family_comparison_summaries(tab_analyses)
         .into_iter()
@@ -3418,6 +3671,109 @@ mod tests {
     }
 
     #[test]
+    fn formats_runtime_probe_queue_with_cross_family_ranking_and_conservative_language() {
+        let hspr_a = make_tab_report_analysis(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let hspr_b = make_tab_report_analysis(
+            "DATADISK/DATA/HSPR-1.TAB",
+            vec![
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+                chunk_with_prefix([0, 0, 12, 0], 20),
+            ],
+        );
+        let mspr = make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 1, 1], 64),
+                chunk_with_prefix([10, 12, 1, 1], 64),
+                (1..=80).collect::<Vec<u8>>(),
+                (2..=81).collect::<Vec<u8>>(),
+            ],
+        );
+        let font = make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![
+                chunk_with_prefix([8, 12, 0, 0], 64),
+                chunk_with_prefix([8, 12, 0, 0], 64),
+            ],
+        );
+        let sound = make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        );
+
+        let rows =
+            super::format_tab_family_runtime_probe_queue_rows(&[hspr_a, hspr_b, mspr, font, sound]);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 6);
+        assert!(
+            rows[0].starts_with("| 1 | `")
+                && rows[0].contains("candidate metadata-shape support grouping")
+                && rows[0].contains("1000 per mille"),
+            "{joined}"
+        );
+        assert!(joined.contains("`HSPR`"));
+        assert!(joined.contains("`MSPR`"));
+        assert!(joined.contains("aggregate probe queue"));
+        assert!(joined.contains("runtime-only"));
+        assert!(joined.contains("before"));
+        assert!(joined.contains("after"));
+        assert!(joined.contains("per mille"));
+        assert!(joined.contains("entropy spread"));
+        assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_runtime_probe_queue_families_archives_and_rows_without_bytes() {
+        let mut analyses = (0..6)
+            .map(|index| {
+                make_tab_report_analysis(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        analyses.push(make_tab_report_analysis(
+            "DATA/FONT.TAB",
+            vec![chunk_with_prefix([8, 12, 0, 0], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![chunk_with_prefix([8, 12, 1, 1], 64)],
+        ));
+        analyses.push(make_tab_report_analysis(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        ));
+
+        let rows = super::format_tab_family_runtime_probe_queue_rows(&analyses);
+        let joined = rows.join("\n");
+
+        assert_eq!(rows.len(), 6);
+        assert!(joined.contains("capped at 4/6 parsed archives"));
+        assert!(joined.contains("top selected `HSPR` sprite-like family candidate"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(joined.contains("do not expose bytes, raw headers/chunks"));
+        assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
     fn renders_empty_tab_family_ranking_section_conservatively() {
         let report = AssetReport::generate("definitely-not-a-real-asset-dir");
         let markdown = report.to_markdown();
@@ -3427,6 +3783,7 @@ mod tests {
         assert!(markdown.contains("TAB/sprite top-priority archive evidence rows"));
         assert!(markdown.contains("TAB/sprite investigation dashboard"));
         assert!(markdown.contains("TAB/sprite runtime-probe planning diagnostics"));
+        assert!(markdown.contains("TAB/sprite cross-family runtime-probe queue diagnostics"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
@@ -3435,6 +3792,7 @@ mod tests {
             markdown.contains("no aggregate TAB/sprite investigation dashboard rows available")
         );
         assert!(markdown.contains("no aggregate TAB/sprite runtime-probe plans available"));
+        assert!(markdown.contains("no aggregate TAB/sprite runtime-probe queue entries available"));
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }
 
