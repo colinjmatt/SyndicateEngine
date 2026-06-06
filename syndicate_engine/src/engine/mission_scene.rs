@@ -28,6 +28,20 @@ const STATICS_OFFSET: usize = 59_016;
 const WEAPONS_OFFSET: usize = 71_016;
 const SFX_OFFSET: usize = 89_448;
 const SCENARIOS_OFFSET: usize = 97_128;
+const OBJECTIVES_OFFSET: usize = 113_974;
+const SCENARIO_RECORD_BYTES: usize = 8;
+const SCENARIO_RECORD_COUNT: usize = 2_048;
+const OBJECTIVE_RECORD_BYTES: usize = 14;
+const OBJECTIVE_RECORD_COUNT: usize = 6;
+const PEOPLE_RECORD_BYTES: usize = 92;
+const VEHICLE_RECORD_BYTES: usize = 42;
+const STATIC_RECORD_BYTES: usize = 30;
+const WEAPON_RECORD_BYTES: usize = 36;
+const OBJECT_OFFSET_PEOPLE_BASE: u16 = 0x0002;
+const OBJECT_OFFSET_VEHICLES_BASE: u16 = 0x5c02;
+const OBJECT_OFFSET_STATICS_BASE: u16 = 0x6682;
+const OBJECT_OFFSET_WEAPONS_BASE: u16 = 0x9562;
+const OBJECT_OFFSET_SFX_BASE: u16 = 0xdd62;
 
 const ON_MAP_DESC: &[u8] = &[0x04];
 const STATIC_DRAW_DESCS: &[u8] = &[0x04, 0x06, 0x07];
@@ -57,6 +71,7 @@ pub struct OriginalMissionScene {
     pub navigation_debug_probe: OriginalNavigationDebugProbe,
     pub interaction_probe: OriginalInteractionProbe,
     spatial_model: Option<OriginalSpatialModel>,
+    objective_model: OriginalObjectiveScenarioModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,9 +313,53 @@ pub struct OriginalInteractionProbe {
     pub weapon_pickup_candidates: usize,
     pub vehicle_entry_candidates: usize,
     pub scenario_objective_buckets: usize,
+    pub scenario_active_records: usize,
+    pub scenario_action_buckets: usize,
+    pub scenario_trigger_buckets: usize,
+    pub scenario_tile_target_buckets: usize,
+    pub scenario_object_target_buckets: usize,
+    pub scenario_chain_start_peds: usize,
+    pub scenario_chain_link_candidates: usize,
+    pub scenario_loop_candidates: usize,
+    pub scenario_invalid_next_candidates: usize,
+    pub game_objective_records: usize,
+    pub game_objective_supported_records: usize,
+    pub game_objective_unknown_records: usize,
+    pub objective_ped_target_buckets: usize,
+    pub objective_vehicle_target_buckets: usize,
+    pub objective_weapon_target_buckets: usize,
+    pub objective_location_target_buckets: usize,
+    pub objective_group_target_buckets: usize,
+    pub objective_unresolved_target_buckets: usize,
+    pub objective_success_condition_buckets: usize,
+    pub objective_failure_condition_buckets: usize,
     pub miss_active_record_candidates: usize,
     pub miss_objective_buckets: usize,
     pub guardrail: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalDebugInteractionProbe {
+    pub status: OriginalDebugInteractionStatus,
+    pub agent_tile: Option<OriginalTilePoint>,
+    pub target_tile: Option<OriginalTilePoint>,
+    pub door_candidates: usize,
+    pub opening_door_candidates: usize,
+    pub large_door_candidates: usize,
+    pub weapon_pickup_candidates: usize,
+    pub vehicle_entry_candidates: usize,
+    pub objective_target_candidates: usize,
+    pub scenario_target_candidates: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalDebugInteractionStatus {
+    DebugDisabled,
+    MissingDebugAgent,
+    MissingTarget,
+    NoCandidateInteraction,
+    CandidateInteractionReady,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,6 +460,86 @@ struct AnimationCatalog {
 struct OriginalMissionScriptProbe {
     active_record_candidates: usize,
     objective_bucket_candidates: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginalObjectiveScenarioModel {
+    objectives: Vec<OriginalObjectiveCandidateRecord>,
+    scenarios: Vec<OriginalScenarioCandidateRecord>,
+    ped_scenario_start_candidates: usize,
+    scenario_chain_link_candidates: usize,
+    scenario_loop_candidates: usize,
+    scenario_invalid_next_candidates: usize,
+    miss_active_record_candidates: usize,
+    miss_objective_buckets: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OriginalObjectiveCandidateRecord {
+    record_index: u8,
+    kind: OriginalObjectiveCandidateKind,
+    target: OriginalObjectiveTarget,
+    tile: Option<OriginalTilePoint>,
+    success_buckets: u8,
+    failure_buckets: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginalObjectiveCandidateKind {
+    SubOrLocation,
+    Persuade,
+    Assassinate,
+    Protect,
+    TakeWeapon,
+    EliminatePolice,
+    EliminateAgents,
+    DestroyVehicle,
+    UseVehicle,
+    Evacuate,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginalObjectiveTarget {
+    None,
+    Ped(u16),
+    Vehicle(u16),
+    Weapon(u16),
+    Group,
+    Location(OriginalTilePoint),
+    UnresolvedOffset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OriginalScenarioCandidateRecord {
+    record_index: u16,
+    kind: OriginalScenarioCandidateKind,
+    next_index: Option<u16>,
+    object_target: Option<OriginalObjectOffsetTarget>,
+    tile: Option<OriginalTilePoint>,
+    invalid_next: bool,
+    self_loop: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginalScenarioCandidateKind {
+    WalkOrDrive,
+    UseVehicle,
+    Unknown,
+    Escape,
+    Trigger,
+    Reset,
+    TrainWait,
+    ProtectedTargetReached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginalObjectOffsetTarget {
+    Ped(u16),
+    Vehicle(u16),
+    Static(u16),
+    Weapon(u16),
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,8 +695,9 @@ impl OriginalMissionScene {
         let spatial_probe = OriginalSpatialProbe::from_model(spatial_model.as_ref());
         let navigation_debug_probe =
             OriginalNavigationDebugProbe::from_model(spatial_model.as_ref());
-        let interaction_probe =
-            OriginalInteractionProbe::from_scene(decoded, &objects, mission_script_probe);
+        let objective_model =
+            OriginalObjectiveScenarioModel::from_game_bytes(decoded, mission_script_probe);
+        let interaction_probe = OriginalInteractionProbe::from_scene(&objects, &objective_model);
 
         Self {
             mission_label,
@@ -579,6 +719,7 @@ impl OriginalMissionScene {
             navigation_debug_probe,
             interaction_probe,
             spatial_model,
+            objective_model,
         }
     }
 
@@ -771,6 +912,25 @@ impl OriginalMissionScene {
                 && object.record_index == record_index
                 && object.candidate_draw
         })
+    }
+
+    pub fn original_debug_interaction_probe_between(
+        &self,
+        agent_tile: Option<OriginalTilePoint>,
+        target_tile: Option<OriginalTilePoint>,
+        debug_enabled: bool,
+    ) -> OriginalDebugInteractionProbe {
+        if !debug_enabled {
+            return OriginalDebugInteractionProbe::debug_disabled();
+        }
+        let Some(agent_tile) = agent_tile else {
+            return OriginalDebugInteractionProbe::missing_debug_agent(target_tile);
+        };
+        let Some(target_tile) = target_tile else {
+            return OriginalDebugInteractionProbe::missing_target(agent_tile);
+        };
+        self.objective_model
+            .debug_interaction_probe(agent_tile, target_tile, &self.objects)
     }
 
     pub fn first_agent_spawn_tile(&self) -> Option<OriginalTilePoint> {
@@ -1758,9 +1918,8 @@ impl OriginalNavigationDebugProbe {
 
 impl OriginalInteractionProbe {
     fn from_scene(
-        decoded: &[u8],
         objects: &[OriginalMissionObjectCandidate],
-        mission_script_probe: Option<&OriginalMissionScriptProbe>,
+        model: &OriginalObjectiveScenarioModel,
     ) -> Self {
         let door_interaction_candidates = objects
             .iter()
@@ -1790,15 +1949,87 @@ impl OriginalInteractionProbe {
                 object.candidate_draw && object.kind == OriginalMissionObjectKind::Vehicle
             })
             .count();
-        let scenario_objective_buckets = scenario_records(decoded)
-            .filter(|record| matches!(record.get(7).copied(), Some(0x01 | 0x02 | 0x08)))
+        let scenario_objective_buckets = model
+            .scenarios
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record.kind,
+                    OriginalScenarioCandidateKind::WalkOrDrive
+                        | OriginalScenarioCandidateKind::UseVehicle
+                        | OriginalScenarioCandidateKind::Trigger
+                )
+            })
             .count();
-        let miss_objective_buckets = mission_script_probe
-            .map(|probe| probe.objective_bucket_candidates)
-            .unwrap_or_default();
-        let miss_active_record_candidates = mission_script_probe
-            .map(|probe| probe.active_record_candidates)
-            .unwrap_or_default();
+        let scenario_active_records = model.scenarios.len();
+        let scenario_action_buckets = model
+            .scenarios
+            .iter()
+            .filter(|record| record.kind.is_action_candidate())
+            .count();
+        let scenario_trigger_buckets = model
+            .scenarios
+            .iter()
+            .filter(|record| record.kind == OriginalScenarioCandidateKind::Trigger)
+            .count();
+        let scenario_tile_target_buckets = model
+            .scenarios
+            .iter()
+            .filter(|record| record.tile.is_some())
+            .count();
+        let scenario_object_target_buckets = model
+            .scenarios
+            .iter()
+            .filter(|record| record.object_target.is_some())
+            .count();
+        let game_objective_records = model.objectives.len();
+        let game_objective_supported_records = model
+            .objectives
+            .iter()
+            .filter(|record| record.kind != OriginalObjectiveCandidateKind::Unknown)
+            .count();
+        let game_objective_unknown_records =
+            game_objective_records.saturating_sub(game_objective_supported_records);
+        let objective_ped_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::Ped(_)))
+            .count();
+        let objective_vehicle_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::Vehicle(_)))
+            .count();
+        let objective_weapon_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::Weapon(_)))
+            .count();
+        let objective_location_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::Location(_)))
+            .count();
+        let objective_group_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::Group))
+            .count();
+        let objective_unresolved_target_buckets = model
+            .objectives
+            .iter()
+            .filter(|record| matches!(record.target, OriginalObjectiveTarget::UnresolvedOffset))
+            .count();
+        let objective_success_condition_buckets = model
+            .objectives
+            .iter()
+            .map(|record| record.success_buckets as usize)
+            .sum();
+        let objective_failure_condition_buckets = model
+            .objectives
+            .iter()
+            .map(|record| record.failure_buckets as usize)
+            .sum();
 
         Self {
             door_interaction_candidates,
@@ -1807,21 +2038,46 @@ impl OriginalInteractionProbe {
             weapon_pickup_candidates,
             vehicle_entry_candidates,
             scenario_objective_buckets,
-            miss_active_record_candidates,
-            miss_objective_buckets,
+            scenario_active_records,
+            scenario_action_buckets,
+            scenario_trigger_buckets,
+            scenario_tile_target_buckets,
+            scenario_object_target_buckets,
+            scenario_chain_start_peds: model.ped_scenario_start_candidates,
+            scenario_chain_link_candidates: model.scenario_chain_link_candidates,
+            scenario_loop_candidates: model.scenario_loop_candidates,
+            scenario_invalid_next_candidates: model.scenario_invalid_next_candidates,
+            game_objective_records,
+            game_objective_supported_records,
+            game_objective_unknown_records,
+            objective_ped_target_buckets,
+            objective_vehicle_target_buckets,
+            objective_weapon_target_buckets,
+            objective_location_target_buckets,
+            objective_group_target_buckets,
+            objective_unresolved_target_buckets,
+            objective_success_condition_buckets,
+            objective_failure_condition_buckets,
+            miss_active_record_candidates: model.miss_active_record_candidates,
+            miss_objective_buckets: model.miss_objective_buckets,
             guardrail: "interaction buckets are candidate-only; no objective, pickup, door, AI, or vehicle semantics are active",
         }
     }
 
     pub fn panel_label(&self) -> String {
         format!(
-            "interactions doors {} opening {} large {}; pickups {} vehicles {}; objectives GAME {} MISS {}/{}; candidate-only",
+            "interactions doors {} opening {} large {}; pickups {} vehicles {}; objectives GAME {}/{} unknown {}; scenarios {} trigger {} chains {}; MISS {}/{}; candidate-only",
             self.door_interaction_candidates,
             self.opening_door_candidates,
             self.large_door_candidates,
             self.weapon_pickup_candidates,
             self.vehicle_entry_candidates,
-            self.scenario_objective_buckets,
+            self.game_objective_supported_records,
+            self.game_objective_records,
+            self.game_objective_unknown_records,
+            self.scenario_active_records,
+            self.scenario_trigger_buckets,
+            self.scenario_chain_start_peds,
             self.miss_active_record_candidates,
             self.miss_objective_buckets
         )
@@ -1829,10 +2085,148 @@ impl OriginalInteractionProbe {
 
     pub fn report_label(&self) -> String {
         format!(
-            "{}; {}; runtime-only aggregate, not proof of interaction or mission semantics",
+            "{}; objective targets ped {} vehicle {} weapon {} location {} group {} unresolved {}; success/failure buckets {}/{}; scenario actions {} tile targets {} object targets {} loops {} invalid-next {}; GAME scenario objective buckets {}; {}; runtime-only aggregate, not proof of interaction or mission semantics",
             self.panel_label(),
+            self.objective_ped_target_buckets,
+            self.objective_vehicle_target_buckets,
+            self.objective_weapon_target_buckets,
+            self.objective_location_target_buckets,
+            self.objective_group_target_buckets,
+            self.objective_unresolved_target_buckets,
+            self.objective_success_condition_buckets,
+            self.objective_failure_condition_buckets,
+            self.scenario_action_buckets,
+            self.scenario_tile_target_buckets,
+            self.scenario_object_target_buckets,
+            self.scenario_loop_candidates,
+            self.scenario_invalid_next_candidates,
+            self.scenario_objective_buckets,
             self.guardrail
         )
+    }
+}
+
+impl OriginalDebugInteractionProbe {
+    fn debug_disabled() -> Self {
+        Self {
+            status: OriginalDebugInteractionStatus::DebugDisabled,
+            agent_tile: None,
+            target_tile: None,
+            door_candidates: 0,
+            opening_door_candidates: 0,
+            large_door_candidates: 0,
+            weapon_pickup_candidates: 0,
+            vehicle_entry_candidates: 0,
+            objective_target_candidates: 0,
+            scenario_target_candidates: 0,
+            message: "interaction probe gated by G; debug-only and demo gameplay remains active"
+                .to_string(),
+        }
+    }
+
+    fn missing_debug_agent(target_tile: Option<OriginalTilePoint>) -> Self {
+        Self {
+            status: OriginalDebugInteractionStatus::MissingDebugAgent,
+            agent_tile: None,
+            target_tile,
+            door_candidates: 0,
+            opening_door_candidates: 0,
+            large_door_candidates: 0,
+            weapon_pickup_candidates: 0,
+            vehicle_entry_candidates: 0,
+            objective_target_candidates: 0,
+            scenario_target_candidates: 0,
+            message: "interaction probe blocked: no selected original debug-agent marker"
+                .to_string(),
+        }
+    }
+
+    fn missing_target(agent_tile: OriginalTilePoint) -> Self {
+        Self {
+            status: OriginalDebugInteractionStatus::MissingTarget,
+            agent_tile: Some(agent_tile),
+            target_tile: None,
+            door_candidates: 0,
+            opening_door_candidates: 0,
+            large_door_candidates: 0,
+            weapon_pickup_candidates: 0,
+            vehicle_entry_candidates: 0,
+            objective_target_candidates: 0,
+            scenario_target_candidates: 0,
+            message: "interaction probe blocked: cursor is outside the candidate map".to_string(),
+        }
+    }
+
+    fn from_counts(
+        agent_tile: OriginalTilePoint,
+        target_tile: OriginalTilePoint,
+        door_candidates: usize,
+        opening_door_candidates: usize,
+        large_door_candidates: usize,
+        weapon_pickup_candidates: usize,
+        vehicle_entry_candidates: usize,
+        objective_target_candidates: usize,
+        scenario_target_candidates: usize,
+    ) -> Self {
+        let total = door_candidates
+            + weapon_pickup_candidates
+            + vehicle_entry_candidates
+            + objective_target_candidates
+            + scenario_target_candidates;
+        let status = if total == 0 {
+            OriginalDebugInteractionStatus::NoCandidateInteraction
+        } else {
+            OriginalDebugInteractionStatus::CandidateInteractionReady
+        };
+        let message = if total == 0 {
+            "interaction probe: no candidate door, pickup, vehicle, objective, or scenario bucket near cursor; candidate-only".to_string()
+        } else {
+            format!(
+                "interaction probe: candidate buckets near cursor doors {} pickups {} vehicles {} objectives {} scenarios {}; debug-only",
+                door_candidates,
+                weapon_pickup_candidates,
+                vehicle_entry_candidates,
+                objective_target_candidates,
+                scenario_target_candidates
+            )
+        };
+
+        Self {
+            status,
+            agent_tile: Some(agent_tile),
+            target_tile: Some(target_tile),
+            door_candidates,
+            opening_door_candidates,
+            large_door_candidates,
+            weapon_pickup_candidates,
+            vehicle_entry_candidates,
+            objective_target_candidates,
+            scenario_target_candidates,
+            message,
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        match self.status {
+            OriginalDebugInteractionStatus::DebugDisabled
+            | OriginalDebugInteractionStatus::MissingDebugAgent
+            | OriginalDebugInteractionStatus::MissingTarget => self.message.clone(),
+            OriginalDebugInteractionStatus::NoCandidateInteraction
+            | OriginalDebugInteractionStatus::CandidateInteractionReady => {
+                let Some(target) = self.target_tile else {
+                    return self.message.clone();
+                };
+                format!(
+                    "{} at {},{},{}; opening {} large {}; candidate-only",
+                    self.message,
+                    target.tile_x,
+                    target.tile_y,
+                    target.tile_z,
+                    self.opening_door_candidates,
+                    self.large_door_candidates
+                )
+            }
+        }
     }
 }
 
@@ -2617,6 +3011,348 @@ impl CandidateSurfaceType {
     }
 }
 
+impl OriginalObjectiveScenarioModel {
+    fn from_game_bytes(
+        decoded: &[u8],
+        mission_script_probe: Option<&OriginalMissionScriptProbe>,
+    ) -> Self {
+        let objectives = objective_records(decoded)
+            .enumerate()
+            .filter_map(|(record_index, record)| {
+                OriginalObjectiveCandidateRecord::from_record(record_index as u8, record)
+            })
+            .collect::<Vec<_>>();
+        let scenarios = scenario_records(decoded)
+            .enumerate()
+            .filter_map(|(record_index, record)| {
+                OriginalScenarioCandidateRecord::from_record(record_index as u16, record)
+            })
+            .collect::<Vec<_>>();
+        let ped_scenario_starts = ped_scenario_start_indices(decoded);
+        let scenario_chain_link_candidates = scenarios
+            .iter()
+            .filter(|record| record.next_index.is_some())
+            .count();
+        let scenario_loop_candidates =
+            count_scenario_loop_candidates(&scenarios, &ped_scenario_starts);
+        let scenario_invalid_next_candidates = scenarios
+            .iter()
+            .filter(|record| record.invalid_next)
+            .count();
+        let miss_active_record_candidates = mission_script_probe
+            .map(|probe| probe.active_record_candidates)
+            .unwrap_or_default();
+        let miss_objective_buckets = mission_script_probe
+            .map(|probe| probe.objective_bucket_candidates)
+            .unwrap_or_default();
+
+        Self {
+            objectives,
+            scenarios,
+            ped_scenario_start_candidates: ped_scenario_starts.len(),
+            scenario_chain_link_candidates,
+            scenario_loop_candidates,
+            scenario_invalid_next_candidates,
+            miss_active_record_candidates,
+            miss_objective_buckets,
+        }
+    }
+
+    fn debug_interaction_probe(
+        &self,
+        agent_tile: OriginalTilePoint,
+        target_tile: OriginalTilePoint,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> OriginalDebugInteractionProbe {
+        let nearby_objects = objects.iter().filter(|object| {
+            object.candidate_draw
+                && object
+                    .tile
+                    .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+        });
+        let door_candidates = nearby_objects
+            .clone()
+            .filter(|object| is_door_static_candidate(object))
+            .count();
+        let opening_door_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw
+                    && object
+                        .tile
+                        .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+                    && object.kind == OriginalMissionObjectKind::Static
+                    && matches!(object.subtype_value, Some(0x0e | 0x0f))
+            })
+            .count();
+        let large_door_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw
+                    && object
+                        .tile
+                        .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+                    && is_large_door_static_candidate(object)
+            })
+            .count();
+        let weapon_pickup_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw
+                    && object.kind == OriginalMissionObjectKind::Weapon
+                    && object
+                        .tile
+                        .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+            })
+            .count();
+        let vehicle_entry_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw
+                    && object.kind == OriginalMissionObjectKind::Vehicle
+                    && object
+                        .tile
+                        .is_some_and(|tile| tile_near(tile, target_tile, 2, 1))
+            })
+            .count();
+        let objective_target_candidates = self
+            .objectives
+            .iter()
+            .filter(|record| record.matches_tile(target_tile, objects))
+            .count();
+        let scenario_target_candidates = self
+            .scenarios
+            .iter()
+            .filter(|record| record.matches_tile(target_tile, objects))
+            .count();
+
+        OriginalDebugInteractionProbe::from_counts(
+            agent_tile,
+            target_tile,
+            door_candidates,
+            opening_door_candidates,
+            large_door_candidates,
+            weapon_pickup_candidates,
+            vehicle_entry_candidates,
+            objective_target_candidates,
+            scenario_target_candidates,
+        )
+    }
+}
+
+impl OriginalObjectiveCandidateRecord {
+    fn from_record(record_index: u8, record: &[u8]) -> Option<Self> {
+        if record.iter().all(|byte| *byte == 0) {
+            return None;
+        }
+        let type_value = read_le_u16(record, 0);
+        let offset = read_le_u16(record, 2);
+        let tile = objective_position_candidate(
+            read_le_u16(record, 4),
+            read_le_u16(record, 6),
+            read_le_u16(record, 8),
+        );
+        let kind = OriginalObjectiveCandidateKind::from_type_value(type_value);
+        let target = kind.target_from_record(offset, tile);
+        let (success_buckets, failure_buckets) = kind.condition_bucket_counts();
+
+        Some(Self {
+            record_index,
+            kind,
+            target,
+            tile,
+            success_buckets,
+            failure_buckets,
+        })
+    }
+
+    fn matches_tile(
+        &self,
+        target_tile: OriginalTilePoint,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> bool {
+        if self
+            .tile
+            .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+        {
+            return true;
+        }
+        self.target
+            .tile_from_objects(objects)
+            .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+    }
+}
+
+impl OriginalObjectiveCandidateKind {
+    fn from_type_value(type_value: u16) -> Self {
+        match type_value {
+            0x00 => Self::SubOrLocation,
+            0x01 => Self::Persuade,
+            0x02 => Self::Assassinate,
+            0x03 => Self::Protect,
+            0x05 => Self::TakeWeapon,
+            0x0a => Self::EliminatePolice,
+            0x0b => Self::EliminateAgents,
+            0x0e => Self::DestroyVehicle,
+            0x0f => Self::UseVehicle,
+            0x10 => Self::Evacuate,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn target_from_record(
+        self,
+        offset: u16,
+        tile: Option<OriginalTilePoint>,
+    ) -> OriginalObjectiveTarget {
+        match self {
+            Self::Persuade | Self::Assassinate | Self::Protect => {
+                objective_object_target(offset, OriginalMissionObjectKind::Ped)
+            }
+            Self::TakeWeapon => objective_object_target(offset, OriginalMissionObjectKind::Weapon),
+            Self::DestroyVehicle | Self::UseVehicle => {
+                objective_object_target(offset, OriginalMissionObjectKind::Vehicle)
+            }
+            Self::EliminatePolice | Self::EliminateAgents => OriginalObjectiveTarget::Group,
+            Self::Evacuate => tile
+                .map(OriginalObjectiveTarget::Location)
+                .unwrap_or(OriginalObjectiveTarget::None),
+            Self::SubOrLocation => {
+                tile.map(OriginalObjectiveTarget::Location)
+                    .unwrap_or_else(|| {
+                        if offset == 0 {
+                            OriginalObjectiveTarget::None
+                        } else {
+                            OriginalObjectiveTarget::UnresolvedOffset
+                        }
+                    })
+            }
+            Self::Unknown => {
+                if offset == 0 {
+                    tile.map(OriginalObjectiveTarget::Location)
+                        .unwrap_or(OriginalObjectiveTarget::None)
+                } else {
+                    OriginalObjectiveTarget::UnresolvedOffset
+                }
+            }
+        }
+    }
+
+    fn condition_bucket_counts(self) -> (u8, u8) {
+        match self {
+            Self::SubOrLocation | Self::Unknown => (0, 0),
+            Self::DestroyVehicle => (1, 1),
+            _ => (1, 2),
+        }
+    }
+}
+
+impl OriginalObjectiveTarget {
+    fn tile_from_objects(
+        self,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> Option<OriginalTilePoint> {
+        let (kind, record_index) = match self {
+            Self::Ped(record_index) => (OriginalMissionObjectKind::Ped, record_index),
+            Self::Vehicle(record_index) => (OriginalMissionObjectKind::Vehicle, record_index),
+            Self::Weapon(record_index) => (OriginalMissionObjectKind::Weapon, record_index),
+            Self::Location(tile) => return Some(tile),
+            Self::None | Self::Group | Self::UnresolvedOffset => return None,
+        };
+        objects
+            .iter()
+            .find(|object| object.kind == kind && object.record_index == record_index)
+            .and_then(|object| object.tile)
+    }
+}
+
+impl OriginalScenarioCandidateRecord {
+    fn from_record(record_index: u16, record: &[u8]) -> Option<Self> {
+        let scenario_type = record.get(7).copied().unwrap_or_default();
+        if scenario_type == 0 {
+            return None;
+        }
+        let next_raw = read_le_u16(record, 0);
+        let next_index = scenario_offset_to_index(next_raw);
+        let object_target = object_offset_target(read_le_u16(record, 2));
+        let tile = scenario_tile_candidate(record);
+        let invalid_next = next_raw != 0 && next_index.is_none();
+        let self_loop = next_index == Some(record_index);
+
+        Some(Self {
+            record_index,
+            kind: OriginalScenarioCandidateKind::from_type_value(scenario_type),
+            next_index,
+            object_target,
+            tile,
+            invalid_next,
+            self_loop,
+        })
+    }
+
+    fn matches_tile(
+        &self,
+        target_tile: OriginalTilePoint,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> bool {
+        if self
+            .tile
+            .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+        {
+            return true;
+        }
+        self.object_target
+            .and_then(|target| target.tile_from_objects(objects))
+            .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
+    }
+}
+
+impl OriginalScenarioCandidateKind {
+    fn from_type_value(type_value: u8) -> Self {
+        match type_value {
+            0x01 => Self::WalkOrDrive,
+            0x02 => Self::UseVehicle,
+            0x07 => Self::Escape,
+            0x08 => Self::Trigger,
+            0x09 => Self::Reset,
+            0x0a => Self::TrainWait,
+            0x0b => Self::ProtectedTargetReached,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn is_action_candidate(self) -> bool {
+        matches!(
+            self,
+            Self::WalkOrDrive
+                | Self::UseVehicle
+                | Self::Escape
+                | Self::Reset
+                | Self::TrainWait
+                | Self::ProtectedTargetReached
+        )
+    }
+}
+
+impl OriginalObjectOffsetTarget {
+    fn tile_from_objects(
+        self,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> Option<OriginalTilePoint> {
+        let (kind, record_index) = match self {
+            Self::Ped(record_index) => (OriginalMissionObjectKind::Ped, record_index),
+            Self::Vehicle(record_index) => (OriginalMissionObjectKind::Vehicle, record_index),
+            Self::Static(record_index) => (OriginalMissionObjectKind::Static, record_index),
+            Self::Weapon(record_index) => (OriginalMissionObjectKind::Weapon, record_index),
+            Self::Unknown => return None,
+        };
+        objects
+            .iter()
+            .find(|object| object.kind == kind && object.record_index == record_index)
+            .and_then(|object| object.tile)
+    }
+}
+
 impl OriginalMissionScriptProbe {
     fn from_root(root: &Path, mission_id: u16) -> Option<Self> {
         for relative in data_file_candidates(&format!("MISS{mission_id:02}.DAT")) {
@@ -3302,10 +4038,185 @@ fn is_enemy_ped_spawn_candidate(object: &OriginalMissionObjectCandidate) -> bool
             || matches!(object.subtype_value, Some(0x02 | 0x04 | 0x08 | 0x10)))
 }
 
+fn objective_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
+    let tail = decoded.get(OBJECTIVES_OFFSET..).unwrap_or(&[]);
+    let len = tail
+        .len()
+        .min(OBJECTIVE_RECORD_COUNT * OBJECTIVE_RECORD_BYTES);
+    tail[..len].chunks_exact(OBJECTIVE_RECORD_BYTES)
+}
+
 fn scenario_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
     let tail = decoded.get(SCENARIOS_OFFSET..).unwrap_or(&[]);
-    let len = tail.len().min(2048 * 8);
-    tail[..len].chunks_exact(8)
+    let len = tail
+        .len()
+        .min(SCENARIO_RECORD_COUNT * SCENARIO_RECORD_BYTES);
+    tail[..len].chunks_exact(SCENARIO_RECORD_BYTES)
+}
+
+fn scenario_offset_to_index(offset: u16) -> Option<u16> {
+    if offset == 0 || offset as usize % SCENARIO_RECORD_BYTES != 0 {
+        return None;
+    }
+    let index = offset as usize / SCENARIO_RECORD_BYTES;
+    (index < SCENARIO_RECORD_COUNT).then_some(index as u16)
+}
+
+fn scenario_tile_candidate(record: &[u8]) -> Option<OriginalTilePoint> {
+    let tile_x = *record.get(4)?;
+    let tile_y = *record.get(5)?;
+    let tile_z = *record.get(6)?;
+    if tile_x == 0 && tile_y == 0 && tile_z == 0 {
+        return None;
+    }
+    Some(OriginalTilePoint {
+        tile_x: (tile_x >> 1) as u16,
+        tile_y: (tile_y >> 1) as u16,
+        tile_z: tile_z as u16,
+        off_x: (tile_x & 1) << 7,
+        off_y: (tile_y & 1) << 7,
+        off_z: 0,
+    })
+}
+
+fn objective_position_candidate(x: u16, y: u16, z: u16) -> Option<OriginalTilePoint> {
+    if x == 0 && y == 0 && z == 0 {
+        return None;
+    }
+    if x < 128 && y < 128 {
+        return Some(OriginalTilePoint {
+            tile_x: x,
+            tile_y: y,
+            tile_z: z.min(15),
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        });
+    }
+    Some(OriginalTilePoint {
+        tile_x: x >> 8,
+        tile_y: y >> 8,
+        tile_z: z >> 7,
+        off_x: (x & 0x00ff) as u8,
+        off_y: (y & 0x00ff) as u8,
+        off_z: (z & 0x007f) as u8,
+    })
+}
+
+fn objective_object_target(
+    offset: u16,
+    expected_kind: OriginalMissionObjectKind,
+) -> OriginalObjectiveTarget {
+    match object_offset_target(offset) {
+        Some(OriginalObjectOffsetTarget::Ped(index))
+            if expected_kind == OriginalMissionObjectKind::Ped =>
+        {
+            OriginalObjectiveTarget::Ped(index)
+        }
+        Some(OriginalObjectOffsetTarget::Vehicle(index))
+            if expected_kind == OriginalMissionObjectKind::Vehicle =>
+        {
+            OriginalObjectiveTarget::Vehicle(index)
+        }
+        Some(OriginalObjectOffsetTarget::Weapon(index))
+            if expected_kind == OriginalMissionObjectKind::Weapon =>
+        {
+            OriginalObjectiveTarget::Weapon(index)
+        }
+        None if offset == 0 => OriginalObjectiveTarget::None,
+        _ => OriginalObjectiveTarget::UnresolvedOffset,
+    }
+}
+
+fn object_offset_target(offset: u16) -> Option<OriginalObjectOffsetTarget> {
+    if offset == 0 {
+        return None;
+    }
+    if let Some(index) = strided_object_index(
+        offset,
+        OBJECT_OFFSET_PEOPLE_BASE,
+        OBJECT_OFFSET_VEHICLES_BASE,
+        PEOPLE_RECORD_BYTES,
+    ) {
+        return Some(OriginalObjectOffsetTarget::Ped(index));
+    }
+    if let Some(index) = strided_object_index(
+        offset,
+        OBJECT_OFFSET_VEHICLES_BASE,
+        OBJECT_OFFSET_STATICS_BASE,
+        VEHICLE_RECORD_BYTES,
+    ) {
+        return Some(OriginalObjectOffsetTarget::Vehicle(index));
+    }
+    if let Some(index) = strided_object_index(
+        offset,
+        OBJECT_OFFSET_STATICS_BASE,
+        OBJECT_OFFSET_WEAPONS_BASE,
+        STATIC_RECORD_BYTES,
+    ) {
+        return Some(OriginalObjectOffsetTarget::Static(index));
+    }
+    if let Some(index) = strided_object_index(
+        offset,
+        OBJECT_OFFSET_WEAPONS_BASE,
+        OBJECT_OFFSET_SFX_BASE,
+        WEAPON_RECORD_BYTES,
+    ) {
+        return Some(OriginalObjectOffsetTarget::Weapon(index));
+    }
+    Some(OriginalObjectOffsetTarget::Unknown)
+}
+
+fn strided_object_index(offset: u16, base: u16, end: u16, stride: usize) -> Option<u16> {
+    if offset < base || offset >= end {
+        return None;
+    }
+    let delta = (offset - base) as usize;
+    (delta % stride == 0).then_some((delta / stride) as u16)
+}
+
+fn ped_scenario_start_indices(decoded: &[u8]) -> Vec<u16> {
+    let tail = decoded.get(PEOPLE_OFFSET..).unwrap_or(&[]);
+    let len = tail.len().min(256 * PEOPLE_RECORD_BYTES);
+    tail[..len]
+        .chunks_exact(PEOPLE_RECORD_BYTES)
+        .filter_map(|record| scenario_offset_to_index(read_le_u16(record, 40)))
+        .collect()
+}
+
+fn count_scenario_loop_candidates(
+    scenarios: &[OriginalScenarioCandidateRecord],
+    ped_scenario_starts: &[u16],
+) -> usize {
+    let by_index = scenarios
+        .iter()
+        .map(|record| (record.record_index, record))
+        .collect::<BTreeMap<_, _>>();
+    let direct_loops = scenarios.iter().filter(|record| record.self_loop).count();
+    let chain_loops = ped_scenario_starts
+        .iter()
+        .filter(|start| {
+            let mut cursor = **start;
+            let mut visited = BTreeSet::new();
+            while visited.insert(cursor) {
+                let Some(record) = by_index.get(&cursor) else {
+                    return false;
+                };
+                let Some(next) = record.next_index else {
+                    return false;
+                };
+                cursor = next;
+            }
+            true
+        })
+        .count();
+    direct_loops + chain_loops
+}
+
+fn tile_near(a: OriginalTilePoint, b: OriginalTilePoint, xy_radius: u16, z_radius: u16) -> bool {
+    a.tile_x.abs_diff(b.tile_x) <= xy_radius
+        && a.tile_y.abs_diff(b.tile_y) <= xy_radius
+        && a.tile_z.abs_diff(b.tile_z) <= z_radius
 }
 
 pub fn format_mission_scene_report_rows(root: impl AsRef<Path>) -> Vec<String> {
@@ -3376,10 +4287,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        AnimationCatalog, CARS_OFFSET, OriginalAnimationCatalogSupport, OriginalDrawStage,
-        OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
-        OriginalMissionSelection, OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET,
-        STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
+        AnimationCatalog, CARS_OFFSET, OBJECT_OFFSET_PEOPLE_BASE, OBJECT_OFFSET_VEHICLES_BASE,
+        OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport, OriginalDebugInteractionStatus,
+        OriginalDrawStage, OriginalMissionObjectKind, OriginalMissionScene,
+        OriginalMissionScriptProbe, OriginalMissionSelection, OriginalSpriteBankSupport,
+        PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
         format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
     use crate::engine::{
@@ -4340,6 +5252,192 @@ mod tests {
         );
         assert!(!scene.interaction_probe.report_label().contains("00 00"));
         assert!(!scene.interaction_probe.report_label().contains("0x"));
+    }
+
+    #[test]
+    fn objective_and_scenario_probe_parses_typed_buckets_without_bytes() {
+        let mut decoded = vec![0u8; OBJECTIVES_OFFSET + 96];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            2,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 40..PEOPLE_OFFSET + 42].copy_from_slice(&8u16.to_le_bytes());
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            4,
+            4,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+
+        decoded[SCENARIOS_OFFSET..SCENARIOS_OFFSET + 2].copy_from_slice(&8u16.to_le_bytes());
+        decoded[SCENARIOS_OFFSET + 4] = 6;
+        decoded[SCENARIOS_OFFSET + 5] = 8;
+        decoded[SCENARIOS_OFFSET + 7] = 0x08;
+        decoded[SCENARIOS_OFFSET + 8..SCENARIOS_OFFSET + 10].copy_from_slice(&8u16.to_le_bytes());
+        decoded[SCENARIOS_OFFSET + 10..SCENARIOS_OFFSET + 12]
+            .copy_from_slice(&OBJECT_OFFSET_VEHICLES_BASE.to_le_bytes());
+        decoded[SCENARIOS_OFFSET + 15] = 0x02;
+
+        let objectives = OBJECTIVES_OFFSET;
+        decoded[objectives..objectives + 2].copy_from_slice(&1u16.to_le_bytes());
+        decoded[objectives + 2..objectives + 4]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+        decoded[objectives + 14..objectives + 16].copy_from_slice(&15u16.to_le_bytes());
+        decoded[objectives + 16..objectives + 18]
+            .copy_from_slice(&OBJECT_OFFSET_VEHICLES_BASE.to_le_bytes());
+        decoded[objectives + 28..objectives + 30].copy_from_slice(&16u16.to_le_bytes());
+        decoded[objectives + 32..objectives + 34].copy_from_slice(&(7u16 << 8).to_le_bytes());
+        decoded[objectives + 34..objectives + 36].copy_from_slice(&(8u16 << 8).to_le_bytes());
+
+        let miss_probe = OriginalMissionScriptProbe::from_bytes(&[1, 2, 0, 0, 0, 0, 0, 0]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            Some(&miss_probe),
+            None,
+            None,
+        );
+
+        assert_eq!(scene.interaction_probe.game_objective_records, 3);
+        assert_eq!(scene.interaction_probe.game_objective_supported_records, 3);
+        assert_eq!(scene.interaction_probe.objective_ped_target_buckets, 1);
+        assert_eq!(scene.interaction_probe.objective_vehicle_target_buckets, 1);
+        assert_eq!(scene.interaction_probe.objective_location_target_buckets, 1);
+        assert_eq!(scene.interaction_probe.scenario_active_records, 2);
+        assert_eq!(scene.interaction_probe.scenario_trigger_buckets, 1);
+        assert_eq!(scene.interaction_probe.scenario_action_buckets, 1);
+        assert_eq!(scene.interaction_probe.scenario_tile_target_buckets, 1);
+        assert_eq!(scene.interaction_probe.scenario_object_target_buckets, 1);
+        assert_eq!(scene.interaction_probe.scenario_chain_start_peds, 1);
+        assert!(scene.interaction_probe.scenario_loop_candidates >= 1);
+        assert_eq!(scene.interaction_probe.miss_active_record_candidates, 1);
+        assert!(
+            scene
+                .interaction_probe
+                .report_label()
+                .contains("candidate-only")
+        );
+        assert!(scene.interaction_probe.report_label().contains("not proof"));
+        assert!(!scene.interaction_probe.report_label().contains("00 00"));
+        assert!(!scene.interaction_probe.report_label().contains("0x"));
+    }
+
+    #[test]
+    fn debug_interaction_probe_matches_clicked_buckets_without_gameplay_semantics() {
+        let mut decoded = vec![0u8; OBJECTIVES_OFFSET + 48];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            2,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            3,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x0e;
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            4,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36],
+            3,
+            3,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[SCENARIOS_OFFSET + 4] = 6;
+        decoded[SCENARIOS_OFFSET + 5] = 4;
+        decoded[SCENARIOS_OFFSET + 7] = 0x08;
+        decoded[OBJECTIVES_OFFSET..OBJECTIVES_OFFSET + 2].copy_from_slice(&1u16.to_le_bytes());
+        decoded[OBJECTIVES_OFFSET + 2..OBJECTIVES_OFFSET + 4]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let agent = super::OriginalTilePoint {
+            tile_x: 2,
+            tile_y: 2,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let target = super::OriginalTilePoint {
+            tile_x: 3,
+            tile_y: 2,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let probe = scene.original_debug_interaction_probe_between(Some(agent), Some(target), true);
+
+        assert_eq!(
+            probe.status,
+            OriginalDebugInteractionStatus::CandidateInteractionReady
+        );
+        assert_eq!(probe.door_candidates, 1);
+        assert_eq!(probe.opening_door_candidates, 1);
+        assert_eq!(probe.weapon_pickup_candidates, 1);
+        assert_eq!(probe.vehicle_entry_candidates, 1);
+        assert_eq!(probe.objective_target_candidates, 1);
+        assert_eq!(probe.scenario_target_candidates, 1);
+        assert!(probe.panel_label().contains("candidate-only"));
+        assert!(!probe.panel_label().contains("00 00"));
+        assert!(!probe.panel_label().contains("0x"));
+
+        let disabled =
+            scene.original_debug_interaction_probe_between(Some(agent), Some(target), false);
+        assert_eq!(
+            disabled.status,
+            OriginalDebugInteractionStatus::DebugDisabled
+        );
     }
 
     #[test]
