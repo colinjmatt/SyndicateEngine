@@ -543,6 +543,49 @@ impl TacticalMap {
             draw_circle(p.x, p.y, 2.5, ORANGE);
         }
     }
+
+    pub fn draw_original_debug_route_ghost(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        route: &[OriginalTilePoint],
+        progress: f32,
+    ) {
+        if route.is_empty() {
+            return;
+        }
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let max_index = route.len().saturating_sub(1);
+        let clamped = progress.clamp(0.0, max_index as f32);
+        let index = clamped.floor() as usize;
+        let t = clamped - index as f32;
+        let current = route[index.min(max_index)];
+        let next = route[(index + 1).min(max_index)];
+        let a = original_tile_marker_screen(camera, map_tiles, current, tile_width, tile_height);
+        let b = original_tile_marker_screen(camera, map_tiles, next, tile_width, tile_height);
+        let p = a.lerp(b, t);
+
+        draw_circle(p.x, p.y, 6.0, Color::new(0.0, 0.9, 1.0, 0.72));
+        draw_circle_lines(p.x, p.y, 11.0, 2.0, Color::new(0.0, 0.95, 1.0, 0.88));
+        draw_line(
+            p.x - 9.0,
+            p.y,
+            p.x + 9.0,
+            p.y,
+            1.5,
+            Color::new(0.0, 0.95, 1.0, 0.70),
+        );
+        draw_line(
+            p.x,
+            p.y - 9.0,
+            p.x,
+            p.y + 9.0,
+            1.5,
+            Color::new(0.0, 0.95, 1.0, 0.70),
+        );
+    }
 }
 
 fn original_candidates_for_tile(

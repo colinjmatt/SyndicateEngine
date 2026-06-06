@@ -11,7 +11,7 @@ use crate::{
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
             OriginalMissionScene, OriginalObjectRenderDecision, OriginalRuntimeRouteProbe,
-            OriginalStaticRenderDecision, OriginalTilePoint,
+            OriginalRuntimeRouteStatus, OriginalStaticRenderDecision, OriginalTilePoint,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -52,6 +52,9 @@ pub struct WorldState {
     original_cursor_tile: Option<OriginalTilePoint>,
     original_cursor_screen: Option<Vec2>,
     original_route_probe: Option<OriginalRuntimeRouteProbe>,
+    original_navigation_debug_enabled: bool,
+    original_debug_ghost_route: Vec<OriginalTilePoint>,
+    original_debug_ghost_progress: f32,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -194,6 +197,9 @@ impl WorldState {
             original_cursor_tile: None,
             original_cursor_screen: None,
             original_route_probe: None,
+            original_navigation_debug_enabled: false,
+            original_debug_ghost_route: Vec::new(),
+            original_debug_ghost_progress: 0.0,
         }
     }
 
@@ -208,6 +214,7 @@ impl WorldState {
         self.update_render_controls();
         self.update_sim_controls();
         self.update_original_scene_cursor_probe();
+        self.update_original_debug_ghost(real_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
@@ -276,7 +283,30 @@ impl WorldState {
             }
 
             self.render_mode = self.next_render_mode();
+            if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+                self.original_route_probe = None;
+                self.original_debug_ghost_route.clear();
+                self.original_debug_ghost_progress = 0.0;
+            }
             self.combat_log = format!("View mode: {}", self.render_mode.label());
+        }
+        if is_key_pressed(KeyCode::G) {
+            if self.render_mode == MapRenderMode::OriginalMissionSceneProbe {
+                self.original_navigation_debug_enabled = !self.original_navigation_debug_enabled;
+                self.original_debug_ghost_route.clear();
+                self.original_debug_ghost_progress = 0.0;
+                let state = if self.original_navigation_debug_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.combat_log = format!(
+                    "Original navigation debug {state}; local ghost only, demo gameplay active"
+                );
+            } else {
+                self.combat_log =
+                    "Original navigation debug is available only in scene probe mode".to_string();
+            }
         }
     }
 
@@ -431,19 +461,47 @@ impl WorldState {
             self.combat_log =
                 "Original route probe blocked: cursor is outside the candidate map".to_string();
             self.original_route_probe = None;
+            self.original_debug_ghost_route.clear();
             return true;
         };
         let Some(scene_model) = self.original_mission_scene.as_ref() else {
             self.combat_log =
                 "Original route probe blocked: first-mission scene model unavailable".to_string();
             self.original_route_probe = None;
+            self.original_debug_ghost_route.clear();
             return true;
         };
 
-        let route_probe = scene_model.original_route_probe_to_tile(goal);
+        let route_probe = if self.original_navigation_debug_enabled {
+            scene_model.original_route_debug_probe_to_tile(goal)
+        } else {
+            scene_model.original_route_probe_to_tile(goal)
+        };
         self.combat_log = route_probe.panel_label();
+        if self.original_navigation_debug_enabled
+            && route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+            && route_probe.path.len() > 1
+        {
+            self.original_debug_ghost_route = route_probe.path.clone();
+            self.original_debug_ghost_progress = 0.0;
+        } else {
+            self.original_debug_ghost_route.clear();
+            self.original_debug_ghost_progress = 0.0;
+        }
         self.original_route_probe = Some(route_probe);
         true
+    }
+
+    fn update_original_debug_ghost(&mut self, real_dt: f32) {
+        if !self.original_navigation_debug_enabled
+            || self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || self.original_debug_ghost_route.len() < 2
+        {
+            return;
+        }
+        let max_progress = (self.original_debug_ghost_route.len() - 1) as f32;
+        self.original_debug_ghost_progress =
+            (self.original_debug_ghost_progress + real_dt.max(0.0) * 4.0).min(max_progress);
     }
 
     fn clamp_original_map_camera(&mut self) {
@@ -734,6 +792,15 @@ impl WorldState {
                         self.original_route_probe.as_ref(),
                         self.original_cursor_screen,
                     );
+                    if self.original_navigation_debug_enabled {
+                        self.map.draw_original_debug_route_ghost(
+                            &self.camera,
+                            map_tiles,
+                            graphics,
+                            &self.original_debug_ghost_route,
+                            self.original_debug_ghost_progress,
+                        );
+                    }
                 }
             }
             MapRenderMode::OriginalGraphicsAtlas => {
@@ -787,6 +854,7 @@ impl WorldState {
                 &self.camera,
                 self.original_cursor_tile,
                 self.original_route_probe.as_ref(),
+                self.original_navigation_debug_enabled,
             );
         }
 
@@ -880,6 +948,7 @@ fn draw_map_diagnostic_panel(
     camera: &CameraRig,
     original_cursor_tile: Option<OriginalTilePoint>,
     original_route_probe: Option<&OriginalRuntimeRouteProbe>,
+    original_navigation_debug_enabled: bool,
 ) {
     let panel_width = map_panel_width(mode);
     let x = screen_width() - panel_width - 22.0;
@@ -1214,6 +1283,25 @@ fn draw_map_diagnostic_panel(
                     .map(OriginalRuntimeRouteProbe::panel_label)
                     .unwrap_or_else(|| "route probe: right-click original map to test".to_string());
                 draw_text(&route_label, x + 16.0, y + 404.0, 11.0, GRAY);
+                let debug_gate = if original_navigation_debug_enabled {
+                    format!(
+                        "G nav debug ON | {}",
+                        scene_model.navigation_debug_probe.panel_label()
+                    )
+                } else {
+                    "G nav debug OFF | same-level route probe only".to_string()
+                };
+                draw_text(
+                    &debug_gate,
+                    x + 16.0,
+                    y + 424.0,
+                    10.5,
+                    if original_navigation_debug_enabled {
+                        SKYBLUE
+                    } else {
+                        GRAY
+                    },
+                );
                 draw_text(
                     &format!(
                         "nav links {}, occupied {}, blockers {}; doors {} windows {}",
@@ -1224,14 +1312,14 @@ fn draw_map_diagnostic_panel(
                         scene_model.navigation_probe.window_candidates
                     ),
                     x + 16.0,
-                    y + 424.0,
+                    y + 444.0,
                     10.5,
                     GRAY,
                 );
                 draw_text(
-                    "original navigation/occupancy remains candidate-only; demo grid active",
+                    "debug movement is a local ghost only; demo gameplay/pathfinding remain active",
                     x + 16.0,
-                    y + 444.0,
+                    y + 464.0,
                     10.5,
                     GRAY,
                 );

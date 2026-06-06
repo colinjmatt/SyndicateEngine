@@ -562,7 +562,7 @@ impl AssetReport {
 
         markdown.push_str("\n## First-mission runtime scene model diagnostics\n\n");
         markdown.push_str("These rows summarize the runtime-local first-mission scene model built from GAME data and local animation/sprite catalog support. They include counts, support ratios, draw-queue health, static/object render proof, spatial/route probe counts, navigation probe counts, and guardrail labels only. They do not expose raw bytes, chunks, per-object placements, decoded dimensions, anchors, sprite pixels, screenshots, UI, audio, objective logic, or gameplay semantics.\n\n");
-        markdown.push_str("| Mission candidate | Map/palette selection | Candidate object sections | Draw queue health | Animation/frame support | Sprite-bank support | Static render proof | Object render proof | Spatial/route probe | Navigation/gameplay guardrail |\n|---|---|---|---|---|---|---|---|---|---|\n");
+        markdown.push_str("| Mission candidate | Map/palette selection | Candidate object sections | Draw queue health | Animation/frame support | Sprite-bank support | Static render proof | Object render proof | Spatial/route probe | Navigation debug probe | Navigation/gameplay guardrail |\n|---|---|---|---|---|---|---|---|---|---|---|\n");
         append_rows_or_empty(
             &mut markdown,
             &self.mission_scene_rows,
