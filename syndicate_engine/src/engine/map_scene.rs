@@ -139,6 +139,18 @@ impl MapDiagnosticScene {
             evidence
         )
     }
+
+    pub fn field_evidence_panel_label(&self, field: MapCandidateField) -> Option<String> {
+        let evidence = self.field_evidence(field)?;
+        Some(format!(
+            "b{} {} | unique {} | cont {}% | 2x2 {}%",
+            evidence.lane,
+            evidence.confidence.label(),
+            evidence.unique_values,
+            evidence.continuity_percent,
+            evidence.repeated_2x2_percent
+        ))
+    }
 }
 
 impl MapDiagnosticSceneCell {
@@ -208,6 +220,12 @@ mod tests {
         );
         assert!(scene.status_label().contains("diagnostic MAP scene"));
         assert!(scene.status_label().contains("evidence"));
+        assert_eq!(
+            scene
+                .field_evidence_panel_label(MapCandidateField::SurfaceIndex)
+                .unwrap(),
+            "b0 high | unique 4 | cont 90% | 2x2 80%"
+        );
     }
 
     #[test]

@@ -533,11 +533,7 @@ fn draw_map_diagnostic_panel(
 ) {
     let x = screen_width() - 392.0;
     let y = 22.0;
-    let panel_height = if mode == MapRenderMode::BlockAddressability {
-        212.0
-    } else {
-        156.0
-    };
+    let panel_height = map_panel_height(mode);
     draw_rectangle(x, y, 370.0, panel_height, Color::new(0.0, 0.0, 0.0, 0.60));
     draw_rectangle_lines(x, y, 370.0, panel_height, 2.0, SKYBLUE);
     draw_text("DECODED MAP DIAGNOSTIC", x + 16.0, y + 26.0, 18.0, SKYBLUE);
@@ -617,6 +613,24 @@ fn draw_map_diagnostic_panel(
                 12.0,
                 GRAY,
             );
+        } else if let MapRenderMode::CandidateField(field) = mode {
+            if let Some(evidence) = scene.field_evidence_panel_label(field) {
+                draw_text(&evidence, x + 16.0, y + 120.0, 13.0, LIGHTGRAY);
+            }
+            draw_text(
+                "Runtime-local render; gameplay grid remains demo city",
+                x + 16.0,
+                y + 144.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "No decoded walkability/object semantics claimed",
+                x + 16.0,
+                y + 164.0,
+                13.0,
+                GRAY,
+            );
         } else {
             draw_text(
                 "Runtime-local render; gameplay grid remains demo city",
@@ -641,6 +655,14 @@ fn draw_map_diagnostic_panel(
             14.0,
             GRAY,
         );
+    }
+}
+
+fn map_panel_height(mode: MapRenderMode) -> f32 {
+    match mode {
+        MapRenderMode::BlockAddressability => 212.0,
+        MapRenderMode::CandidateField(_) => 180.0,
+        _ => 156.0,
     }
 }
 
