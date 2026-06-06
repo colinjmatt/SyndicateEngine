@@ -12,8 +12,9 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Asset indexer that scans `original_assets/` for maps, missions, palettes, sprites, and sounds.
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
 - Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
-- Metadata-only mission selection reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime without decoding objectives, people, vehicles, or gameplay semantics.
-- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD also shows aggregate-only candidate object draw-queue diagnostics from local `GAME##.DAT`; these are counts/order hints only and do not render objects or switch gameplay semantics on.
+- Metadata-selected mission loading reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime.
+- A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, and a conservative object draw queue. This is still candidate-only: object rendering is guarded behind proof checks, and gameplay/pathfinding remain on the hand-authored demo grid.
+- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, and the current static-render blocker without exposing local asset bytes or per-object dumps.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -29,7 +30,7 @@ Controls:
 - Mouse wheel: zoom
 - `1`-`4`: select agent
 - Right click: send selected agent to a tile
-- `M`: cycle between the runtime original mission-map tile render, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
+- `M`: cycle between the runtime original mission-map tile render, first-mission scene probe, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
 
@@ -90,10 +91,11 @@ Screenshots are written under `visual_diagnostics/`, which is ignored by git. Do
 
 1. Decode Bullfrog `.TAB`/`.DAT` sprite banks into runtime textures.
 2. Remap indexed art through decoded palettes into RGBA textures.
-3. Decode original map walkability, object placement, and entity/vehicle spawn layers.
-4. Decode `MISS*.DAT` mission scripts, objectives, spawns, and trigger data.
-5. Add tactical systems: weapons, civilians, vehicles, persuasion, destructibility, and AI.
-6. Add modern UX: scalable UI, remappable controls, saves, accessibility, and mod packs.
+3. Prove the original sprite/frame renderer for statics, peds, weapons, vehicles, and sfx using runtime-local assets only.
+4. Decode original map walkability, navigation graph inputs, object occupancy, and entity/vehicle spawn layers.
+5. Decode `MISS*.DAT` mission scripts, objectives, spawns, and trigger data.
+6. Add tactical systems: weapons, civilians, vehicles, persuasion, destructibility, and AI.
+7. Add modern UX: scalable UI, remappable controls, saves, accessibility, and mod packs.
 
 ## Legal stance
 

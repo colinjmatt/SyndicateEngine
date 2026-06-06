@@ -1,0 +1,1779 @@
+//! Runtime-local first mission scene candidates from original GAME data.
+//!
+//! This module follows FreeSynd's mission-section layout closely enough to
+//! build typed candidate records and a conservative draw queue. It deliberately
+//! keeps rendering gated until animation/frame/sprite proof is sufficient.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
+
+use crate::engine::{
+    mission_source::OriginalMissionSelection,
+    rnc::{RncBlock, RncError},
+};
+
+const GAME_MAP_OBJECT_OFFSET: usize = 6;
+const GAME_MAP_OBJECT_BYTES: usize = 128 * 128 * 2;
+const PEOPLE_OFFSET: usize = 32_776;
+const CARS_OFFSET: usize = 56_328;
+const STATICS_OFFSET: usize = 59_016;
+const WEAPONS_OFFSET: usize = 71_016;
+const SFX_OFFSET: usize = 89_448;
+const SCENARIOS_OFFSET: usize = 97_128;
+
+const ON_MAP_DESC: &[u8] = &[0x04];
+const STATIC_DRAW_DESCS: &[u8] = &[0x04, 0x06, 0x07];
+const SPRITE_TAB_ENTRY_BYTES: usize = 6;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionScene {
+    pub mission_label: String,
+    pub mission_id: u16,
+    pub map_id: u16,
+    pub palette_id: u8,
+    pub section_counts: Vec<OriginalMissionSceneSection>,
+    pub objects: Vec<OriginalMissionObjectCandidate>,
+    pub draw_queue: OriginalMissionDrawQueue,
+    pub animation_support: OriginalAnimationCatalogSupport,
+    pub sprite_support: OriginalSpriteBankSupport,
+    pub static_render_proof: OriginalStaticRenderProof,
+    pub spawn_probe: OriginalSpawnProbe,
+    pub navigation_probe: OriginalNavigationProbe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionSceneSection {
+    pub label: &'static str,
+    pub capacity: usize,
+    pub non_zero_records: usize,
+    pub candidate_records: usize,
+    pub queued_records: usize,
+    pub supported_animation_refs: usize,
+    pub unsupported_animation_refs: usize,
+    pub supported_frame_refs: usize,
+    pub unsupported_frame_refs: usize,
+    pub draw_stage: Option<OriginalDrawStage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionObjectCandidate {
+    pub kind: OriginalMissionObjectKind,
+    pub record_index: u16,
+    pub desc: Option<u8>,
+    pub state: Option<u8>,
+    pub type_value: Option<u8>,
+    pub subtype_value: Option<u8>,
+    pub orientation: Option<u8>,
+    pub tile: Option<OriginalTilePoint>,
+    pub queue_tile: Option<OriginalTilePoint>,
+    pub animation: OriginalAnimationRefs,
+    pub candidate_record: bool,
+    pub candidate_draw: bool,
+    pub draw_stage: Option<OriginalDrawStage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OriginalMissionObjectKind {
+    Ped,
+    Vehicle,
+    Static,
+    Weapon,
+    Sfx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OriginalDrawStage {
+    People,
+    Vehicles,
+    Weapons,
+    Statics,
+    Sfx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalTilePoint {
+    pub tile_x: u16,
+    pub tile_y: u16,
+    pub tile_z: u16,
+    pub off_x: u8,
+    pub off_y: u8,
+    pub off_z: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OriginalAnimationRefs {
+    pub base_anim: Option<u16>,
+    pub current_anim: Option<u16>,
+    pub current_frame: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionDrawQueue {
+    entries: Vec<OriginalMissionDrawQueueEntry>,
+    pub stage_counts: Vec<OriginalMissionDrawStageCount>,
+    pub supported_animation_entries: usize,
+    pub unsupported_animation_entries: usize,
+    pub supported_frame_entries: usize,
+    pub unsupported_frame_entries: usize,
+    pub supported_sprite_entries: usize,
+    pub unsupported_sprite_entries: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionDrawQueueEntry {
+    pub stage: OriginalDrawStage,
+    pub kind: OriginalMissionObjectKind,
+    pub record_index: u16,
+    pub tile: OriginalTilePoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionDrawStageCount {
+    pub stage: OriginalDrawStage,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalAnimationCatalogSupport {
+    pub source_labels: Vec<String>,
+    pub element_records: usize,
+    pub frame_records: usize,
+    pub animation_records: usize,
+    pub invalid_element_sprite_units: usize,
+    pub invalid_element_links: usize,
+    pub invalid_frame_links: usize,
+    pub invalid_frame_element_links: usize,
+    pub invalid_animation_starts: usize,
+    pub referenced_animation_entries: usize,
+    pub supported_animation_entries: usize,
+    pub unsupported_animation_entries: usize,
+    pub referenced_frame_entries: usize,
+    pub supported_frame_entries: usize,
+    pub unsupported_frame_entries: usize,
+    pub referenced_sprite_entries: usize,
+    pub supported_sprite_entries: usize,
+    pub unsupported_sprite_entries: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalSpriteBankSupport {
+    pub primary_label: Option<String>,
+    pub primary_entry_count: usize,
+    pub primary_valid_offset_entries: usize,
+    pub sibling_bank_count: usize,
+    pub total_candidate_entries: usize,
+    pub total_valid_offset_entries: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalStaticRenderProof {
+    pub category_label: &'static str,
+    pub candidate_count: usize,
+    pub supported_animation_count: usize,
+    pub supported_frame_count: usize,
+    pub supported_sprite_count: usize,
+    pub decision: OriginalStaticRenderDecision,
+    pub blocker: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalStaticRenderDecision {
+    RuntimeRenderDisabled,
+    RuntimeRenderReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalSpawnProbe {
+    pub ped_spawn_candidates: usize,
+    pub agent_candidates: usize,
+    pub enemy_candidates: usize,
+    pub trigger_scenario_candidates: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalNavigationProbe {
+    pub map_object_link_cells: usize,
+    pub unique_object_offsets: usize,
+    pub scenario_records: usize,
+    pub scenario_tile_target_candidates: usize,
+    pub bridge_status: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OriginalMissionSceneError {
+    NoMissionCandidate,
+    Decode(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SceneSectionSpec {
+    label: &'static str,
+    kind: OriginalMissionObjectKind,
+    start: usize,
+    record_count: usize,
+    record_size: usize,
+    desc_offset: Option<usize>,
+    state_offset: Option<usize>,
+    active_descs: &'static [u8],
+    type_offset: Option<usize>,
+    subtype_offset: Option<usize>,
+    orientation_offset: Option<usize>,
+    position_offsets: Option<(usize, usize, usize)>,
+    animation_offsets: Option<(usize, usize, usize)>,
+    draw_stage: OriginalDrawStage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnimElement {
+    sprite: u16,
+    next_element: u16,
+    sprite_unit_aligned: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnimFrame {
+    first_element: u16,
+    next_frame: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AnimationCatalog {
+    source_labels: Vec<String>,
+    elements: Vec<AnimElement>,
+    frames: Vec<AnimFrame>,
+    animations: Vec<u16>,
+    invalid_element_sprite_units: usize,
+    invalid_element_links: usize,
+    invalid_frame_links: usize,
+    invalid_frame_element_links: usize,
+    invalid_animation_starts: usize,
+}
+
+impl OriginalMissionScene {
+    pub fn from_root(
+        root: impl AsRef<Path>,
+        selection: &OriginalMissionSelection,
+    ) -> Result<Self, OriginalMissionSceneError> {
+        let root = root.as_ref();
+        for relative in data_file_candidates(&format!("GAME{:02}.DAT", selection.mission_id)) {
+            let path = root.join(&relative);
+            let Ok(data) = fs::read(&path) else {
+                continue;
+            };
+            let decoded = decode_maybe_rnc(&data)
+                .map_err(|err| OriginalMissionSceneError::Decode(format!("{err:?}")))?;
+            return Ok(Self::from_decoded_game_bytes(
+                selection, relative, &decoded, root,
+            ));
+        }
+
+        Err(OriginalMissionSceneError::NoMissionCandidate)
+    }
+
+    pub fn from_decoded_game_bytes(
+        selection: &OriginalMissionSelection,
+        mission_label: String,
+        decoded: &[u8],
+        root: &Path,
+    ) -> Self {
+        let objects = collect_candidate_objects(decoded);
+        let sprite_support = OriginalSpriteBankSupport::from_root(root);
+        let animation_catalog = AnimationCatalog::from_root(root);
+        Self::from_parts(
+            selection,
+            mission_label,
+            decoded,
+            objects,
+            sprite_support,
+            animation_catalog,
+        )
+    }
+
+    fn from_parts(
+        selection: &OriginalMissionSelection,
+        mission_label: String,
+        decoded: &[u8],
+        objects: Vec<OriginalMissionObjectCandidate>,
+        sprite_support: OriginalSpriteBankSupport,
+        animation_catalog: AnimationCatalog,
+    ) -> Self {
+        let animation_support = OriginalAnimationCatalogSupport::from_catalog(
+            &animation_catalog,
+            &objects,
+            &sprite_support,
+        );
+        let section_counts = build_section_counts(&objects, &animation_support);
+        let draw_queue =
+            OriginalMissionDrawQueue::from_objects(&objects, &animation_catalog, &sprite_support);
+        let static_render_proof = OriginalStaticRenderProof::from_scene_objects(
+            &objects,
+            &animation_catalog,
+            &sprite_support,
+        );
+        let spawn_probe = OriginalSpawnProbe::from_objects_and_game_bytes(&objects, decoded);
+        let navigation_probe = OriginalNavigationProbe::from_decoded_game_bytes(decoded);
+
+        Self {
+            mission_label,
+            mission_id: selection.mission_id,
+            map_id: selection.map_id,
+            palette_id: selection.palette_id,
+            section_counts,
+            objects,
+            draw_queue,
+            animation_support,
+            sprite_support,
+            static_render_proof,
+            spawn_probe,
+            navigation_probe,
+        }
+    }
+
+    pub fn object_summary_label(&self) -> String {
+        let candidate_records: usize = self
+            .section_counts
+            .iter()
+            .map(|section| section.candidate_records)
+            .sum();
+        let queued_records = self.draw_queue.entries.len();
+        format!(
+            "scene model candidate records {candidate_records}; queued {queued_records}; runtime-only"
+        )
+    }
+
+    pub fn section_counts_panel_label(&self) -> String {
+        let counts = self
+            .section_counts
+            .iter()
+            .map(|section| format!("{} {}", section.short_label(), section.candidate_records))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("sections: {counts}")
+    }
+
+    pub fn section_counts_report_label(&self) -> String {
+        self.section_counts
+            .iter()
+            .map(|section| {
+                format!(
+                    "{} {}/{} queued {}",
+                    section.short_label(),
+                    section.candidate_records,
+                    section.capacity,
+                    section.queued_records
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    pub fn draw_queue_health_label(&self) -> String {
+        format!(
+            "queue health {} entries; anim {}/{}; frame {}/{}; sprite {}/{}",
+            self.draw_queue.entries.len(),
+            self.draw_queue.supported_animation_entries,
+            self.draw_queue.supported_animation_entries
+                + self.draw_queue.unsupported_animation_entries,
+            self.draw_queue.supported_frame_entries,
+            self.draw_queue.supported_frame_entries + self.draw_queue.unsupported_frame_entries,
+            self.draw_queue.supported_sprite_entries,
+            self.draw_queue.supported_sprite_entries + self.draw_queue.unsupported_sprite_entries
+        )
+    }
+
+    pub fn draw_stage_panel_label(&self) -> String {
+        let counts = self
+            .draw_queue
+            .stage_counts
+            .iter()
+            .map(|count| format!("{} {}", count.stage.short_label(), count.count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if counts.is_empty() {
+            "draw stages: none queued".to_string()
+        } else {
+            format!("draw stages: {counts}")
+        }
+    }
+
+    pub fn runtime_status_label(&self) -> String {
+        format!(
+            "First mission scene model loaded; static render disabled ({} candidates)",
+            self.static_render_proof.candidate_count
+        )
+    }
+
+    pub fn report_row(&self) -> String {
+        format!(
+            "| mission {} | map {} palette {} | {} | {} | {} | {} | {} | {} |",
+            self.mission_id,
+            self.map_id,
+            self.palette_id,
+            self.section_counts_report_label(),
+            self.draw_queue_health_label(),
+            self.animation_support.report_label(),
+            self.sprite_support.report_label(),
+            self.static_render_proof.report_label(),
+            self.navigation_probe.report_label()
+        )
+    }
+
+    pub fn visible_candidate_count_in_bounds(
+        &self,
+        min_tile: (u16, u16),
+        max_tile: (u16, u16),
+    ) -> usize {
+        self.draw_queue
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.tile.tile_x >= min_tile.0
+                    && entry.tile.tile_x <= max_tile.0
+                    && entry.tile.tile_y >= min_tile.1
+                    && entry.tile.tile_y <= max_tile.1
+            })
+            .count()
+    }
+}
+
+impl OriginalMissionSceneSection {
+    fn short_label(&self) -> &'static str {
+        match self.label {
+            "candidate people" => "peds",
+            "candidate vehicles" => "vehicles",
+            "candidate statics" => "statics",
+            "candidate weapons" => "weapons",
+            "candidate sfx" => "sfx",
+            _ => "section",
+        }
+    }
+}
+
+impl OriginalMissionObjectKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ped => "candidate ped",
+            Self::Vehicle => "candidate vehicle",
+            Self::Static => "candidate static",
+            Self::Weapon => "candidate weapon",
+            Self::Sfx => "candidate sfx",
+        }
+    }
+}
+
+impl OriginalDrawStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::People => "people",
+            Self::Vehicles => "vehicles",
+            Self::Weapons => "weapons",
+            Self::Statics => "statics",
+            Self::Sfx => "sfx",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::People => "peds",
+            Self::Vehicles => "vehicles",
+            Self::Weapons => "weapons",
+            Self::Statics => "statics",
+            Self::Sfx => "sfx",
+        }
+    }
+
+    fn order(self) -> u8 {
+        match self {
+            Self::People => 0,
+            Self::Vehicles => 1,
+            Self::Weapons => 2,
+            Self::Statics => 3,
+            Self::Sfx => 4,
+        }
+    }
+}
+
+impl OriginalMissionObjectCandidate {
+    fn animation_supported_by(&self, catalog: &AnimationCatalog) -> bool {
+        self.animation
+            .current_anim
+            .is_some_and(|anim| catalog.animation_start(anim).is_some())
+    }
+
+    fn frame_supported_by(&self, catalog: &AnimationCatalog) -> bool {
+        match (self.animation.current_anim, self.animation.current_frame) {
+            (_, Some(frame)) if catalog.frame_index_supported(frame) => true,
+            (Some(anim), Some(frame)) => catalog.frame_for_anim(anim, frame).is_some(),
+            _ => false,
+        }
+    }
+
+    fn sprite_supported_by(
+        &self,
+        catalog: &AnimationCatalog,
+        sprite_support: &OriginalSpriteBankSupport,
+    ) -> bool {
+        match (self.animation.current_anim, self.animation.current_frame) {
+            (anim, Some(frame)) => catalog
+                .sprite_refs_for_frame_index(frame)
+                .or_else(|| anim.and_then(|anim| catalog.sprite_refs_for_anim_frame(anim, frame)))
+                .is_some_and(|sprites| {
+                    !sprites.is_empty()
+                        && sprites
+                            .iter()
+                            .all(|sprite| sprite_support.supports_sprite_index(*sprite))
+                }),
+            _ => false,
+        }
+    }
+}
+
+impl OriginalMissionDrawQueue {
+    fn from_objects(
+        objects: &[OriginalMissionObjectCandidate],
+        catalog: &AnimationCatalog,
+        sprite_support: &OriginalSpriteBankSupport,
+    ) -> Self {
+        let mut entries = objects
+            .iter()
+            .filter(|object| object.candidate_draw)
+            .filter_map(|object| {
+                Some(OriginalMissionDrawQueueEntry {
+                    stage: object.draw_stage?,
+                    kind: object.kind,
+                    record_index: object.record_index,
+                    tile: object.queue_tile?,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        entries.sort_by_key(|entry| {
+            (
+                entry.tile.tile_x as u32 + entry.tile.tile_y as u32 + entry.tile.tile_z as u32,
+                entry.tile.tile_z,
+                entry.tile.tile_y,
+                entry.tile.tile_x,
+                entry.tile.off_x,
+                entry.tile.off_y,
+                entry.stage.order(),
+                entry.record_index,
+            )
+        });
+
+        let mut stage_counts_by_stage = BTreeMap::<OriginalDrawStage, usize>::new();
+        for entry in &entries {
+            *stage_counts_by_stage.entry(entry.stage).or_default() += 1;
+        }
+        let stage_counts = stage_counts_by_stage
+            .into_iter()
+            .map(|(stage, count)| OriginalMissionDrawStageCount { stage, count })
+            .collect();
+
+        let mut supported_animation_entries = 0;
+        let mut unsupported_animation_entries = 0;
+        let mut supported_frame_entries = 0;
+        let mut unsupported_frame_entries = 0;
+        let mut supported_sprite_entries = 0;
+        let mut unsupported_sprite_entries = 0;
+        for object in objects.iter().filter(|object| object.candidate_draw) {
+            if object.animation_supported_by(catalog) {
+                supported_animation_entries += 1;
+            } else {
+                unsupported_animation_entries += 1;
+            }
+            if object.frame_supported_by(catalog) {
+                supported_frame_entries += 1;
+            } else {
+                unsupported_frame_entries += 1;
+            }
+            if object.sprite_supported_by(catalog, sprite_support) {
+                supported_sprite_entries += 1;
+            } else {
+                unsupported_sprite_entries += 1;
+            }
+        }
+
+        Self {
+            entries,
+            stage_counts,
+            supported_animation_entries,
+            unsupported_animation_entries,
+            supported_frame_entries,
+            unsupported_frame_entries,
+            supported_sprite_entries,
+            unsupported_sprite_entries,
+        }
+    }
+
+    pub fn entries(&self) -> &[OriginalMissionDrawQueueEntry] {
+        &self.entries
+    }
+
+    pub fn total_candidates(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+impl OriginalAnimationCatalogSupport {
+    fn from_catalog(
+        catalog: &AnimationCatalog,
+        objects: &[OriginalMissionObjectCandidate],
+        sprite_support: &OriginalSpriteBankSupport,
+    ) -> Self {
+        let mut referenced_animation_entries = 0;
+        let mut supported_animation_entries = 0;
+        let mut referenced_frame_entries = 0;
+        let mut supported_frame_entries = 0;
+        let mut referenced_sprite_entries = 0;
+        let mut supported_sprite_entries = 0;
+
+        for object in objects.iter().filter(|object| object.candidate_draw) {
+            if object.animation.current_anim.is_some() {
+                referenced_animation_entries += 1;
+                if object.animation_supported_by(catalog) {
+                    supported_animation_entries += 1;
+                }
+            }
+            if let (Some(anim), Some(frame)) = (
+                object.animation.current_anim,
+                object.animation.current_frame,
+            ) {
+                referenced_frame_entries += 1;
+                if object.frame_supported_by(catalog) {
+                    supported_frame_entries += 1;
+                }
+                if let Some(sprites) = catalog
+                    .sprite_refs_for_frame_index(frame)
+                    .or_else(|| catalog.sprite_refs_for_anim_frame(anim, frame))
+                {
+                    referenced_sprite_entries += sprites.len();
+                    supported_sprite_entries += sprites
+                        .iter()
+                        .filter(|sprite| sprite_support.supports_sprite_index(**sprite))
+                        .count();
+                }
+            }
+        }
+
+        Self {
+            source_labels: catalog.source_labels.clone(),
+            element_records: catalog.elements.len(),
+            frame_records: catalog.frames.len(),
+            animation_records: catalog.animations.len(),
+            invalid_element_sprite_units: catalog.invalid_element_sprite_units,
+            invalid_element_links: catalog.invalid_element_links,
+            invalid_frame_links: catalog.invalid_frame_links,
+            invalid_frame_element_links: catalog.invalid_frame_element_links,
+            invalid_animation_starts: catalog.invalid_animation_starts,
+            referenced_animation_entries,
+            supported_animation_entries,
+            unsupported_animation_entries: referenced_animation_entries
+                .saturating_sub(supported_animation_entries),
+            referenced_frame_entries,
+            supported_frame_entries,
+            unsupported_frame_entries: referenced_frame_entries
+                .saturating_sub(supported_frame_entries),
+            referenced_sprite_entries,
+            supported_sprite_entries,
+            unsupported_sprite_entries: referenced_sprite_entries
+                .saturating_sub(supported_sprite_entries),
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "anim catalog {} anims, {} frames; refs {}/{}",
+            self.animation_records,
+            self.frame_records,
+            self.supported_animation_entries,
+            self.referenced_animation_entries
+        )
+    }
+
+    pub fn report_label(&self) -> String {
+        format!(
+            "{}; frame refs {}/{}; sprite refs {}/{}; invalid links e{} f{} a{}",
+            self.panel_label(),
+            self.supported_frame_entries,
+            self.referenced_frame_entries,
+            self.supported_sprite_entries,
+            self.referenced_sprite_entries,
+            self.invalid_element_links,
+            self.invalid_frame_links,
+            self.invalid_animation_starts
+        )
+    }
+}
+
+impl OriginalSpriteBankSupport {
+    fn from_root(root: &Path) -> Self {
+        let mut primary = None;
+        let mut sibling_bank_count = 0;
+        let mut total_candidate_entries = 0;
+        let mut total_valid_offset_entries = 0;
+
+        for stem in ["HSPR-0", "HSPR-1", "HSPR-0-D", "HSPR-1-D"] {
+            for prefix in ["SYNDICAT/DATA", "DATADISK/DATA"] {
+                let tab_label = format!("{prefix}/{stem}.TAB");
+                let dat_label = format!("{prefix}/{stem}.DAT");
+                let tab_path = root.join(&tab_label);
+                let dat_path = root.join(&dat_label);
+                let (Some(tab), Some(dat)) = (
+                    read_original_asset_bytes(&tab_path),
+                    read_original_asset_bytes(&dat_path),
+                ) else {
+                    continue;
+                };
+                let summary = summarize_sprite_tab_bank(&tab_label, &tab, dat.len());
+                if stem == "HSPR-0" && primary.is_none() {
+                    primary = Some(summary.clone());
+                } else {
+                    sibling_bank_count += 1;
+                }
+                total_candidate_entries += summary.entry_count;
+                total_valid_offset_entries += summary.valid_offset_entries;
+            }
+        }
+
+        let primary_label = primary.as_ref().map(|summary| summary.label.clone());
+        let primary_entry_count = primary.as_ref().map_or(0, |summary| summary.entry_count);
+        let primary_valid_offset_entries = primary
+            .as_ref()
+            .map_or(0, |summary| summary.valid_offset_entries);
+
+        Self {
+            primary_label,
+            primary_entry_count,
+            primary_valid_offset_entries,
+            sibling_bank_count,
+            total_candidate_entries,
+            total_valid_offset_entries,
+        }
+    }
+
+    #[cfg(test)]
+    fn from_primary_counts(entry_count: usize, valid_offset_entries: usize) -> Self {
+        Self {
+            primary_label: Some("synthetic HSPR-0".to_string()),
+            primary_entry_count: entry_count,
+            primary_valid_offset_entries: valid_offset_entries,
+            sibling_bank_count: 0,
+            total_candidate_entries: entry_count,
+            total_valid_offset_entries: valid_offset_entries,
+        }
+    }
+
+    fn supports_sprite_index(&self, sprite_index: u16) -> bool {
+        (sprite_index as usize) < self.primary_entry_count
+            && (sprite_index as usize) < self.primary_valid_offset_entries
+    }
+
+    pub fn panel_label(&self) -> String {
+        if self.primary_entry_count == 0 {
+            return "sprite bank support unavailable".to_string();
+        }
+        format!(
+            "HSPR candidate entries {}/{} valid; siblings {}",
+            self.primary_valid_offset_entries, self.primary_entry_count, self.sibling_bank_count
+        )
+    }
+
+    pub fn report_label(&self) -> String {
+        format!(
+            "{}; runtime-only sprite catalog, no dimensions or previews",
+            self.panel_label()
+        )
+    }
+}
+
+impl OriginalStaticRenderProof {
+    fn from_scene_objects(
+        objects: &[OriginalMissionObjectCandidate],
+        catalog: &AnimationCatalog,
+        sprite_support: &OriginalSpriteBankSupport,
+    ) -> Self {
+        let statics = objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Static)
+            .filter(|object| object.candidate_draw)
+            .collect::<Vec<_>>();
+        let candidate_count = statics.len();
+        let supported_animation_count = statics
+            .iter()
+            .filter(|object| object.animation_supported_by(catalog))
+            .count();
+        let supported_frame_count = statics
+            .iter()
+            .filter(|object| object.frame_supported_by(catalog))
+            .count();
+        let supported_sprite_count = statics
+            .iter()
+            .filter(|object| object.sprite_supported_by(catalog, sprite_support))
+            .count();
+        let blocker = if candidate_count == 0 {
+            "no candidate static records queued for runtime proof".to_string()
+        } else if supported_animation_count < candidate_count {
+            "candidate static animation references are not fully supported".to_string()
+        } else if supported_frame_count < candidate_count {
+            "candidate static frame references are not fully supported".to_string()
+        } else if supported_sprite_count < candidate_count {
+            "candidate static sprite-bank references are not fully supported".to_string()
+        } else {
+            "sprite pixel decoder and anchor-safe frame assembly are not proven".to_string()
+        };
+
+        Self {
+            category_label: "candidate statics",
+            candidate_count,
+            supported_animation_count,
+            supported_frame_count,
+            supported_sprite_count,
+            decision: OriginalStaticRenderDecision::RuntimeRenderDisabled,
+            blocker,
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "static render disabled: {}; {} candidates; support {}/{}/{}",
+            self.short_blocker_label(),
+            self.candidate_count,
+            self.supported_animation_count,
+            self.supported_frame_count,
+            self.supported_sprite_count
+        )
+    }
+
+    pub fn report_label(&self) -> String {
+        format!(
+            "static render disabled: {}; {} candidates; runtime-only, not proof of decoded layout or semantics",
+            self.blocker, self.candidate_count
+        )
+    }
+
+    fn short_blocker_label(&self) -> &'static str {
+        if self.blocker.contains("pixel") || self.blocker.contains("anchor") {
+            "sprite/anchor proof missing"
+        } else if self.blocker.contains("animation") {
+            "animation refs incomplete"
+        } else if self.blocker.contains("frame") {
+            "frame refs incomplete"
+        } else if self.blocker.contains("sprite-bank") {
+            "sprite-bank refs incomplete"
+        } else {
+            "proof missing"
+        }
+    }
+}
+
+impl OriginalSpawnProbe {
+    fn from_objects_and_game_bytes(
+        objects: &[OriginalMissionObjectCandidate],
+        decoded: &[u8],
+    ) -> Self {
+        let ped_spawn_candidates = objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
+            .count();
+        let agent_candidates = objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
+            .filter(|object| object.subtype_value == Some(0x02) || object.type_value == Some(0x02))
+            .count();
+        let enemy_candidates = objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
+            .filter(|object| {
+                matches!(object.subtype_value, Some(0x04 | 0x08 | 0x10))
+                    || matches!(object.type_value, Some(0x04 | 0x08 | 0x10))
+            })
+            .count();
+        let trigger_scenario_candidates = scenario_records(decoded)
+            .filter(|record| record.get(7).copied() == Some(0x08))
+            .count();
+
+        Self {
+            ped_spawn_candidates,
+            agent_candidates,
+            enemy_candidates,
+            trigger_scenario_candidates,
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "spawn candidates peds {}, agents {}, enemies {}, triggers {}",
+            self.ped_spawn_candidates,
+            self.agent_candidates,
+            self.enemy_candidates,
+            self.trigger_scenario_candidates
+        )
+    }
+}
+
+impl OriginalNavigationProbe {
+    fn from_decoded_game_bytes(decoded: &[u8]) -> Self {
+        let map_object_offsets = decoded
+            .get(GAME_MAP_OBJECT_OFFSET..GAME_MAP_OBJECT_OFFSET + GAME_MAP_OBJECT_BYTES)
+            .unwrap_or(&[]);
+        let mut map_object_link_cells = 0;
+        let mut unique_offsets = BTreeSet::new();
+        for chunk in map_object_offsets.chunks_exact(2) {
+            let offset = u16::from_le_bytes([chunk[0], chunk[1]]);
+            if offset != 0 {
+                map_object_link_cells += 1;
+                unique_offsets.insert(offset);
+            }
+        }
+
+        let mut active_scenario_records = 0;
+        let mut scenario_tile_target_candidates = 0;
+        for record in scenario_records(decoded) {
+            let scenario_type = record.get(7).copied().unwrap_or_default();
+            if scenario_type == 0 {
+                continue;
+            }
+            active_scenario_records += 1;
+            if matches!(scenario_type, 0x01 | 0x02 | 0x08) {
+                scenario_tile_target_candidates += 1;
+            }
+        }
+
+        Self {
+            map_object_link_cells,
+            unique_object_offsets: unique_offsets.len(),
+            scenario_records: active_scenario_records,
+            scenario_tile_target_candidates,
+            bridge_status: "navigation bridge candidate only; gameplay/pathfinding remains on demo grid",
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "nav inputs links {}, scenarios {}; demo grid active",
+            self.map_object_link_cells, self.scenario_tile_target_candidates
+        )
+    }
+
+    pub fn report_label(&self) -> String {
+        format!("{}; {}", self.panel_label(), self.bridge_status)
+    }
+}
+
+impl AnimationCatalog {
+    fn from_root(root: &Path) -> Self {
+        for prefix in ["SYNDICAT/DATA", "DATADISK/DATA"] {
+            let labels = [
+                format!("{prefix}/HELE-0.ANI"),
+                format!("{prefix}/HFRA-0.ANI"),
+                format!("{prefix}/HSTA-0.ANI"),
+            ];
+            let hele = read_original_asset_bytes(&root.join(&labels[0]));
+            let hfra = read_original_asset_bytes(&root.join(&labels[1]));
+            let hsta = read_original_asset_bytes(&root.join(&labels[2]));
+            let (Some(hele), Some(hfra), Some(hsta)) = (hele, hfra, hsta) else {
+                continue;
+            };
+            return Self::from_bytes(labels.to_vec(), &hele, &hfra, &hsta);
+        }
+
+        Self::empty()
+    }
+
+    fn from_bytes(source_labels: Vec<String>, hele: &[u8], hfra: &[u8], hsta: &[u8]) -> Self {
+        let elements = hele
+            .chunks_exact(10)
+            .map(|record| {
+                let sprite_units = read_le_u16(record, 0);
+                AnimElement {
+                    sprite: sprite_units / SPRITE_TAB_ENTRY_BYTES as u16,
+                    next_element: read_le_u16(record, 8),
+                    sprite_unit_aligned: sprite_units % SPRITE_TAB_ENTRY_BYTES as u16 == 0,
+                }
+            })
+            .collect::<Vec<_>>();
+        let frames = hfra
+            .chunks_exact(8)
+            .map(|record| AnimFrame {
+                first_element: read_le_u16(record, 0),
+                next_frame: read_le_u16(record, 6),
+            })
+            .collect::<Vec<_>>();
+        let animations = hsta
+            .chunks_exact(2)
+            .map(|record| read_le_u16(record, 0))
+            .collect::<Vec<_>>();
+
+        let invalid_element_sprite_units = elements
+            .iter()
+            .filter(|element| !element.sprite_unit_aligned)
+            .count();
+        let invalid_element_links = elements
+            .iter()
+            .filter(|element| {
+                element.next_element != 0 && element.next_element as usize >= elements.len()
+            })
+            .count();
+        let invalid_frame_links = frames
+            .iter()
+            .filter(|frame| frame.next_frame as usize >= frames.len())
+            .count();
+        let invalid_frame_element_links = frames
+            .iter()
+            .filter(|frame| frame.first_element as usize >= elements.len())
+            .count();
+        let invalid_animation_starts = animations
+            .iter()
+            .filter(|frame| **frame as usize >= frames.len())
+            .count();
+
+        Self {
+            source_labels,
+            elements,
+            frames,
+            animations,
+            invalid_element_sprite_units,
+            invalid_element_links,
+            invalid_frame_links,
+            invalid_frame_element_links,
+            invalid_animation_starts,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            source_labels: Vec::new(),
+            elements: Vec::new(),
+            frames: Vec::new(),
+            animations: Vec::new(),
+            invalid_element_sprite_units: 0,
+            invalid_element_links: 0,
+            invalid_frame_links: 0,
+            invalid_frame_element_links: 0,
+            invalid_animation_starts: 0,
+        }
+    }
+
+    fn animation_start(&self, anim_id: u16) -> Option<u16> {
+        let frame = *self.animations.get(anim_id as usize)?;
+        self.frames.get(frame as usize)?;
+        Some(frame)
+    }
+
+    fn frame_for_anim(&self, anim_id: u16, frame_id: u16) -> Option<&AnimFrame> {
+        let mut frame_index = self.animation_start(anim_id)?;
+        let mut remaining = frame_id as usize;
+        let mut visited = BTreeSet::new();
+        loop {
+            let frame = self.frames.get(frame_index as usize)?;
+            if remaining == 0 {
+                return Some(frame);
+            }
+            if !visited.insert(frame_index) || frame.next_frame as usize >= self.frames.len() {
+                return None;
+            }
+            frame_index = frame.next_frame;
+            remaining -= 1;
+        }
+    }
+
+    fn frame_index_supported(&self, frame_index: u16) -> bool {
+        self.frames.get(frame_index as usize).is_some_and(|frame| {
+            (frame.first_element as usize) < self.elements.len()
+                && (frame.next_frame as usize) < self.frames.len()
+        })
+    }
+
+    fn sprite_refs_for_frame_index(&self, frame_index: u16) -> Option<Vec<u16>> {
+        let frame = self.frames.get(frame_index as usize)?;
+        self.sprite_refs_for_frame(frame)
+    }
+
+    fn sprite_refs_for_anim_frame(&self, anim_id: u16, frame_id: u16) -> Option<Vec<u16>> {
+        let frame = self.frame_for_anim(anim_id, frame_id)?;
+        self.sprite_refs_for_frame(frame)
+    }
+
+    fn sprite_refs_for_frame(&self, frame: &AnimFrame) -> Option<Vec<u16>> {
+        let mut element_index = frame.first_element;
+        let mut sprites = Vec::new();
+        let mut visited = BTreeSet::new();
+
+        loop {
+            let element = self.elements.get(element_index as usize)?;
+            sprites.push(element.sprite);
+            if element.next_element == 0 {
+                break;
+            }
+            if !visited.insert(element_index)
+                || element.next_element as usize >= self.elements.len()
+            {
+                return None;
+            }
+            element_index = element.next_element;
+        }
+
+        Some(sprites)
+    }
+}
+
+fn collect_candidate_objects(decoded: &[u8]) -> Vec<OriginalMissionObjectCandidate> {
+    scene_section_specs()
+        .into_iter()
+        .flat_map(|spec| collect_section_objects(decoded, spec))
+        .collect()
+}
+
+fn collect_section_objects(
+    decoded: &[u8],
+    spec: SceneSectionSpec,
+) -> Vec<OriginalMissionObjectCandidate> {
+    let available_records = decoded
+        .get(spec.start..)
+        .map(|tail| tail.len().min(spec.record_count * spec.record_size) / spec.record_size)
+        .unwrap_or_default();
+    let mut objects = Vec::new();
+
+    for index in 0..available_records {
+        let start = spec.start + index * spec.record_size;
+        let Some(record) = decoded.get(start..start + spec.record_size) else {
+            continue;
+        };
+        let non_zero = record.iter().any(|&byte| byte != 0);
+        if !non_zero {
+            continue;
+        }
+
+        let desc = spec
+            .desc_offset
+            .and_then(|offset| record.get(offset).copied());
+        let candidate_record = match desc {
+            Some(value) => value != 0,
+            None => non_zero,
+        };
+        let candidate_draw = match desc {
+            Some(value) => spec.active_descs.contains(&value),
+            None => non_zero,
+        };
+        let tile = spec
+            .position_offsets
+            .and_then(|(x, y, z)| read_tile_point(record, x, y, z));
+        let queue_tile = tile.map(|tile| {
+            if spec.kind == OriginalMissionObjectKind::Vehicle {
+                OriginalTilePoint {
+                    tile_z: tile.tile_z.saturating_add(1),
+                    ..tile
+                }
+            } else {
+                tile
+            }
+        });
+        let animation = spec
+            .animation_offsets
+            .map(|(base, frame, anim)| OriginalAnimationRefs {
+                base_anim: read_record_u16(record, base),
+                current_frame: read_record_u16(record, frame),
+                current_anim: read_record_u16(record, anim),
+            })
+            .unwrap_or_default();
+
+        objects.push(OriginalMissionObjectCandidate {
+            kind: spec.kind,
+            record_index: index as u16,
+            desc,
+            state: spec
+                .state_offset
+                .and_then(|offset| record.get(offset).copied()),
+            type_value: spec
+                .type_offset
+                .and_then(|offset| record.get(offset).copied()),
+            subtype_value: spec
+                .subtype_offset
+                .and_then(|offset| record.get(offset).copied()),
+            orientation: spec
+                .orientation_offset
+                .and_then(|offset| record.get(offset).copied()),
+            tile,
+            queue_tile,
+            animation,
+            candidate_record,
+            candidate_draw,
+            draw_stage: Some(spec.draw_stage),
+        });
+    }
+
+    objects
+}
+
+fn build_section_counts(
+    objects: &[OriginalMissionObjectCandidate],
+    support: &OriginalAnimationCatalogSupport,
+) -> Vec<OriginalMissionSceneSection> {
+    let _ = support;
+    scene_section_specs()
+        .into_iter()
+        .map(|spec| {
+            let section_objects = objects
+                .iter()
+                .filter(|object| object.kind == spec.kind)
+                .collect::<Vec<_>>();
+            let candidate_records = section_objects
+                .iter()
+                .filter(|object| object.candidate_record)
+                .count();
+            let queued_records = section_objects
+                .iter()
+                .filter(|object| object.candidate_draw)
+                .count();
+            let supported_animation_refs = section_objects
+                .iter()
+                .filter(|object| object.candidate_draw)
+                .filter(|object| object.animation.current_anim.is_some())
+                .count();
+            let supported_frame_refs = section_objects
+                .iter()
+                .filter(|object| object.candidate_draw)
+                .filter(|object| object.animation.current_frame.is_some())
+                .count();
+
+            OriginalMissionSceneSection {
+                label: spec.label,
+                capacity: spec.record_count,
+                non_zero_records: section_objects.len(),
+                candidate_records,
+                queued_records,
+                supported_animation_refs,
+                unsupported_animation_refs: 0,
+                supported_frame_refs,
+                unsupported_frame_refs: 0,
+                draw_stage: Some(spec.draw_stage),
+            }
+        })
+        .collect()
+}
+
+fn scene_section_specs() -> Vec<SceneSectionSpec> {
+    vec![
+        SceneSectionSpec {
+            label: "candidate people",
+            kind: OriginalMissionObjectKind::Ped,
+            start: PEOPLE_OFFSET,
+            record_count: 256,
+            record_size: 92,
+            desc_offset: Some(10),
+            state_offset: Some(11),
+            active_descs: ON_MAP_DESC,
+            type_offset: Some(24),
+            subtype_offset: Some(21),
+            orientation_offset: Some(22),
+            position_offsets: Some((4, 6, 8)),
+            animation_offsets: Some((14, 16, 18)),
+            draw_stage: OriginalDrawStage::People,
+        },
+        SceneSectionSpec {
+            label: "candidate vehicles",
+            kind: OriginalMissionObjectKind::Vehicle,
+            start: CARS_OFFSET,
+            record_count: 64,
+            record_size: 42,
+            desc_offset: Some(10),
+            state_offset: None,
+            active_descs: ON_MAP_DESC,
+            type_offset: Some(20),
+            subtype_offset: Some(21),
+            orientation_offset: Some(22),
+            position_offsets: Some((4, 6, 8)),
+            animation_offsets: Some((14, 16, 18)),
+            draw_stage: OriginalDrawStage::Vehicles,
+        },
+        SceneSectionSpec {
+            label: "candidate statics",
+            kind: OriginalMissionObjectKind::Static,
+            start: STATICS_OFFSET,
+            record_count: 400,
+            record_size: 30,
+            desc_offset: Some(10),
+            state_offset: None,
+            active_descs: STATIC_DRAW_DESCS,
+            type_offset: Some(24),
+            subtype_offset: Some(25),
+            orientation_offset: Some(26),
+            position_offsets: Some((4, 6, 8)),
+            animation_offsets: Some((14, 16, 18)),
+            draw_stage: OriginalDrawStage::Statics,
+        },
+        SceneSectionSpec {
+            label: "candidate weapons",
+            kind: OriginalMissionObjectKind::Weapon,
+            start: WEAPONS_OFFSET,
+            record_count: 512,
+            record_size: 36,
+            desc_offset: Some(10),
+            state_offset: None,
+            active_descs: ON_MAP_DESC,
+            type_offset: Some(24),
+            subtype_offset: Some(25),
+            orientation_offset: None,
+            position_offsets: Some((4, 6, 8)),
+            animation_offsets: Some((14, 16, 18)),
+            draw_stage: OriginalDrawStage::Weapons,
+        },
+        SceneSectionSpec {
+            label: "candidate sfx",
+            kind: OriginalMissionObjectKind::Sfx,
+            start: SFX_OFFSET,
+            record_count: 256,
+            record_size: 30,
+            desc_offset: None,
+            state_offset: None,
+            active_descs: &[],
+            type_offset: None,
+            subtype_offset: None,
+            orientation_offset: None,
+            position_offsets: Some((4, 6, 8)),
+            animation_offsets: Some((14, 16, 18)),
+            draw_stage: OriginalDrawStage::Sfx,
+        },
+    ]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpriteTabBankSummary {
+    label: String,
+    entry_count: usize,
+    valid_offset_entries: usize,
+}
+
+fn summarize_sprite_tab_bank(label: &str, tab: &[u8], dat_len: usize) -> SpriteTabBankSummary {
+    let entry_count = tab.len() / SPRITE_TAB_ENTRY_BYTES;
+    let valid_offset_entries = tab
+        .chunks_exact(SPRITE_TAB_ENTRY_BYTES)
+        .filter(|entry| {
+            let offset = u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]) as usize;
+            offset <= dat_len
+        })
+        .count();
+
+    SpriteTabBankSummary {
+        label: label.to_string(),
+        entry_count,
+        valid_offset_entries,
+    }
+}
+
+fn scenario_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
+    let tail = decoded.get(SCENARIOS_OFFSET..).unwrap_or(&[]);
+    let len = tail.len().min(2048 * 8);
+    tail[..len].chunks_exact(8)
+}
+
+pub fn format_mission_scene_report_rows(root: impl AsRef<Path>) -> Vec<String> {
+    let root = root.as_ref();
+    let Ok(selection) = OriginalMissionSelection::from_root(root) else {
+        return Vec::new();
+    };
+    OriginalMissionScene::from_root(root, &selection)
+        .map(|scene| vec![scene.report_row()])
+        .unwrap_or_default()
+}
+
+fn data_file_candidates(file_name: &str) -> Vec<String> {
+    ["SYNDICAT/DATA", "DATADISK/DATA"]
+        .into_iter()
+        .map(|prefix| format!("{prefix}/{file_name}"))
+        .collect()
+}
+
+fn read_original_asset_bytes(path: &Path) -> Option<Vec<u8>> {
+    let data = fs::read(path).ok()?;
+    if RncBlock::parse(&data).is_some() {
+        decode_maybe_rnc(&data).ok()
+    } else {
+        Some(data)
+    }
+}
+
+fn read_tile_point(
+    record: &[u8],
+    x_offset: usize,
+    y_offset: usize,
+    z_offset: usize,
+) -> Option<OriginalTilePoint> {
+    let x = read_record_u16(record, x_offset)?;
+    let y = read_record_u16(record, y_offset)?;
+    let z = read_record_u16(record, z_offset)?;
+    Some(OriginalTilePoint {
+        tile_x: x >> 8,
+        tile_y: y >> 8,
+        tile_z: z >> 7,
+        off_x: x as u8,
+        off_y: y as u8,
+        off_z: (z & 0x7f) as u8,
+    })
+}
+
+fn read_record_u16(record: &[u8], offset: usize) -> Option<u16> {
+    record
+        .get(offset..offset + 2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_le_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn decode_maybe_rnc(data: &[u8]) -> Result<Vec<u8>, RncError> {
+    if let Some(block) = RncBlock::parse(data) {
+        block.decompress()
+    } else {
+        Ok(data.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{
+        AnimationCatalog, CARS_OFFSET, OriginalAnimationCatalogSupport, OriginalDrawStage,
+        OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionSelection,
+        OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET,
+        collect_candidate_objects, format_mission_scene_report_rows, summarize_sprite_tab_bank,
+    };
+
+    fn selection() -> OriginalMissionSelection {
+        OriginalMissionSelection {
+            campaign_label: "synthetic campaign".to_string(),
+            mission_id: 1,
+            palette_id: 2,
+            mission_label: "synthetic/GAME01.DAT".to_string(),
+            map_id: 1,
+            map_label: "SYNDICAT/DATA/MAP01.DAT".to_string(),
+            palette_label: "SYNDICAT/DATA/HPAL02.DAT".to_string(),
+            min_scroll_tile: (10, 10),
+            max_scroll_tile: (30, 30),
+            render_diagnostics: crate::engine::mission_source::OriginalMissionRenderDiagnostics {
+                sections: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn parses_typed_candidate_records_and_freesynd_positions() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            12,
+            13,
+            2,
+            7,
+            8,
+            9,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 11] = 0x10;
+        decoded[PEOPLE_OFFSET + 21] = 0x02;
+        decoded[PEOPLE_OFFSET + 22] = 0x40;
+        decoded[PEOPLE_OFFSET + 24] = 0x02;
+
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            12,
+            13,
+            2,
+            1,
+            2,
+            3,
+            0x04,
+        );
+
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            16,
+            17,
+            4,
+            2,
+            3,
+            5,
+            0x06,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x16;
+
+        write_record(
+            &mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36],
+            21,
+            22,
+            0,
+            4,
+            5,
+            6,
+            0x04,
+        );
+
+        let objects = collect_candidate_objects(&decoded);
+        let ped = objects
+            .iter()
+            .find(|object| object.kind == OriginalMissionObjectKind::Ped)
+            .unwrap();
+        let vehicle = objects
+            .iter()
+            .find(|object| object.kind == OriginalMissionObjectKind::Vehicle)
+            .unwrap();
+        let static_object = objects
+            .iter()
+            .find(|object| object.kind == OriginalMissionObjectKind::Static)
+            .unwrap();
+
+        assert_eq!(ped.tile.unwrap().tile_x, 12);
+        assert_eq!(ped.tile.unwrap().off_x, 7);
+        assert_eq!(ped.tile.unwrap().tile_z, 2);
+        assert_eq!(ped.subtype_value, Some(0x02));
+        assert_eq!(vehicle.queue_tile.unwrap().tile_z, 3);
+        assert!(static_object.candidate_draw);
+        assert_eq!(
+            objects
+                .iter()
+                .filter(|object| object.candidate_draw)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn builds_draw_queue_with_stage_counts_and_same_tile_order() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            10,
+            10,
+            1,
+            2,
+            4,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            10,
+            10,
+            1,
+            9,
+            9,
+            0,
+            0x04,
+        );
+        let mut objects = collect_candidate_objects(&decoded);
+        let sprite_support = OriginalSpriteBankSupport::from_primary_counts(8, 8);
+        let catalog = synthetic_catalog();
+        for object in &mut objects {
+            object.animation.current_anim = Some(0);
+            object.animation.current_frame = Some(0);
+        }
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            objects,
+            sprite_support,
+            catalog,
+        );
+
+        assert_eq!(scene.draw_queue.total_candidates(), 2);
+        assert_eq!(
+            scene.draw_queue.stage_counts[0].stage,
+            OriginalDrawStage::People
+        );
+        assert_eq!(
+            scene.draw_queue.stage_counts[1].stage,
+            OriginalDrawStage::Statics
+        );
+        assert_eq!(
+            scene.draw_queue.entries()[0].stage,
+            OriginalDrawStage::People
+        );
+        assert_eq!(
+            scene.draw_queue.entries()[1].stage,
+            OriginalDrawStage::Statics
+        );
+        assert!(scene.draw_queue_health_label().contains("anim 2/2"));
+    }
+
+    #[test]
+    fn validates_animation_and_sprite_support_without_exposing_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            4,
+            5,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 18..STATICS_OFFSET + 20].copy_from_slice(&0u16.to_le_bytes());
+        decoded[STATICS_OFFSET + 16..STATICS_OFFSET + 18].copy_from_slice(&0u16.to_le_bytes());
+
+        let objects = collect_candidate_objects(&decoded);
+        let sprite_support = OriginalSpriteBankSupport::from_primary_counts(4, 4);
+        let catalog = synthetic_catalog();
+        let support =
+            OriginalAnimationCatalogSupport::from_catalog(&catalog, &objects, &sprite_support);
+
+        assert_eq!(support.supported_animation_entries, 1);
+        assert_eq!(support.supported_frame_entries, 1);
+        assert_eq!(support.supported_sprite_entries, 1);
+        let label = support.report_label();
+        assert!(label.contains("anim catalog"));
+        assert!(!label.contains("00 00"));
+        assert!(!label.contains("0x"));
+    }
+
+    #[test]
+    fn static_render_path_is_guarded_until_sprite_decoder_proof_exists() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            4,
+            5,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let objects = collect_candidate_objects(&decoded);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            objects,
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+        );
+
+        assert_eq!(scene.static_render_proof.candidate_count, 1);
+        assert_eq!(
+            scene.static_render_proof.decision,
+            super::OriginalStaticRenderDecision::RuntimeRenderDisabled
+        );
+        assert!(scene.static_render_proof.panel_label().contains("disabled"));
+        assert!(
+            scene
+                .static_render_proof
+                .report_label()
+                .contains("runtime-only")
+        );
+        assert!(
+            scene
+                .static_render_proof
+                .report_label()
+                .contains("not proof")
+        );
+    }
+
+    #[test]
+    fn reports_spawn_and_navigation_bridge_candidates_conservatively() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        decoded[6..8].copy_from_slice(&4u16.to_le_bytes());
+        decoded[8..10].copy_from_slice(&8u16.to_le_bytes());
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            8,
+            9,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 24] = 0x02;
+        decoded[SCENARIOS_OFFSET + 7] = 0x08;
+
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+        );
+
+        assert_eq!(scene.spawn_probe.agent_candidates, 1);
+        assert_eq!(scene.spawn_probe.trigger_scenario_candidates, 1);
+        assert_eq!(scene.navigation_probe.map_object_link_cells, 2);
+        assert!(
+            scene
+                .navigation_probe
+                .panel_label()
+                .contains("demo grid active")
+        );
+        assert!(
+            scene
+                .navigation_probe
+                .report_label()
+                .contains("candidate only")
+        );
+    }
+
+    #[test]
+    fn summarizes_six_byte_sprite_tab_as_counts_only() {
+        let mut tab = Vec::new();
+        tab.extend_from_slice(&0u32.to_le_bytes());
+        tab.extend_from_slice(&[16, 24]);
+        tab.extend_from_slice(&20u32.to_le_bytes());
+        tab.extend_from_slice(&[8, 12]);
+
+        let summary = summarize_sprite_tab_bank("SYNDICAT/DATA/HSPR-0.TAB", &tab, 40);
+
+        assert_eq!(summary.entry_count, 2);
+        assert_eq!(summary.valid_offset_entries, 2);
+        assert!(!format!("{summary:?}").contains("16x24"));
+    }
+
+    #[test]
+    fn empty_report_rows_do_not_claim_scene_semantics() {
+        let rows = format_mission_scene_report_rows(Path::new("definitely-not-an-asset-root"));
+        assert!(rows.is_empty());
+    }
+
+    fn synthetic_catalog() -> AnimationCatalog {
+        let mut hele = Vec::new();
+        hele.extend_from_slice(&0u16.to_le_bytes());
+        hele.extend_from_slice(&0i16.to_le_bytes());
+        hele.extend_from_slice(&0i16.to_le_bytes());
+        hele.extend_from_slice(&0u16.to_le_bytes());
+        hele.extend_from_slice(&0u16.to_le_bytes());
+
+        let mut hfra = Vec::new();
+        hfra.extend_from_slice(&0u16.to_le_bytes());
+        hfra.extend_from_slice(&[1, 1]);
+        hfra.extend_from_slice(&0u16.to_le_bytes());
+        hfra.extend_from_slice(&0u16.to_le_bytes());
+
+        let hsta = 0u16.to_le_bytes();
+        AnimationCatalog::from_bytes(vec!["synthetic".to_string()], &hele, &hfra, &hsta)
+    }
+
+    fn write_record(
+        record: &mut [u8],
+        tile_x: u16,
+        tile_y: u16,
+        tile_z: u16,
+        off_x: u8,
+        off_y: u8,
+        off_z: u8,
+        desc: u8,
+    ) {
+        record[4..6].copy_from_slice(&(((tile_x << 8) | off_x as u16).to_le_bytes()));
+        record[6..8].copy_from_slice(&(((tile_y << 8) | off_y as u16).to_le_bytes()));
+        record[8..10].copy_from_slice(&(((tile_z << 7) | off_z as u16).to_le_bytes()));
+        record[10] = desc;
+        record[14..16].copy_from_slice(&0u16.to_le_bytes());
+        record[16..18].copy_from_slice(&0u16.to_le_bytes());
+        record[18..20].copy_from_slice(&0u16.to_le_bytes());
+    }
+}

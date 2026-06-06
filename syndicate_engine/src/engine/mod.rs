@@ -11,6 +11,7 @@ pub mod map_catalog;
 pub mod map_decode;
 pub mod map_scene;
 pub mod map_tiles;
+pub mod mission_scene;
 pub mod mission_source;
 pub mod palette;
 pub mod palette_decode;

@@ -13,6 +13,7 @@ use crate::engine::{
         MapInferredLayerPreview, MapPrimaryGridAnalysis, MapSpatialCorrelationAnalysis,
         analyze_payload, analyze_primary_sections, decode_map_payload_bytes,
     },
+    mission_scene::format_mission_scene_report_rows,
     palette_decode::Palette,
     rnc::RncBlock,
     runtime_probe::{
@@ -33,6 +34,7 @@ pub struct AssetReport {
     map_global_summary: String,
     map_global_candidate_rows: Vec<String>,
     map_global_substrate_rows: Vec<String>,
+    mission_scene_rows: Vec<String>,
     mission_rows: Vec<String>,
     palette_rows: Vec<String>,
     compressed_palette_rows: Vec<String>,
@@ -284,6 +286,7 @@ impl AssetReport {
             map_global_summary,
             map_global_candidate_rows,
             map_global_substrate_rows,
+            mission_scene_rows: format_mission_scene_report_rows(root),
             mission_rows,
             palette_rows,
             compressed_palette_rows,
@@ -350,6 +353,10 @@ impl AssetReport {
         markdown.push_str(&format!(
             "- TAB/DAT pairs analyzed: {}\n\n",
             self.tab_rows.len()
+        ));
+        markdown.push_str(&format!(
+            "- First-mission scene model rows: {}\n\n",
+            self.mission_scene_rows.len()
         ));
 
         markdown.push_str("\n## File extension inventory\n\n");
@@ -551,6 +558,16 @@ impl AssetReport {
             &self.tab_family_comparison_rows,
             "no aggregate TAB/sprite family comparisons available",
             9,
+        );
+
+        markdown.push_str("\n## First-mission runtime scene model diagnostics\n\n");
+        markdown.push_str("These rows summarize the runtime-local first-mission scene model built from GAME data and local animation/sprite catalog support. They include counts, support ratios, draw-queue health, and guardrail labels only. They do not expose raw bytes, chunks, per-object placements, decoded dimensions, anchors, sprite pixels, screenshots, UI, audio, objective logic, or gameplay semantics.\n\n");
+        markdown.push_str("| Mission candidate | Map/palette selection | Candidate object sections | Draw queue health | Animation/frame support | Sprite-bank support | Static render proof | Navigation/gameplay guardrail |\n|---|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.mission_scene_rows,
+            "no first-mission runtime scene model available",
+            8,
         );
 
         markdown.push_str("\n## Mission inventory\n\n");
@@ -4612,6 +4629,7 @@ mod tests {
         assert!(markdown.contains("TAB/sprite local runtime probe execution diagnostics"));
         assert!(markdown.contains("TAB/sprite local runtime probe execution phases"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
+        assert!(markdown.contains("First-mission runtime scene model diagnostics"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
         assert!(markdown.contains("no capped per-archive TAB/sprite evidence rows available"));
@@ -4631,6 +4649,7 @@ mod tests {
             markdown.contains("no aggregate TAB/sprite runtime probe execution phases available")
         );
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
+        assert!(markdown.contains("no first-mission runtime scene model available"));
     }
 
     fn make_tab_report_analysis(path: &str, chunks: Vec<Vec<u8>>) -> TabBankReportAnalysis {

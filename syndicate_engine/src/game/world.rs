@@ -9,6 +9,7 @@ use crate::{
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
+        mission_scene::OriginalMissionScene,
         mission_source::OriginalMissionSelection,
     },
     game::{
@@ -37,6 +38,7 @@ pub struct WorldState {
     render_mode: MapRenderMode,
     selected_map_scene: usize,
     original_mission: Option<OriginalMissionSelection>,
+    original_mission_scene: Option<OriginalMissionScene>,
     original_graphics: Option<RuntimeOriginalGraphics>,
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
@@ -53,6 +55,7 @@ enum MapRenderMode {
     CandidateField(MapCandidateField),
     BlockAddressability,
     OriginalMapTiles,
+    OriginalMissionSceneProbe,
     OriginalGraphicsMap,
     OriginalGraphicsAtlas,
 }
@@ -66,6 +69,7 @@ impl MapRenderMode {
             Self::CandidateField(field) => format!("MAP {}", field.provisional_label()),
             Self::BlockAddressability => "MAP block addressability".to_string(),
             Self::OriginalMapTiles => "original mission map tiles".to_string(),
+            Self::OriginalMissionSceneProbe => "original mission scene probe".to_string(),
             Self::OriginalGraphicsMap => "MAP original graphics candidate".to_string(),
             Self::OriginalGraphicsAtlas => "original graphics atlas".to_string(),
         }
@@ -78,9 +82,10 @@ impl MapRenderMode {
             Self::InferredLayer => Some(MapDiagnosticSceneLayer::Inferred),
             Self::CandidateField(field) => Some(MapDiagnosticSceneLayer::CandidateField(field)),
             Self::BlockAddressability => Some(MapDiagnosticSceneLayer::BlockAddressability),
-            Self::OriginalMapTiles | Self::OriginalGraphicsMap | Self::OriginalGraphicsAtlas => {
-                None
-            }
+            Self::OriginalMapTiles
+            | Self::OriginalMissionSceneProbe
+            | Self::OriginalGraphicsMap
+            | Self::OriginalGraphicsAtlas => None,
         }
     }
 }
@@ -88,6 +93,9 @@ impl MapRenderMode {
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
         let original_mission = OriginalMissionSelection::from_root(assets.root_path()).ok();
+        let original_mission_scene = original_mission.as_ref().and_then(|selection| {
+            OriginalMissionScene::from_root(assets.root_path(), selection).ok()
+        });
         let selected_map_id = original_mission
             .as_ref()
             .map(|selection| selection.map_id)
@@ -133,9 +141,14 @@ impl WorldState {
             CameraRig::default()
         };
         let combat_log = if original_map_loaded {
-            original_mission
+            original_mission_scene
                 .as_ref()
-                .map(OriginalMissionSelection::status_label)
+                .map(OriginalMissionScene::runtime_status_label)
+                .or_else(|| {
+                    original_mission
+                        .as_ref()
+                        .map(OriginalMissionSelection::status_label)
+                })
                 .unwrap_or_else(|| "Runtime original mission map tile stacks loaded".to_string())
         } else if graphics_loaded {
             "Runtime original graphics loaded".to_string()
@@ -158,6 +171,7 @@ impl WorldState {
             render_mode,
             selected_map_scene: 0,
             original_mission,
+            original_mission_scene,
             original_graphics,
             original_map_tiles,
             original_tile_types,
@@ -284,10 +298,14 @@ impl WorldState {
                 MapRenderMode::OriginalGraphicsMap
             }
             MapRenderMode::BlockAddressability => MapRenderMode::DemoCity,
+            MapRenderMode::OriginalMapTiles if self.original_mission_scene.is_some() => {
+                MapRenderMode::OriginalMissionSceneProbe
+            }
             MapRenderMode::OriginalMapTiles if inferred_available => {
                 MapRenderMode::OriginalGraphicsMap
             }
             MapRenderMode::OriginalMapTiles => MapRenderMode::OriginalGraphicsAtlas,
+            MapRenderMode::OriginalMissionSceneProbe => MapRenderMode::OriginalGraphicsMap,
             MapRenderMode::OriginalGraphicsMap => MapRenderMode::OriginalGraphicsAtlas,
             MapRenderMode::OriginalGraphicsAtlas => MapRenderMode::DemoCity,
         }
@@ -322,6 +340,7 @@ impl WorldState {
         if matches!(
             self.render_mode,
             MapRenderMode::OriginalMapTiles
+                | MapRenderMode::OriginalMissionSceneProbe
                 | MapRenderMode::OriginalGraphicsMap
                 | MapRenderMode::OriginalGraphicsAtlas
         ) && self.original_graphics.is_none()
@@ -332,6 +351,11 @@ impl WorldState {
         {
             self.render_mode = MapRenderMode::OriginalGraphicsAtlas;
         }
+        if self.render_mode == MapRenderMode::OriginalMissionSceneProbe
+            && (self.original_map_tiles.is_none() || self.original_mission_scene.is_none())
+        {
+            self.render_mode = MapRenderMode::OriginalGraphicsMap;
+        }
     }
 
     fn original_map_tiles_ready(&self) -> bool {
@@ -339,7 +363,10 @@ impl WorldState {
     }
 
     fn clamp_original_map_camera(&mut self) {
-        if self.render_mode == MapRenderMode::OriginalMapTiles {
+        if matches!(
+            self.render_mode,
+            MapRenderMode::OriginalMapTiles | MapRenderMode::OriginalMissionSceneProbe
+        ) {
             if let Some(view) = self.original_map_view {
                 view.clamp_camera(&mut self.camera);
             }
@@ -595,6 +622,19 @@ impl WorldState {
                     );
                 }
             }
+            MapRenderMode::OriginalMissionSceneProbe => {
+                if let (Some(map_tiles), Some(graphics)) = (
+                    self.original_map_tiles.as_ref(),
+                    self.original_graphics.as_ref(),
+                ) {
+                    self.map.draw_original_map_tiles(
+                        &self.camera,
+                        map_tiles,
+                        self.original_tile_types.as_ref(),
+                        graphics,
+                    );
+                }
+            }
             MapRenderMode::OriginalGraphicsAtlas => {
                 if let Some(graphics) = self.original_graphics.as_ref() {
                     draw_original_graphics_atlas(graphics);
@@ -619,7 +659,10 @@ impl WorldState {
             }
             draw_minimap(&self.agents);
         } else {
-            let map_label = if self.render_mode == MapRenderMode::OriginalMapTiles {
+            let map_label = if matches!(
+                self.render_mode,
+                MapRenderMode::OriginalMapTiles | MapRenderMode::OriginalMissionSceneProbe
+            ) {
                 self.original_mission
                     .as_ref()
                     .map(OriginalMissionSelection::panel_label)
@@ -631,6 +674,7 @@ impl WorldState {
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
                 self.original_mission.as_ref(),
+                self.original_mission_scene.as_ref(),
                 self.original_map_view.as_ref(),
                 self.original_graphics.as_ref(),
                 self.original_map_tiles.as_ref(),
@@ -638,6 +682,7 @@ impl WorldState {
                 self.original_graphics_field(),
                 self.render_mode,
                 &map_label,
+                &self.camera,
             );
         }
 
@@ -709,6 +754,7 @@ fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
     mission_selection: Option<&OriginalMissionSelection>,
+    mission_scene: Option<&OriginalMissionScene>,
     original_map_view: Option<&OriginalMapViewState>,
     graphics: Option<&RuntimeOriginalGraphics>,
     map_tiles: Option<&OriginalMapTiles>,
@@ -716,18 +762,27 @@ fn draw_map_diagnostic_panel(
     original_graphics_field: MapCandidateField,
     mode: MapRenderMode,
     map_label: &str,
+    camera: &CameraRig,
 ) {
-    let x = screen_width() - 392.0;
+    let panel_width = map_panel_width(mode);
+    let x = screen_width() - panel_width - 22.0;
     let y = 22.0;
     let panel_height = map_panel_height(mode);
-    draw_rectangle(x, y, 370.0, panel_height, Color::new(0.0, 0.0, 0.0, 0.60));
-    draw_rectangle_lines(x, y, 370.0, panel_height, 2.0, SKYBLUE);
+    draw_rectangle(
+        x,
+        y,
+        panel_width,
+        panel_height,
+        Color::new(0.0, 0.0, 0.0, 0.60),
+    );
+    draw_rectangle_lines(x, y, panel_width, panel_height, 2.0, SKYBLUE);
     draw_text("DECODED MAP DIAGNOSTIC", x + 16.0, y + 26.0, 18.0, SKYBLUE);
     draw_text(map_label, x + 16.0, y + 50.0, 14.0, WHITE);
 
     if let Some(scene) = scene {
         let layer = match mode {
             MapRenderMode::OriginalMapTiles => "runtime original MAP tile stacks",
+            MapRenderMode::OriginalMissionSceneProbe => "runtime original mission scene model",
             MapRenderMode::OriginalGraphicsMap => "runtime original graphics candidate",
             MapRenderMode::OriginalGraphicsAtlas => "runtime original graphics atlas",
             _ => mode
@@ -891,6 +946,100 @@ fn draw_map_diagnostic_panel(
                 12.0,
                 GRAY,
             );
+        } else if mode == MapRenderMode::OriginalMissionSceneProbe {
+            if let Some(scene_model) = mission_scene {
+                draw_text(
+                    &scene_model.section_counts_panel_label(),
+                    x + 16.0,
+                    y + 120.0,
+                    12.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &scene_model.object_summary_label(),
+                    x + 16.0,
+                    y + 140.0,
+                    12.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &scene_model.draw_stage_panel_label(),
+                    x + 16.0,
+                    y + 160.0,
+                    12.0,
+                    LIGHTGRAY,
+                );
+                let visible_candidates =
+                    visible_scene_candidate_total(scene_model, camera, map_tiles, graphics);
+                draw_text(
+                    &format!(
+                        "viewport-visible candidates {}/{}",
+                        visible_candidates,
+                        scene_model.draw_queue.total_candidates()
+                    ),
+                    x + 16.0,
+                    y + 180.0,
+                    12.0,
+                    YELLOW,
+                );
+                draw_text(
+                    &scene_model.animation_support.panel_label(),
+                    x + 16.0,
+                    y + 200.0,
+                    12.0,
+                    GRAY,
+                );
+                draw_text(
+                    &scene_model.sprite_support.panel_label(),
+                    x + 16.0,
+                    y + 220.0,
+                    12.0,
+                    GRAY,
+                );
+                draw_text(
+                    &scene_model.static_render_proof.panel_label(),
+                    x + 16.0,
+                    y + 242.0,
+                    11.0,
+                    ORANGE,
+                );
+                draw_text(
+                    &scene_model.spawn_probe.panel_label(),
+                    x + 16.0,
+                    y + 266.0,
+                    11.0,
+                    GRAY,
+                );
+                draw_text(
+                    &scene_model.navigation_probe.panel_label(),
+                    x + 16.0,
+                    y + 286.0,
+                    11.0,
+                    GRAY,
+                );
+            } else {
+                draw_text(
+                    "first-mission scene model unavailable",
+                    x + 16.0,
+                    y + 126.0,
+                    13.0,
+                    GRAY,
+                );
+            }
+            draw_text(
+                "Map is rendered; objects are candidate-only unless proof passes",
+                x + 16.0,
+                y + 314.0,
+                12.0,
+                YELLOW,
+            );
+            draw_text(
+                "Gameplay/pathfinding remain on the demo tactical grid",
+                x + 16.0,
+                y + 332.0,
+                12.0,
+                GRAY,
+            );
         } else if mode == MapRenderMode::OriginalGraphicsMap {
             if let Some(graphics) = graphics {
                 draw_text(
@@ -1015,12 +1164,55 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
+        MapRenderMode::OriginalMissionSceneProbe => 350.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,
         _ => 156.0,
     }
+}
+
+fn map_panel_width(mode: MapRenderMode) -> f32 {
+    match mode {
+        MapRenderMode::OriginalMissionSceneProbe => 440.0,
+        _ => 370.0,
+    }
+}
+
+fn visible_scene_candidate_total(
+    scene: &OriginalMissionScene,
+    camera: &CameraRig,
+    map_tiles: Option<&OriginalMapTiles>,
+    graphics: Option<&RuntimeOriginalGraphics>,
+) -> usize {
+    let (Some(map_tiles), Some(graphics)) = (map_tiles, graphics) else {
+        return 0;
+    };
+    let tile_width = graphics.bank().record_width as f32;
+    let tile_height = graphics.bank().record_height as f32;
+    let margin = tile_width.max(tile_height) * camera.zoom * 2.0;
+
+    scene
+        .draw_queue
+        .entries()
+        .iter()
+        .filter(|entry| {
+            let top_left = crate::game::map::original_map_tile_world_top_left(
+                map_tiles,
+                entry.tile.tile_x as f32,
+                entry.tile.tile_y as f32,
+                entry.tile.tile_z as f32,
+                tile_width,
+                tile_height,
+            );
+            let screen = camera.world_to_screen(top_left);
+            screen.x >= -margin
+                && screen.y >= -margin
+                && screen.x <= screen_width() + margin
+                && screen.y <= screen_height() + margin
+        })
+        .count()
 }
 
 fn draw_original_graphics_atlas(graphics: &RuntimeOriginalGraphics) {
