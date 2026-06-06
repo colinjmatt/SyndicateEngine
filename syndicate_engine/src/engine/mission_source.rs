@@ -1,10 +1,11 @@
 //! Runtime mission/map selection metadata from local original assets.
 //!
-//! This module intentionally reads only the small map/palette selection surface
-//! needed to choose the runtime MAP/HBLK palette. It does not decode objectives,
-//! people, vehicles, objects, or gameplay semantics.
+//! This module intentionally reads only the map/palette selection surface needed
+//! to choose the runtime MAP/HBLK palette plus aggregate render-planning
+//! summaries for fixed GAME sections. It does not render objects, expose
+//! per-object placements, or decode gameplay semantics.
 
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use crate::engine::rnc::{RncBlock, RncError};
 
@@ -13,6 +14,15 @@ const DEFAULT_MISSION_ID: u16 = 1;
 const DEFAULT_PALETTE_ID: u8 = 2;
 const MAP_INFO_OFFSET: usize = 113_960;
 const MAP_INFO_BYTES: usize = 14;
+const PEOPLE_OFFSET: usize = 32_776;
+const CARS_OFFSET: usize = 56_328;
+const STATICS_OFFSET: usize = 59_016;
+const WEAPONS_OFFSET: usize = 71_016;
+const SFX_OFFSET: usize = 89_448;
+const SCENARIOS_OFFSET: usize = 97_128;
+
+const ON_MAP_DESC: &[u8] = &[0x04];
+const STATIC_DRAW_DESCS: &[u8] = &[0x04, 0x06, 0x07];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginalMissionSelection {
@@ -25,6 +35,26 @@ pub struct OriginalMissionSelection {
     pub palette_label: String,
     pub min_scroll_tile: (u16, u16),
     pub max_scroll_tile: (u16, u16),
+    pub render_diagnostics: OriginalMissionRenderDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionRenderDiagnostics {
+    pub sections: Vec<OriginalMissionSectionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalMissionSectionSummary {
+    pub label: String,
+    pub record_count: usize,
+    pub non_zero_records: usize,
+    pub candidate_draw_records: usize,
+    pub unique_type_values: usize,
+    pub unique_subtype_values: usize,
+    pub tile_x_range: Option<(u16, u16)>,
+    pub tile_y_range: Option<(u16, u16)>,
+    pub tile_z_range: Option<(u16, u16)>,
+    pub draw_queue_stage: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +124,7 @@ impl OriginalMissionSelection {
             .unwrap_or_else(|| format!("SYNDICAT/DATA/{}", map_file_name(map_id)));
         let palette_label = first_existing_label(root, palette_candidates(palette_id))
             .unwrap_or_else(|| format!("SYNDICAT/DATA/{}", palette_file_name(palette_id)));
+        let render_diagnostics = OriginalMissionRenderDiagnostics::from_decoded_game_bytes(decoded);
 
         Ok(Self {
             campaign_label,
@@ -105,6 +136,7 @@ impl OriginalMissionSelection {
             palette_label,
             min_scroll_tile,
             max_scroll_tile,
+            render_diagnostics,
         })
     }
 
@@ -121,6 +153,244 @@ impl OriginalMissionSelection {
             compact_asset_label(&self.map_label),
             compact_asset_label(&self.palette_label)
         )
+    }
+}
+
+impl OriginalMissionRenderDiagnostics {
+    fn from_decoded_game_bytes(decoded: &[u8]) -> Self {
+        let specs = [
+            SectionSpec {
+                label: "candidate people",
+                start: PEOPLE_OFFSET,
+                record_count: 256,
+                record_size: 92,
+                desc_offset: Some(10),
+                active_descs: ON_MAP_DESC,
+                type_offset: Some(20),
+                subtype_offset: Some(21),
+                position_offsets: Some((4, 6, 8)),
+                draw_queue_stage: Some("people"),
+            },
+            SectionSpec {
+                label: "candidate vehicles",
+                start: CARS_OFFSET,
+                record_count: 64,
+                record_size: 42,
+                desc_offset: Some(10),
+                active_descs: ON_MAP_DESC,
+                type_offset: Some(20),
+                subtype_offset: Some(21),
+                position_offsets: Some((4, 6, 8)),
+                draw_queue_stage: Some("vehicles"),
+            },
+            SectionSpec {
+                label: "candidate statics",
+                start: STATICS_OFFSET,
+                record_count: 400,
+                record_size: 30,
+                desc_offset: Some(10),
+                active_descs: STATIC_DRAW_DESCS,
+                type_offset: Some(24),
+                subtype_offset: Some(25),
+                position_offsets: Some((4, 6, 8)),
+                draw_queue_stage: Some("statics"),
+            },
+            SectionSpec {
+                label: "candidate weapons",
+                start: WEAPONS_OFFSET,
+                record_count: 512,
+                record_size: 36,
+                desc_offset: Some(10),
+                active_descs: ON_MAP_DESC,
+                type_offset: Some(24),
+                subtype_offset: Some(25),
+                position_offsets: Some((4, 6, 8)),
+                draw_queue_stage: Some("weapons"),
+            },
+            SectionSpec {
+                label: "candidate sfx",
+                start: SFX_OFFSET,
+                record_count: 256,
+                record_size: 30,
+                desc_offset: None,
+                active_descs: &[],
+                type_offset: None,
+                subtype_offset: None,
+                position_offsets: Some((4, 6, 8)),
+                draw_queue_stage: Some("sfx"),
+            },
+            SectionSpec {
+                label: "candidate scenarios",
+                start: SCENARIOS_OFFSET,
+                record_count: 2048,
+                record_size: 8,
+                desc_offset: None,
+                active_descs: &[],
+                type_offset: Some(7),
+                subtype_offset: None,
+                position_offsets: None,
+                draw_queue_stage: None,
+            },
+        ];
+
+        Self {
+            sections: specs
+                .into_iter()
+                .map(|spec| summarize_section(decoded, spec))
+                .collect(),
+        }
+    }
+
+    pub fn object_queue_summary_label(&self) -> String {
+        let (queued_records, queued_capacity, active_sections) = self.object_queue_counts();
+
+        format!(
+            "candidate object queue {queued_records}/{queued_capacity} records across {active_sections} sections; runtime-only"
+        )
+    }
+
+    pub fn object_queue_panel_label(&self) -> String {
+        let (queued_records, queued_capacity, active_sections) = self.object_queue_counts();
+        format!("object queue cand {queued_records}/{queued_capacity}; {active_sections} sections")
+    }
+
+    pub fn object_queue_order_label(&self) -> &'static str {
+        "draw order candidate: people > vehicles > weapons > statics > sfx after terrain"
+    }
+
+    pub fn object_queue_order_panel_label(&self) -> &'static str {
+        "order cand: people>vehicles>weapons>statics>sfx"
+    }
+
+    fn object_queue_counts(&self) -> (usize, usize, usize) {
+        let queued_records: usize = self
+            .sections
+            .iter()
+            .filter(|section| section.draw_queue_stage.is_some())
+            .map(|section| section.candidate_draw_records)
+            .sum();
+        let queued_capacity: usize = self
+            .sections
+            .iter()
+            .filter(|section| section.draw_queue_stage.is_some())
+            .map(|section| section.record_count)
+            .sum();
+        let active_sections = self
+            .sections
+            .iter()
+            .filter(|section| section.draw_queue_stage.is_some())
+            .filter(|section| section.candidate_draw_records > 0)
+            .count();
+
+        (queued_records, queued_capacity, active_sections)
+    }
+}
+
+struct SectionSpec {
+    label: &'static str,
+    start: usize,
+    record_count: usize,
+    record_size: usize,
+    desc_offset: Option<usize>,
+    active_descs: &'static [u8],
+    type_offset: Option<usize>,
+    subtype_offset: Option<usize>,
+    position_offsets: Option<(usize, usize, usize)>,
+    draw_queue_stage: Option<&'static str>,
+}
+
+fn summarize_section(decoded: &[u8], spec: SectionSpec) -> OriginalMissionSectionSummary {
+    let available_records = decoded
+        .get(spec.start..)
+        .map(|tail| tail.len().min(spec.record_count * spec.record_size) / spec.record_size)
+        .unwrap_or_default();
+    let mut non_zero_records = 0;
+    let mut candidate_draw_records = 0;
+    let mut type_values = BTreeSet::new();
+    let mut subtype_values = BTreeSet::new();
+    let mut tile_x_range = None;
+    let mut tile_y_range = None;
+    let mut tile_z_range = None;
+
+    for index in 0..available_records {
+        let start = spec.start + index * spec.record_size;
+        let Some(record) = decoded.get(start..start + spec.record_size) else {
+            continue;
+        };
+        let non_zero = record.iter().any(|&byte| byte != 0);
+        if !non_zero {
+            continue;
+        }
+
+        non_zero_records += 1;
+        if let Some(offset) = spec
+            .type_offset
+            .and_then(|offset| record.get(offset).copied())
+        {
+            type_values.insert(offset);
+        }
+        if let Some(offset) = spec
+            .subtype_offset
+            .and_then(|offset| record.get(offset).copied())
+        {
+            subtype_values.insert(offset);
+        }
+
+        let candidate_draw = if let Some(desc_offset) = spec.desc_offset {
+            record
+                .get(desc_offset)
+                .is_some_and(|desc| spec.active_descs.contains(desc))
+        } else if spec.type_offset.is_some() && spec.draw_queue_stage.is_none() {
+            spec.type_offset
+                .and_then(|offset| record.get(offset))
+                .is_some_and(|scenario_type| *scenario_type != 0)
+        } else {
+            non_zero
+        };
+
+        if candidate_draw {
+            candidate_draw_records += 1;
+            if let Some((x_offset, y_offset, z_offset)) = spec.position_offsets {
+                if let (Some(x), Some(y), Some(z)) = (
+                    read_record_u16(record, x_offset).map(|value| value >> 8),
+                    read_record_u16(record, y_offset).map(|value| value >> 8),
+                    read_record_u16(record, z_offset).map(|value| value / 128),
+                ) {
+                    merge_range(&mut tile_x_range, x);
+                    merge_range(&mut tile_y_range, y);
+                    merge_range(&mut tile_z_range, z);
+                }
+            }
+        }
+    }
+
+    OriginalMissionSectionSummary {
+        label: spec.label.to_string(),
+        record_count: available_records,
+        non_zero_records,
+        candidate_draw_records,
+        unique_type_values: type_values.len(),
+        unique_subtype_values: subtype_values.len(),
+        tile_x_range,
+        tile_y_range,
+        tile_z_range,
+        draw_queue_stage: spec.draw_queue_stage.map(str::to_string),
+    }
+}
+
+fn read_record_u16(record: &[u8], offset: usize) -> Option<u16> {
+    record
+        .get(offset..offset + 2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn merge_range(range: &mut Option<(u16, u16)>, value: u16) {
+    match range {
+        Some((min, max)) => {
+            *min = (*min).min(value);
+            *max = (*max).max(value);
+        }
+        None => *range = Some((value, value)),
     }
 }
 
@@ -178,7 +448,11 @@ fn decode_maybe_rnc(data: &[u8]) -> Result<Vec<u8>, RncError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAP_INFO_OFFSET, OriginalMissionSelection, map_candidates, palette_candidates};
+    use super::{
+        CARS_OFFSET, MAP_INFO_OFFSET, OriginalMissionRenderDiagnostics, OriginalMissionSelection,
+        PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET, map_candidates,
+        palette_candidates,
+    };
     use std::path::Path;
 
     #[test]
@@ -206,6 +480,12 @@ mod tests {
         assert_eq!(selection.max_scroll_tile, (50, 70));
         assert!(selection.status_label().contains("runtime metadata only"));
         assert!(!selection.status_label().contains("objective"));
+        assert!(
+            selection
+                .render_diagnostics
+                .object_queue_summary_label()
+                .contains("runtime-only")
+        );
     }
 
     #[test]
@@ -224,5 +504,69 @@ mod tests {
                 "DATADISK/DATA/HPAL02.DAT".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn summarizes_candidate_object_sections_without_asset_bytes_or_semantics() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_position_record(&mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92], 12, 34, 2);
+        decoded[PEOPLE_OFFSET + 10] = 0x04;
+        decoded[PEOPLE_OFFSET + 20] = 0x01;
+        decoded[PEOPLE_OFFSET + 21] = 0x02;
+
+        write_position_record(&mut decoded[CARS_OFFSET..CARS_OFFSET + 42], 88, 7, 1);
+        decoded[CARS_OFFSET + 10] = 0x05;
+        decoded[CARS_OFFSET + 20] = 0x02;
+
+        write_position_record(&mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30], 40, 44, 3);
+        decoded[STATICS_OFFSET + 10] = 0x06;
+        decoded[STATICS_OFFSET + 24] = 0x05;
+        decoded[STATICS_OFFSET + 25] = 0x09;
+
+        write_position_record(&mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36], 20, 21, 0);
+        decoded[WEAPONS_OFFSET + 10] = 0x04;
+        decoded[WEAPONS_OFFSET + 24] = 0x04;
+        decoded[WEAPONS_OFFSET + 25] = 0x0A;
+
+        decoded[SCENARIOS_OFFSET + 7] = 0x08;
+
+        let diagnostics = OriginalMissionRenderDiagnostics::from_decoded_game_bytes(&decoded);
+        let people = diagnostics
+            .sections
+            .iter()
+            .find(|section| section.label == "candidate people")
+            .unwrap();
+        let vehicles = diagnostics
+            .sections
+            .iter()
+            .find(|section| section.label == "candidate vehicles")
+            .unwrap();
+        let statics = diagnostics
+            .sections
+            .iter()
+            .find(|section| section.label == "candidate statics")
+            .unwrap();
+
+        assert_eq!(people.candidate_draw_records, 1);
+        assert_eq!(people.tile_x_range, Some((12, 12)));
+        assert_eq!(vehicles.candidate_draw_records, 0);
+        assert_eq!(statics.candidate_draw_records, 1);
+        assert!(
+            diagnostics
+                .object_queue_summary_label()
+                .contains("candidate object queue")
+        );
+        assert!(
+            diagnostics
+                .object_queue_order_label()
+                .contains("after terrain")
+        );
+        assert!(!diagnostics.object_queue_summary_label().contains("0x"));
+    }
+
+    fn write_position_record(record: &mut [u8], tile_x: u16, tile_y: u16, tile_z: u16) {
+        record[4..6].copy_from_slice(&(tile_x << 8).to_le_bytes());
+        record[6..8].copy_from_slice(&(tile_y << 8).to_le_bytes());
+        record[8..10].copy_from_slice(&(tile_z * 128).to_le_bytes());
     }
 }

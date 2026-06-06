@@ -14,8 +14,9 @@ use crate::{
     game::{
         agent::Agent,
         combat::{AttackResult, Combatant, resolve_attack},
-        map::{TacticalMap, original_map_tile_world_top_left},
+        map::TacticalMap,
         original_graphics::RuntimeOriginalGraphics,
+        original_map_view::OriginalMapViewState,
         pathfinding::{GridPos, find_path},
         save::{AgentSave, HostileSave, SaveGame, read_save, write_save},
         sim::SimClock,
@@ -39,6 +40,7 @@ pub struct WorldState {
     original_graphics: Option<RuntimeOriginalGraphics>,
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
+    original_map_view: Option<OriginalMapViewState>,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -100,6 +102,16 @@ impl WorldState {
         let original_map_tiles =
             OriginalMapTiles::from_root_for_map_id(assets.root_path(), selected_map_id).ok();
         let original_tile_types = OriginalTileTypes::from_root(assets.root_path()).ok();
+        let original_map_view =
+            if let (Some(map_tiles), Some(graphics)) = (&original_map_tiles, &original_graphics) {
+                Some(OriginalMapViewState::from_runtime_assets(
+                    map_tiles,
+                    graphics,
+                    original_mission.as_ref(),
+                ))
+            } else {
+                None
+            };
         let graphics_loaded = original_graphics.is_some();
         let original_map_loaded = graphics_loaded && original_map_tiles.is_some();
         let render_mode = if original_map_loaded {
@@ -110,11 +122,13 @@ impl WorldState {
             MapRenderMode::DemoCity
         };
         let camera = if original_map_loaded {
-            original_map_start_camera(
-                original_map_tiles.as_ref(),
-                original_tile_types.as_ref(),
-                original_graphics.as_ref(),
-            )
+            original_map_view
+                .as_ref()
+                .zip(original_map_tiles.as_ref())
+                .map(|(view, map_tiles)| {
+                    view.starting_camera(map_tiles, original_tile_types.as_ref())
+                })
+                .unwrap_or_default()
         } else {
             CameraRig::default()
         };
@@ -147,6 +161,7 @@ impl WorldState {
             original_graphics,
             original_map_tiles,
             original_tile_types,
+            original_map_view,
         }
     }
 
@@ -155,6 +170,7 @@ impl WorldState {
             std::process::exit(0);
         }
         self.camera.update(real_dt);
+        self.clamp_original_map_camera();
         self.update_render_controls();
         self.update_sim_controls();
         let dt = self.sim_clock.advance_dt(real_dt);
@@ -320,6 +336,14 @@ impl WorldState {
 
     fn original_map_tiles_ready(&self) -> bool {
         self.original_graphics.is_some() && self.original_map_tiles.is_some()
+    }
+
+    fn clamp_original_map_camera(&mut self) {
+        if self.render_mode == MapRenderMode::OriginalMapTiles {
+            if let Some(view) = self.original_map_view {
+                view.clamp_camera(&mut self.camera);
+            }
+        }
     }
 
     fn current_map_entry_with_index(&self) -> Option<(usize, &MapDiagnosticSceneEntry)> {
@@ -607,6 +631,7 @@ impl WorldState {
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
                 self.original_mission.as_ref(),
+                self.original_map_view.as_ref(),
                 self.original_graphics.as_ref(),
                 self.original_map_tiles.as_ref(),
                 self.original_tile_types.as_ref(),
@@ -628,34 +653,6 @@ impl WorldState {
             ),
         );
     }
-}
-
-fn original_map_start_camera(
-    map_tiles: Option<&OriginalMapTiles>,
-    tile_types: Option<&OriginalTileTypes>,
-    graphics: Option<&RuntimeOriginalGraphics>,
-) -> CameraRig {
-    let mut camera = CameraRig::default();
-    camera.zoom = 0.82;
-
-    if let (Some(map_tiles), Some(graphics), Some(region)) = (
-        map_tiles,
-        graphics,
-        map_tiles.and_then(|map_tiles| map_tiles.primary_runtime_region(tile_types)),
-    ) {
-        let (center_x, center_y) = region.center();
-        let focus = original_map_tile_world_top_left(
-            map_tiles,
-            center_x,
-            center_y,
-            1.0,
-            graphics.bank().record_width as f32,
-            graphics.bank().record_height as f32,
-        );
-        camera.offset = vec2(720.0, 430.0) - focus * camera.zoom;
-    }
-
-    camera
 }
 
 fn compact_asset_label(label: &str) -> &str {
@@ -712,6 +709,7 @@ fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
     mission_selection: Option<&OriginalMissionSelection>,
+    original_map_view: Option<&OriginalMapViewState>,
     graphics: Option<&RuntimeOriginalGraphics>,
     map_tiles: Option<&OriginalMapTiles>,
     tile_types: Option<&OriginalTileTypes>,
@@ -852,19 +850,44 @@ fn draw_map_diagnostic_panel(
                         12.0,
                         GRAY,
                     );
+                    draw_text(
+                        &selection.render_diagnostics.object_queue_panel_label(),
+                        x + 16.0,
+                        y + 196.0,
+                        12.0,
+                        GRAY,
+                    );
+                    draw_text(
+                        selection
+                            .render_diagnostics
+                            .object_queue_order_panel_label(),
+                        x + 16.0,
+                        y + 214.0,
+                        12.0,
+                        GRAY,
+                    );
+                }
+                if let Some(view) = original_map_view {
+                    draw_text(
+                        &view.scroll_summary_label(),
+                        x + 16.0,
+                        y + 232.0,
+                        12.0,
+                        GRAY,
+                    );
                 }
             }
             draw_text(
                 "Runtime MAP tile placement; local pixels only",
                 x + 16.0,
-                y + 202.0,
+                y + 256.0,
                 13.0,
                 YELLOW,
             );
             draw_text(
                 "No walkability, objects, mission, or entity semantics",
                 x + 16.0,
-                y + 220.0,
+                y + 274.0,
                 12.0,
                 GRAY,
             );
@@ -992,7 +1015,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMapTiles => 238.0,
+        MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,

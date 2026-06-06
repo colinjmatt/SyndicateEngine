@@ -13,6 +13,7 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
 - Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
 - Metadata-only mission selection reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime without decoding objectives, people, vehicles, or gameplay semantics.
+- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD also shows aggregate-only candidate object draw-queue diagnostics from local `GAME##.DAT`; these are counts/order hints only and do not render objects or switch gameplay semantics on.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
