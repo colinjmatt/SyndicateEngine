@@ -9,7 +9,7 @@ use crate::engine::{
     },
     map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     map_tiles::{OriginalMapTiles, OriginalTileTypes},
-    mission_scene::{OriginalRuntimeRouteProbe, OriginalTilePoint},
+    mission_scene::{OriginalMissionObjectCandidate, OriginalRuntimeRouteProbe, OriginalTilePoint},
     palette,
 };
 use crate::game::original_graphics::RuntimeOriginalGraphics;
@@ -544,47 +544,98 @@ impl TacticalMap {
         }
     }
 
-    pub fn draw_original_debug_route_ghost(
+    pub fn draw_original_debug_agent_marker(
         &self,
         camera: &CameraRig,
         map_tiles: &OriginalMapTiles,
         graphics: &RuntimeOriginalGraphics,
+        object_graphics: Option<&RuntimeOriginalObjectGraphics>,
+        object: Option<&OriginalMissionObjectCandidate>,
+        anchor_tile: OriginalTilePoint,
         route: &[OriginalTilePoint],
         progress: f32,
+        selected: bool,
+        label: &str,
+        animation_frame: u16,
     ) {
-        if route.is_empty() {
-            return;
-        }
         let tile_width = graphics.bank().record_width as f32;
         let tile_height = graphics.bank().record_height as f32;
-        let max_index = route.len().saturating_sub(1);
-        let clamped = progress.clamp(0.0, max_index as f32);
-        let index = clamped.floor() as usize;
-        let t = clamped - index as f32;
-        let current = route[index.min(max_index)];
-        let next = route[(index + 1).min(max_index)];
+        let tile_size = vec2(tile_width * camera.zoom, tile_height * camera.zoom);
+        let (current, next, t) = original_route_progress_sample(anchor_tile, route, progress);
         let a = original_tile_marker_screen(camera, map_tiles, current, tile_width, tile_height);
         let b = original_tile_marker_screen(camera, map_tiles, next, tile_width, tile_height);
         let p = a.lerp(b, t);
 
-        draw_circle(p.x, p.y, 6.0, Color::new(0.0, 0.9, 1.0, 0.72));
-        draw_circle_lines(p.x, p.y, 11.0, 2.0, Color::new(0.0, 0.95, 1.0, 0.88));
-        draw_line(
-            p.x - 9.0,
-            p.y,
-            p.x + 9.0,
-            p.y,
-            1.5,
-            Color::new(0.0, 0.95, 1.0, 0.70),
-        );
-        draw_line(
-            p.x,
-            p.y - 9.0,
-            p.x,
-            p.y + 9.0,
-            1.5,
-            Color::new(0.0, 0.95, 1.0, 0.70),
-        );
+        if selected {
+            for pair in route.windows(2) {
+                let from = original_tile_marker_screen(
+                    camera,
+                    map_tiles,
+                    pair[0],
+                    tile_width,
+                    tile_height,
+                );
+                let to = original_tile_marker_screen(
+                    camera,
+                    map_tiles,
+                    pair[1],
+                    tile_width,
+                    tile_height,
+                );
+                draw_line(
+                    from.x,
+                    from.y,
+                    to.x,
+                    to.y,
+                    2.0,
+                    Color::new(0.1, 0.95, 1.0, 0.72),
+                );
+            }
+        }
+
+        let mut drew_sprite = false;
+        if let (Some(object_graphics), Some(object)) = (object_graphics, object) {
+            let object_z = current.tile_z.saturating_add(1) as f32;
+            let current_top_left = camera.world_to_screen(original_map_tile_world_top_left(
+                map_tiles,
+                current.tile_x as f32,
+                current.tile_y as f32,
+                object_z,
+                tile_width,
+                tile_height,
+            ));
+            let next_top_left = camera.world_to_screen(original_map_tile_world_top_left(
+                map_tiles,
+                next.tile_x as f32,
+                next.tile_y as f32,
+                next.tile_z.saturating_add(1) as f32,
+                tile_width,
+                tile_height,
+            ));
+            drew_sprite = object_graphics.draw_mission_object(
+                object,
+                current_top_left.lerp(next_top_left, t),
+                tile_size,
+                camera.zoom,
+                animation_frame,
+            );
+        }
+
+        let color = if selected {
+            Color::new(0.0, 0.95, 1.0, 0.90)
+        } else {
+            Color::new(0.2, 0.75, 1.0, 0.54)
+        };
+        let radius = if selected { 12.0 } else { 8.0 };
+        draw_circle_lines(p.x, p.y, radius, 2.0, color);
+        if !drew_sprite {
+            draw_circle(p.x, p.y, if selected { 4.5 } else { 3.0 }, color);
+        } else if selected {
+            draw_circle_lines(p.x, p.y, 17.0, 1.5, Color::new(1.0, 1.0, 0.2, 0.86));
+        }
+        if selected {
+            draw_text(label, p.x + 10.0, p.y - 12.0, 12.0, color);
+        }
     }
 }
 
@@ -611,6 +662,25 @@ fn original_candidates_for_tile(
             })
         })
         .collect()
+}
+
+fn original_route_progress_sample(
+    anchor_tile: OriginalTilePoint,
+    route: &[OriginalTilePoint],
+    progress: f32,
+) -> (OriginalTilePoint, OriginalTilePoint, f32) {
+    if route.is_empty() {
+        return (anchor_tile, anchor_tile, 0.0);
+    }
+    let max_index = route.len().saturating_sub(1);
+    let clamped = progress.clamp(0.0, max_index as f32);
+    let index = clamped.floor() as usize;
+    let t = clamped - index as f32;
+    (
+        route[index.min(max_index)],
+        route[(index + 1).min(max_index)],
+        t,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

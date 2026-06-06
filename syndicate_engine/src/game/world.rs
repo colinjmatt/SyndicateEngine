@@ -10,8 +10,9 @@ use crate::{
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
-            OriginalMissionScene, OriginalObjectRenderDecision, OriginalRuntimeRouteProbe,
-            OriginalRuntimeRouteStatus, OriginalStaticRenderDecision, OriginalTilePoint,
+            OriginalDebugAgentSpawn, OriginalMissionScene, OriginalObjectRenderDecision,
+            OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus, OriginalStaticRenderDecision,
+            OriginalTilePoint,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -53,8 +54,8 @@ pub struct WorldState {
     original_cursor_screen: Option<Vec2>,
     original_route_probe: Option<OriginalRuntimeRouteProbe>,
     original_navigation_debug_enabled: bool,
-    original_debug_ghost_route: Vec<OriginalTilePoint>,
-    original_debug_ghost_progress: f32,
+    original_debug_agents: Vec<OriginalDebugAgent>,
+    selected_original_debug_agent: usize,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -70,6 +71,17 @@ enum MapRenderMode {
     OriginalMissionSceneProbe,
     OriginalGraphicsMap,
     OriginalGraphicsAtlas,
+}
+
+#[derive(Debug, Clone)]
+struct OriginalDebugAgent {
+    slot: u8,
+    record_index: u16,
+    tile: OriginalTilePoint,
+    route: Vec<OriginalTilePoint>,
+    route_progress: f32,
+    selected: bool,
+    sprite_ready: bool,
 }
 
 impl MapRenderMode {
@@ -171,6 +183,10 @@ impl WorldState {
         } else {
             "No contact".to_string()
         };
+        let original_debug_agents = original_mission_scene
+            .as_ref()
+            .map(original_debug_agents_from_scene)
+            .unwrap_or_default();
         Self {
             assets,
             camera,
@@ -198,8 +214,8 @@ impl WorldState {
             original_cursor_screen: None,
             original_route_probe: None,
             original_navigation_debug_enabled: false,
-            original_debug_ghost_route: Vec::new(),
-            original_debug_ghost_progress: 0.0,
+            original_debug_agents,
+            selected_original_debug_agent: 0,
         }
     }
 
@@ -214,7 +230,7 @@ impl WorldState {
         self.update_render_controls();
         self.update_sim_controls();
         self.update_original_scene_cursor_probe();
-        self.update_original_debug_ghost(real_dt);
+        self.update_original_debug_agents(real_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
@@ -222,7 +238,12 @@ impl WorldState {
             (KeyCode::Key3, 2),
             (KeyCode::Key4, 3),
         ] {
-            if is_key_pressed(key) && idx < self.agents.len() {
+            if is_key_pressed(key)
+                && self.render_mode == MapRenderMode::OriginalMissionSceneProbe
+                && self.original_navigation_debug_enabled
+            {
+                self.select_original_debug_agent(idx);
+            } else if is_key_pressed(key) && idx < self.agents.len() {
                 self.select(idx);
             }
         }
@@ -243,7 +264,9 @@ impl WorldState {
             }
         }
         if is_mouse_button_pressed(MouseButton::Left) {
-            self.try_attack_at_mouse();
+            if !self.try_select_original_debug_agent_at_cursor() {
+                self.try_attack_at_mouse();
+            }
         }
         if is_key_pressed(KeyCode::F5) {
             match self.quick_save() {
@@ -285,23 +308,22 @@ impl WorldState {
             self.render_mode = self.next_render_mode();
             if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
                 self.original_route_probe = None;
-                self.original_debug_ghost_route.clear();
-                self.original_debug_ghost_progress = 0.0;
+                self.clear_original_debug_agent_routes();
             }
             self.combat_log = format!("View mode: {}", self.render_mode.label());
         }
         if is_key_pressed(KeyCode::G) {
             if self.render_mode == MapRenderMode::OriginalMissionSceneProbe {
                 self.original_navigation_debug_enabled = !self.original_navigation_debug_enabled;
-                self.original_debug_ghost_route.clear();
-                self.original_debug_ghost_progress = 0.0;
+                self.ensure_original_debug_agents();
+                self.clear_original_debug_agent_routes();
                 let state = if self.original_navigation_debug_enabled {
                     "enabled"
                 } else {
                     "disabled"
                 };
                 self.combat_log = format!(
-                    "Original navigation debug {state}; local ghost only, demo gameplay active"
+                    "Original navigation debug {state}; selectable local markers only, demo gameplay active"
                 );
             } else {
                 self.combat_log =
@@ -461,47 +483,185 @@ impl WorldState {
             self.combat_log =
                 "Original route probe blocked: cursor is outside the candidate map".to_string();
             self.original_route_probe = None;
-            self.original_debug_ghost_route.clear();
+            self.clear_original_debug_agent_routes();
             return true;
         };
-        let Some(scene_model) = self.original_mission_scene.as_ref() else {
+        if self.original_mission_scene.is_none() {
             self.combat_log =
                 "Original route probe blocked: first-mission scene model unavailable".to_string();
             self.original_route_probe = None;
-            self.original_debug_ghost_route.clear();
+            self.clear_original_debug_agent_routes();
             return true;
-        };
-
-        let route_probe = if self.original_navigation_debug_enabled {
-            scene_model.original_route_debug_probe_to_tile(goal)
-        } else {
-            scene_model.original_route_probe_to_tile(goal)
-        };
-        self.combat_log = route_probe.panel_label();
-        if self.original_navigation_debug_enabled
-            && route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
-            && route_probe.path.len() > 1
-        {
-            self.original_debug_ghost_route = route_probe.path.clone();
-            self.original_debug_ghost_progress = 0.0;
-        } else {
-            self.original_debug_ghost_route.clear();
-            self.original_debug_ghost_progress = 0.0;
         }
-        self.original_route_probe = Some(route_probe);
+
+        if self.original_navigation_debug_enabled {
+            self.ensure_original_debug_agents();
+            let Some(start) = self.selected_original_debug_agent_tile() else {
+                self.combat_log =
+                    "Original debug movement blocked: no candidate player-agent spawn".to_string();
+                self.original_route_probe = None;
+                return true;
+            };
+            let route_probe = self
+                .original_mission_scene
+                .as_ref()
+                .expect("checked above")
+                .original_route_debug_probe_between(start, goal);
+            self.combat_log = route_probe.panel_label();
+            if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+                && route_probe.path.len() > 1
+            {
+                if let Some(agent) = self.selected_original_debug_agent_mut() {
+                    agent.assign_route(route_probe.path.clone());
+                }
+            } else if let Some(agent) = self.selected_original_debug_agent_mut() {
+                agent.clear_route();
+            }
+            self.original_route_probe = Some(route_probe);
+        } else {
+            let route_probe = self
+                .original_mission_scene
+                .as_ref()
+                .expect("checked above")
+                .original_route_probe_to_tile(goal);
+            self.combat_log = route_probe.panel_label();
+            self.clear_original_debug_agent_routes();
+            self.original_route_probe = Some(route_probe);
+        }
         true
     }
 
-    fn update_original_debug_ghost(&mut self, real_dt: f32) {
+    fn update_original_debug_agents(&mut self, real_dt: f32) {
         if !self.original_navigation_debug_enabled
             || self.render_mode != MapRenderMode::OriginalMissionSceneProbe
-            || self.original_debug_ghost_route.len() < 2
         {
             return;
         }
-        let max_progress = (self.original_debug_ghost_route.len() - 1) as f32;
-        self.original_debug_ghost_progress =
-            (self.original_debug_ghost_progress + real_dt.max(0.0) * 4.0).min(max_progress);
+        self.ensure_original_debug_agents();
+        for agent in &mut self.original_debug_agents {
+            agent.update(real_dt);
+        }
+    }
+
+    fn ensure_original_debug_agents(&mut self) {
+        if self.original_debug_agents.is_empty() {
+            if let Some(scene_model) = self.original_mission_scene.as_ref() {
+                self.original_debug_agents = original_debug_agents_from_scene(scene_model);
+            }
+        }
+        if self.selected_original_debug_agent >= self.original_debug_agents.len() {
+            self.selected_original_debug_agent = 0;
+        }
+        self.refresh_original_debug_agent_selection();
+    }
+
+    fn select_original_debug_agent(&mut self, idx: usize) -> bool {
+        self.ensure_original_debug_agents();
+        if idx >= self.original_debug_agents.len() {
+            return false;
+        }
+        self.selected_original_debug_agent = idx;
+        self.refresh_original_debug_agent_selection();
+        let agent = &self.original_debug_agents[idx];
+        self.combat_log = format!(
+            "Selected original debug agent {}; marker-only movement, demo gameplay active",
+            agent.slot + 1
+        );
+        true
+    }
+
+    fn refresh_original_debug_agent_selection(&mut self) {
+        for (idx, agent) in self.original_debug_agents.iter_mut().enumerate() {
+            agent.selected = idx == self.selected_original_debug_agent;
+        }
+    }
+
+    fn selected_original_debug_agent_tile(&self) -> Option<OriginalTilePoint> {
+        self.original_debug_agents
+            .get(self.selected_original_debug_agent)
+            .map(OriginalDebugAgent::current_tile)
+    }
+
+    fn selected_original_debug_agent_mut(&mut self) -> Option<&mut OriginalDebugAgent> {
+        self.original_debug_agents
+            .get_mut(self.selected_original_debug_agent)
+    }
+
+    fn clear_original_debug_agent_routes(&mut self) {
+        for agent in &mut self.original_debug_agents {
+            agent.clear_route();
+        }
+    }
+
+    fn try_select_original_debug_agent_at_cursor(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return false;
+        }
+        let Some(cursor) = self.original_cursor_tile else {
+            return false;
+        };
+        self.ensure_original_debug_agents();
+        let Some((idx, _)) = self
+            .original_debug_agents
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, agent)| {
+                let tile = agent.current_tile();
+                let xy = tile.tile_x.abs_diff(cursor.tile_x) + tile.tile_y.abs_diff(cursor.tile_y);
+                let z = tile.tile_z.abs_diff(cursor.tile_z);
+                (xy <= 1 && z <= 1).then_some((idx, xy + z))
+            })
+            .min_by_key(|(_, distance)| *distance)
+        else {
+            return false;
+        };
+        self.select_original_debug_agent(idx)
+    }
+
+    fn original_debug_agent_panel_label(&self) -> String {
+        if !self.original_navigation_debug_enabled {
+            return "debug agents gated by G; demo gameplay remains active".to_string();
+        }
+        let Some(agent) = self
+            .original_debug_agents
+            .get(self.selected_original_debug_agent)
+        else {
+            return "debug agents unavailable: no candidate player-agent spawn".to_string();
+        };
+        format!(
+            "debug agents {}; selected {} at {},{},{}; route nodes {}; {}; demo gameplay active",
+            self.original_debug_agents.len(),
+            agent.slot + 1,
+            agent.current_tile().tile_x,
+            agent.current_tile().tile_y,
+            agent.current_tile().tile_z,
+            agent.route.len(),
+            agent.render_label()
+        )
+    }
+
+    fn selected_agent_hud_name(&self) -> &str {
+        if self.render_mode == MapRenderMode::OriginalMissionSceneProbe
+            && self.original_navigation_debug_enabled
+            && !self.original_debug_agents.is_empty()
+        {
+            "ORIGINAL DEBUG AGENT"
+        } else {
+            self.agents[self.selected].name
+        }
+    }
+
+    fn selected_agent_hud_order(&self) -> String {
+        if self.render_mode == MapRenderMode::OriginalMissionSceneProbe
+            && self.original_navigation_debug_enabled
+            && !self.original_debug_agents.is_empty()
+        {
+            self.original_debug_agent_panel_label()
+        } else {
+            self.agents[self.selected].order_summary()
+        }
     }
 
     fn clamp_original_map_camera(&mut self) {
@@ -793,13 +953,25 @@ impl WorldState {
                         self.original_cursor_screen,
                     );
                     if self.original_navigation_debug_enabled {
-                        self.map.draw_original_debug_route_ghost(
-                            &self.camera,
-                            map_tiles,
-                            graphics,
-                            &self.original_debug_ghost_route,
-                            self.original_debug_ghost_progress,
-                        );
+                        for agent in &self.original_debug_agents {
+                            let object = agent
+                                .sprite_ready
+                                .then(|| scene_model.debug_agent_object(agent.record_index))
+                                .flatten();
+                            self.map.draw_original_debug_agent_marker(
+                                &self.camera,
+                                map_tiles,
+                                graphics,
+                                object_graphics,
+                                object,
+                                agent.route_anchor_tile(),
+                                &agent.route,
+                                agent.route_progress,
+                                agent.selected,
+                                &agent.map_label(),
+                                self.original_object_animation_frame(),
+                            );
+                        }
                     }
                 }
             }
@@ -838,6 +1010,7 @@ impl WorldState {
             } else {
                 self.current_map_panel_label()
             };
+            let original_debug_agent_label = self.original_debug_agent_panel_label();
             draw_map_diagnostic_panel(
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
@@ -855,13 +1028,15 @@ impl WorldState {
                 self.original_cursor_tile,
                 self.original_route_probe.as_ref(),
                 self.original_navigation_debug_enabled,
+                &original_debug_agent_label,
             );
         }
 
+        let hud_order = self.selected_agent_hud_order();
         ui::draw_hud(
             &self.assets,
-            self.agents[self.selected].name,
-            &self.agents[self.selected].order_summary(),
+            self.selected_agent_hud_name(),
+            &hud_order,
             &self.combat_log,
             &format!(
                 "{} | view {}",
@@ -870,6 +1045,84 @@ impl WorldState {
             ),
         );
     }
+}
+
+impl OriginalDebugAgent {
+    fn from_spawn(spawn: OriginalDebugAgentSpawn, selected: bool) -> Self {
+        Self {
+            slot: spawn.slot,
+            record_index: spawn.record_index,
+            tile: spawn.tile,
+            route: Vec::new(),
+            route_progress: 0.0,
+            selected,
+            sprite_ready: spawn.sprite_ready,
+        }
+    }
+
+    fn assign_route(&mut self, route: Vec<OriginalTilePoint>) {
+        self.route = route;
+        self.route_progress = 0.0;
+    }
+
+    fn clear_route(&mut self) {
+        self.route.clear();
+        self.route_progress = 0.0;
+    }
+
+    fn update(&mut self, real_dt: f32) {
+        if self.route.len() < 2 {
+            return;
+        }
+        let max_progress = (self.route.len() - 1) as f32;
+        self.route_progress = (self.route_progress + real_dt.max(0.0) * 4.0).min(max_progress);
+        if self.route_progress >= max_progress {
+            if let Some(last) = self.route.last().copied() {
+                self.tile = last;
+            }
+        }
+    }
+
+    fn current_tile(&self) -> OriginalTilePoint {
+        if self.route.is_empty() {
+            return self.tile;
+        }
+        let index = self
+            .route_progress
+            .floor()
+            .clamp(0.0, self.route.len().saturating_sub(1) as f32) as usize;
+        self.route[index]
+    }
+
+    fn route_anchor_tile(&self) -> OriginalTilePoint {
+        if self.route.is_empty() {
+            self.tile
+        } else {
+            self.current_tile()
+        }
+    }
+
+    fn render_label(&self) -> &'static str {
+        if self.sprite_ready {
+            "sprite proof ready"
+        } else {
+            "marker-only sprite proof blocked"
+        }
+    }
+
+    fn map_label(&self) -> String {
+        let selected = if self.selected { "selected" } else { "debug" };
+        format!("{selected} agent {}", self.slot + 1)
+    }
+}
+
+fn original_debug_agents_from_scene(scene_model: &OriginalMissionScene) -> Vec<OriginalDebugAgent> {
+    scene_model
+        .debug_agent_spawns()
+        .into_iter()
+        .enumerate()
+        .map(|(idx, spawn)| OriginalDebugAgent::from_spawn(spawn, idx == 0))
+        .collect()
 }
 
 fn compact_asset_label(label: &str) -> &str {
@@ -949,6 +1202,7 @@ fn draw_map_diagnostic_panel(
     original_cursor_tile: Option<OriginalTilePoint>,
     original_route_probe: Option<&OriginalRuntimeRouteProbe>,
     original_navigation_debug_enabled: bool,
+    original_debug_agent_label: &str,
 ) {
     let panel_width = map_panel_width(mode);
     let x = screen_width() - panel_width - 22.0;
@@ -1303,6 +1557,17 @@ fn draw_map_diagnostic_panel(
                     },
                 );
                 draw_text(
+                    original_debug_agent_label,
+                    x + 16.0,
+                    y + 444.0,
+                    10.5,
+                    if original_navigation_debug_enabled {
+                        SKYBLUE
+                    } else {
+                        GRAY
+                    },
+                );
+                draw_text(
                     &format!(
                         "nav links {}, occupied {}, blockers {}; doors {} windows {}",
                         scene_model.navigation_probe.map_object_link_cells,
@@ -1312,14 +1577,21 @@ fn draw_map_diagnostic_panel(
                         scene_model.navigation_probe.window_candidates
                     ),
                     x + 16.0,
-                    y + 444.0,
+                    y + 464.0,
                     10.5,
                     GRAY,
                 );
                 draw_text(
-                    "debug movement is a local ghost only; demo gameplay/pathfinding remain active",
+                    &scene_model.interaction_probe.panel_label(),
                     x + 16.0,
-                    y + 464.0,
+                    y + 484.0,
+                    10.5,
+                    GRAY,
+                );
+                draw_text(
+                    "debug movement is marker-only; interactions/objectives are candidate-only",
+                    x + 16.0,
+                    y + 504.0,
                     10.5,
                     GRAY,
                 );
@@ -1335,14 +1607,14 @@ fn draw_map_diagnostic_panel(
             draw_text(
                 "Map is rendered; objects are candidate-only unless proof passes",
                 x + 16.0,
-                y + 490.0,
+                y + 532.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 508.0,
+                y + 550.0,
                 12.0,
                 GRAY,
             );
@@ -1470,7 +1742,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 532.0,
+        MapRenderMode::OriginalMissionSceneProbe => 574.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
@@ -1590,5 +1862,46 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
         BlockIndexPlausibility::FitsByteRangeOnly => "byte-range only",
         BlockIndexPlausibility::OutOfRange => "out of range",
         BlockIndexPlausibility::Unknown => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OriginalDebugAgent, OriginalDebugAgentSpawn};
+    use crate::engine::mission_scene::OriginalTilePoint;
+
+    fn tile(tile_x: u16, tile_y: u16, tile_z: u16) -> OriginalTilePoint {
+        OriginalTilePoint {
+            tile_x,
+            tile_y,
+            tile_z,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        }
+    }
+
+    #[test]
+    fn debug_agent_moves_along_local_route_without_gameplay_state() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 1,
+                record_index: 7,
+                tile: tile(4, 5, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+
+        agent.assign_route(vec![tile(4, 5, 0), tile(5, 5, 0), tile(6, 6, 0)]);
+        agent.update(0.25);
+        assert_eq!(agent.current_tile(), tile(5, 5, 0));
+        assert!(agent.selected);
+        assert_eq!(agent.render_label(), "sprite proof ready");
+
+        agent.update(4.0);
+        assert_eq!(agent.current_tile(), tile(6, 6, 0));
+        agent.clear_route();
+        assert_eq!(agent.current_tile(), tile(6, 6, 0));
     }
 }

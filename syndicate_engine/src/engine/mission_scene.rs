@@ -55,6 +55,7 @@ pub struct OriginalMissionScene {
     pub navigation_probe: OriginalNavigationProbe,
     pub spatial_probe: OriginalSpatialProbe,
     pub navigation_debug_probe: OriginalNavigationDebugProbe,
+    pub interaction_probe: OriginalInteractionProbe,
     spatial_model: Option<OriginalSpatialModel>,
 }
 
@@ -245,7 +246,13 @@ pub struct OriginalNavigationProbe {
 pub struct OriginalSpatialProbe {
     pub surface_candidate_tiles: usize,
     pub same_level_route_nodes: usize,
+    pub same_level_edges_8dir: usize,
+    pub diagonal_edges: usize,
+    pub diagonal_blocked_edges: usize,
     pub slope_transition_edges: usize,
+    pub road_route_nodes: usize,
+    pub roof_route_nodes: usize,
+    pub train_route_nodes: usize,
     pub door_patch_candidate_tiles: usize,
     pub safe_walk_candidate_nodes: usize,
     pub static_blocked_tiles: usize,
@@ -263,7 +270,12 @@ pub struct OriginalSpatialProbe {
 pub struct OriginalNavigationDebugProbe {
     pub route_nodes: usize,
     pub same_level_edges: usize,
+    pub diagonal_edges: usize,
+    pub diagonal_blocked_edges: usize,
     pub slope_transition_edges: usize,
+    pub road_route_nodes: usize,
+    pub roof_route_nodes: usize,
+    pub train_route_nodes: usize,
     pub door_patch_candidate_tiles: usize,
     pub static_footprint_tiles: usize,
     pub vehicle_footprint_tiles: usize,
@@ -276,6 +288,27 @@ pub struct OriginalNavigationDebugProbe {
 pub enum OriginalNavigationDebugDecision {
     RuntimeDebugDisabled,
     RuntimeDebugReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalInteractionProbe {
+    pub door_interaction_candidates: usize,
+    pub opening_door_candidates: usize,
+    pub large_door_candidates: usize,
+    pub weapon_pickup_candidates: usize,
+    pub vehicle_entry_candidates: usize,
+    pub scenario_objective_buckets: usize,
+    pub miss_active_record_candidates: usize,
+    pub miss_objective_buckets: usize,
+    pub guardrail: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalDebugAgentSpawn {
+    pub slot: u8,
+    pub record_index: u16,
+    pub tile: OriginalTilePoint,
+    pub sprite_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,10 +398,18 @@ struct AnimationCatalog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginalMissionScriptProbe {
+    active_record_candidates: usize,
+    objective_bucket_candidates: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct OriginalSpatialModel {
     route_nodes: BTreeSet<OriginalTileKey>,
-    slope_nodes: BTreeSet<OriginalTileKey>,
+    slope_nodes: BTreeMap<OriginalTileKey, CandidateSurfaceType>,
     same_level_edges: usize,
+    diagonal_edges: usize,
+    diagonal_blocked_edges: usize,
     slope_transition_edges: BTreeSet<(OriginalTileKey, OriginalTileKey)>,
     door_patch_candidate_tiles: BTreeSet<OriginalTileKey>,
     static_blocked_tiles: BTreeSet<OriginalTileKey>,
@@ -380,6 +421,9 @@ struct OriginalSpatialModel {
     enemy_spawn_tiles: Vec<OriginalTileKey>,
     surface_candidate_tiles: usize,
     safe_walk_candidate_nodes: usize,
+    road_route_nodes: usize,
+    roof_route_nodes: usize,
+    train_route_nodes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -392,7 +436,10 @@ struct OriginalTileKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CandidateSurfaceType {
     Empty,
-    Slope,
+    SlopeSn,
+    SlopeNs,
+    SlopeEw,
+    SlopeWe,
     Ground,
     Road,
     HandrailLight,
@@ -439,6 +486,8 @@ impl OriginalMissionScene {
             Some(selection.palette_id),
         )
         .ok();
+        let mission_script_probe =
+            OriginalMissionScriptProbe::from_root(root, selection.mission_id);
         let map_tiles = OriginalMapTiles::from_root_for_map_id(root, selection.map_id).ok();
         let tile_types = OriginalTileTypes::from_root(root).ok();
         Self::from_parts(
@@ -449,6 +498,7 @@ impl OriginalMissionScene {
             sprite_support,
             animation_catalog,
             object_render_assets.as_ref(),
+            mission_script_probe.as_ref(),
             map_tiles.as_ref(),
             tile_types.as_ref(),
         )
@@ -462,6 +512,7 @@ impl OriginalMissionScene {
         sprite_support: OriginalSpriteBankSupport,
         animation_catalog: AnimationCatalog,
         object_render_assets: Option<&OriginalObjectSpriteRenderAssets>,
+        mission_script_probe: Option<&OriginalMissionScriptProbe>,
         map_tiles: Option<&OriginalMapTiles>,
         tile_types: Option<&OriginalTileTypes>,
     ) -> Self {
@@ -505,6 +556,8 @@ impl OriginalMissionScene {
         let spatial_probe = OriginalSpatialProbe::from_model(spatial_model.as_ref());
         let navigation_debug_probe =
             OriginalNavigationDebugProbe::from_model(spatial_model.as_ref());
+        let interaction_probe =
+            OriginalInteractionProbe::from_scene(decoded, &objects, mission_script_probe);
 
         Self {
             mission_label,
@@ -524,6 +577,7 @@ impl OriginalMissionScene {
             navigation_probe,
             spatial_probe,
             navigation_debug_probe,
+            interaction_probe,
             spatial_model,
         }
     }
@@ -611,7 +665,7 @@ impl OriginalMissionScene {
 
     pub fn report_row(&self) -> String {
         format!(
-            "| mission {} | map {} palette {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| mission {} | map {} palette {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             self.mission_id,
             self.map_id,
             self.palette_id,
@@ -623,6 +677,7 @@ impl OriginalMissionScene {
             self.object_render_report_label(),
             self.spatial_probe.report_label(),
             self.navigation_debug_probe.report_label(),
+            self.interaction_probe.report_label(),
             self.navigation_probe.report_label()
         )
     }
@@ -680,6 +735,42 @@ impl OriginalMissionScene {
             return OriginalRuntimeRouteProbe::unavailable();
         };
         model.route_probe_to_tile(goal, true)
+    }
+
+    pub fn original_route_debug_probe_between(
+        &self,
+        start: OriginalTilePoint,
+        goal: OriginalTilePoint,
+    ) -> OriginalRuntimeRouteProbe {
+        let Some(model) = &self.spatial_model else {
+            return OriginalRuntimeRouteProbe::unavailable();
+        };
+        model.route_probe_between(start, goal, true)
+    }
+
+    pub fn debug_agent_spawns(&self) -> Vec<OriginalDebugAgentSpawn> {
+        self.objects
+            .iter()
+            .filter(|object| is_player_agent_spawn_candidate(object))
+            .filter_map(|object| {
+                let tile = object.tile?;
+                Some(OriginalDebugAgentSpawn {
+                    slot: object.record_index.min(3) as u8,
+                    record_index: object.record_index,
+                    tile,
+                    sprite_ready: self.ped_render_proof.decision
+                        == OriginalObjectRenderDecision::RuntimeRenderReady,
+                })
+            })
+            .collect()
+    }
+
+    pub fn debug_agent_object(&self, record_index: u16) -> Option<&OriginalMissionObjectCandidate> {
+        self.objects.iter().find(|object| {
+            object.kind == OriginalMissionObjectKind::Ped
+                && object.record_index == record_index
+                && object.candidate_draw
+        })
     }
 
     pub fn first_agent_spawn_tile(&self) -> Option<OriginalTilePoint> {
@@ -1510,7 +1601,13 @@ impl OriginalSpatialProbe {
             return Self {
                 surface_candidate_tiles: 0,
                 same_level_route_nodes: 0,
+                same_level_edges_8dir: 0,
+                diagonal_edges: 0,
+                diagonal_blocked_edges: 0,
                 slope_transition_edges: 0,
+                road_route_nodes: 0,
+                roof_route_nodes: 0,
+                train_route_nodes: 0,
                 door_patch_candidate_tiles: 0,
                 safe_walk_candidate_nodes: 0,
                 static_blocked_tiles: 0,
@@ -1535,7 +1632,13 @@ impl OriginalSpatialProbe {
         Self {
             surface_candidate_tiles: model.surface_candidate_tiles,
             same_level_route_nodes: model.route_nodes.len(),
+            same_level_edges_8dir: model.same_level_edges,
+            diagonal_edges: model.diagonal_edges,
+            diagonal_blocked_edges: model.diagonal_blocked_edges,
             slope_transition_edges: model.slope_transition_edges.len(),
+            road_route_nodes: model.road_route_nodes,
+            roof_route_nodes: model.roof_route_nodes,
+            train_route_nodes: model.train_route_nodes,
             door_patch_candidate_tiles: model.door_patch_candidate_tiles.len(),
             safe_walk_candidate_nodes: model.safe_walk_candidate_nodes,
             static_blocked_tiles: model.static_blocked_tiles.len(),
@@ -1552,9 +1655,12 @@ impl OriginalSpatialProbe {
 
     pub fn panel_label(&self) -> String {
         format!(
-            "spatial graph surfaces {}, route nodes {}, slope edges {}, blockers s{} v{}, ped occ {}, agent seeds {}; gated",
+            "spatial graph surfaces {}, route nodes {}, edges8 {}, diag {}/{}, slope {}, blockers s{} v{}, ped occ {}, agent seeds {}; gated",
             self.surface_candidate_tiles,
             self.same_level_route_nodes,
+            self.same_level_edges_8dir,
+            self.diagonal_edges,
+            self.diagonal_blocked_edges,
             self.slope_transition_edges,
             self.static_blocked_tiles,
             self.vehicle_blocked_tiles,
@@ -1565,9 +1671,12 @@ impl OriginalSpatialProbe {
 
     pub fn report_label(&self) -> String {
         format!(
-            "{}; safe-walk candidates {}; door patch tiles {}; footprints static {} vehicle {}; enemy groups {}; route seeds {}; {}; runtime-only, aggregate only, not proof of navigation semantics",
+            "{}; safe-walk candidates {}; road {} roof {} train {}; door patch tiles {}; footprints static {} vehicle {}; enemy groups {}; route seeds {}; {}; runtime-only, aggregate only, not proof of navigation semantics",
             self.panel_label(),
             self.safe_walk_candidate_nodes,
+            self.road_route_nodes,
+            self.roof_route_nodes,
+            self.train_route_nodes,
             self.door_patch_candidate_tiles,
             self.static_footprint_tiles,
             self.vehicle_footprint_tiles,
@@ -1584,7 +1693,12 @@ impl OriginalNavigationDebugProbe {
             return Self {
                 route_nodes: 0,
                 same_level_edges: 0,
+                diagonal_edges: 0,
+                diagonal_blocked_edges: 0,
                 slope_transition_edges: 0,
+                road_route_nodes: 0,
+                roof_route_nodes: 0,
+                train_route_nodes: 0,
                 door_patch_candidate_tiles: 0,
                 static_footprint_tiles: 0,
                 vehicle_footprint_tiles: 0,
@@ -1597,7 +1711,12 @@ impl OriginalNavigationDebugProbe {
         Self {
             route_nodes: model.route_nodes.len(),
             same_level_edges: model.same_level_edges,
+            diagonal_edges: model.diagonal_edges,
+            diagonal_blocked_edges: model.diagonal_blocked_edges,
             slope_transition_edges: model.slope_transition_edges.len(),
+            road_route_nodes: model.road_route_nodes,
+            roof_route_nodes: model.roof_route_nodes,
+            train_route_nodes: model.train_route_nodes,
             door_patch_candidate_tiles: model.door_patch_candidate_tiles.len(),
             static_footprint_tiles: model.static_footprint_tiles.len(),
             vehicle_footprint_tiles: model.vehicle_footprint_tiles.len(),
@@ -1611,9 +1730,11 @@ impl OriginalNavigationDebugProbe {
         match self.decision {
             OriginalNavigationDebugDecision::RuntimeDebugDisabled => self.guardrail.to_string(),
             OriginalNavigationDebugDecision::RuntimeDebugReady => format!(
-                "nav debug ready: nodes {}, edges same {} slope {}, snap {}; debug-only",
+                "nav debug ready: nodes {}, edges8 {} diag {}/{}, slope {}, snap {}; debug-only",
                 self.route_nodes,
                 self.same_level_edges,
+                self.diagonal_edges,
+                self.diagonal_blocked_edges,
                 self.slope_transition_edges,
                 self.target_snap_radius
             ),
@@ -1622,11 +1743,94 @@ impl OriginalNavigationDebugProbe {
 
     pub fn report_label(&self) -> String {
         format!(
-            "{}; door patch tiles {}; footprints static {} vehicle {}; {}; runtime-only aggregate, not proof of playable navigation",
+            "{}; surfaces road {} roof {} train {}; door patch tiles {}; footprints static {} vehicle {}; {}; runtime-only aggregate, not proof of playable navigation",
             self.panel_label(),
+            self.road_route_nodes,
+            self.roof_route_nodes,
+            self.train_route_nodes,
             self.door_patch_candidate_tiles,
             self.static_footprint_tiles,
             self.vehicle_footprint_tiles,
+            self.guardrail
+        )
+    }
+}
+
+impl OriginalInteractionProbe {
+    fn from_scene(
+        decoded: &[u8],
+        objects: &[OriginalMissionObjectCandidate],
+        mission_script_probe: Option<&OriginalMissionScriptProbe>,
+    ) -> Self {
+        let door_interaction_candidates = objects
+            .iter()
+            .filter(|object| object.candidate_draw && is_door_static_candidate(object))
+            .count();
+        let opening_door_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw
+                    && object.kind == OriginalMissionObjectKind::Static
+                    && matches!(object.subtype_value, Some(0x0e | 0x0f))
+            })
+            .count();
+        let large_door_candidates = objects
+            .iter()
+            .filter(|object| object.candidate_draw && is_large_door_static_candidate(object))
+            .count();
+        let weapon_pickup_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw && object.kind == OriginalMissionObjectKind::Weapon
+            })
+            .count();
+        let vehicle_entry_candidates = objects
+            .iter()
+            .filter(|object| {
+                object.candidate_draw && object.kind == OriginalMissionObjectKind::Vehicle
+            })
+            .count();
+        let scenario_objective_buckets = scenario_records(decoded)
+            .filter(|record| matches!(record.get(7).copied(), Some(0x01 | 0x02 | 0x08)))
+            .count();
+        let miss_objective_buckets = mission_script_probe
+            .map(|probe| probe.objective_bucket_candidates)
+            .unwrap_or_default();
+        let miss_active_record_candidates = mission_script_probe
+            .map(|probe| probe.active_record_candidates)
+            .unwrap_or_default();
+
+        Self {
+            door_interaction_candidates,
+            opening_door_candidates,
+            large_door_candidates,
+            weapon_pickup_candidates,
+            vehicle_entry_candidates,
+            scenario_objective_buckets,
+            miss_active_record_candidates,
+            miss_objective_buckets,
+            guardrail: "interaction buckets are candidate-only; no objective, pickup, door, AI, or vehicle semantics are active",
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "interactions doors {} opening {} large {}; pickups {} vehicles {}; objectives GAME {} MISS {}/{}; candidate-only",
+            self.door_interaction_candidates,
+            self.opening_door_candidates,
+            self.large_door_candidates,
+            self.weapon_pickup_candidates,
+            self.vehicle_entry_candidates,
+            self.scenario_objective_buckets,
+            self.miss_active_record_candidates,
+            self.miss_objective_buckets
+        )
+    }
+
+    pub fn report_label(&self) -> String {
+        format!(
+            "{}; {}; runtime-only aggregate, not proof of interaction or mission semantics",
+            self.panel_label(),
             self.guardrail
         )
     }
@@ -1784,7 +1988,7 @@ impl OriginalSpatialModel {
     ) -> Self {
         let mut surface_candidate_tiles = 0;
         let mut route_nodes = BTreeSet::new();
-        let mut slope_nodes = BTreeSet::new();
+        let mut slope_nodes = BTreeMap::new();
         let mut safe_walk_candidate_nodes = 0;
 
         for z in 0..map_tiles.height {
@@ -1807,7 +2011,7 @@ impl OriginalSpatialModel {
                         };
                         route_nodes.insert(key);
                         if tile.is_slope_candidate() {
-                            slope_nodes.insert(key);
+                            slope_nodes.insert(key, tile);
                         }
                         if tile.is_safe_walk_candidate() {
                             safe_walk_candidate_nodes += 1;
@@ -1878,15 +2082,37 @@ impl OriginalSpatialModel {
         route_nodes.retain(|key| {
             !static_blocked_tiles.contains(key) && !vehicle_blocked_tiles.contains(key)
         });
-        slope_nodes.retain(|key| route_nodes.contains(key));
+        slope_nodes.retain(|key, _| route_nodes.contains(key));
 
         let same_level_edges = count_same_level_edges(&route_nodes);
+        let diagonal_edges = count_diagonal_edges(&route_nodes);
+        let diagonal_blocked_edges = count_diagonal_blocked_edges(&route_nodes);
         let slope_transition_edges = build_slope_transition_edges(&route_nodes, &slope_nodes);
+        let road_route_nodes = count_surface_nodes(
+            map_tiles,
+            tile_types,
+            &route_nodes,
+            CandidateSurfaceType::is_road_candidate,
+        );
+        let roof_route_nodes = count_surface_nodes(
+            map_tiles,
+            tile_types,
+            &route_nodes,
+            CandidateSurfaceType::is_roof_candidate,
+        );
+        let train_route_nodes = count_surface_nodes(
+            map_tiles,
+            tile_types,
+            &route_nodes,
+            CandidateSurfaceType::is_train_candidate,
+        );
 
         Self {
             route_nodes,
             slope_nodes,
             same_level_edges,
+            diagonal_edges,
+            diagonal_blocked_edges,
             slope_transition_edges,
             door_patch_candidate_tiles,
             static_blocked_tiles,
@@ -1898,6 +2124,9 @@ impl OriginalSpatialModel {
             enemy_spawn_tiles,
             surface_candidate_tiles,
             safe_walk_candidate_nodes,
+            road_route_nodes,
+            roof_route_nodes,
+            train_route_nodes,
         }
     }
 
@@ -1927,7 +2156,29 @@ impl OriginalSpatialModel {
         else {
             return OriginalRuntimeRouteProbe::missing_start(goal);
         };
+        self.route_probe_from_start(start, goal, debug_enabled)
+    }
 
+    fn route_probe_between(
+        &self,
+        start: OriginalTilePoint,
+        goal: OriginalTilePoint,
+        debug_enabled: bool,
+    ) -> OriginalRuntimeRouteProbe {
+        let Some(start) =
+            self.nearest_route_node_same_z(start.key(), start.tile_z, ROUTE_PROBE_SEARCH_RADIUS)
+        else {
+            return OriginalRuntimeRouteProbe::missing_start(goal);
+        };
+        self.route_probe_from_start(start, goal, debug_enabled)
+    }
+
+    fn route_probe_from_start(
+        &self,
+        start: OriginalTileKey,
+        goal: OriginalTilePoint,
+        debug_enabled: bool,
+    ) -> OriginalRuntimeRouteProbe {
         let goal_key = goal.key();
         let search_radius = if debug_enabled {
             ROUTE_PROBE_DEBUG_SEARCH_RADIUS
@@ -2095,8 +2346,8 @@ impl OriginalSpatialModel {
             if node == goal {
                 break;
             }
-            for neighbor in node.cardinal_neighbors() {
-                if !self.route_nodes.contains(&neighbor) || previous.contains_key(&neighbor) {
+            for neighbor in same_level_neighbors(&self.route_nodes, node) {
+                if previous.contains_key(&neighbor) {
                     continue;
                 }
                 previous.insert(neighbor, Some(node));
@@ -2170,12 +2421,7 @@ impl OriginalSpatialModel {
     }
 
     fn debug_neighbors(&self, node: OriginalTileKey) -> Vec<OriginalTileKey> {
-        let mut neighbors = Vec::with_capacity(8);
-        for neighbor in node.cardinal_neighbors() {
-            if self.route_nodes.contains(&neighbor) {
-                neighbors.push(neighbor);
-            }
-        }
+        let mut neighbors = same_level_neighbors(&self.route_nodes, node);
         for neighbor in node.height_cardinal_neighbors() {
             let edge = ordered_edge(node, neighbor);
             if self.slope_transition_edges.contains(&edge) {
@@ -2210,12 +2456,34 @@ impl OriginalTileKey {
         self.manhattan_xy(other) + self.z.abs_diff(other.z)
     }
 
+    fn offset(self, dx: i16, dy: i16, dz: i16) -> Option<OriginalTileKey> {
+        let x = (self.x as i32 + dx as i32).try_into().ok()?;
+        let y = (self.y as i32 + dy as i32).try_into().ok()?;
+        let z = (self.z as i32 + dz as i32).try_into().ok()?;
+        Some(OriginalTileKey { x, y, z })
+    }
+
     fn cardinal_neighbors(self) -> impl Iterator<Item = OriginalTileKey> {
         [
             self.x.checked_sub(1).map(|x| OriginalTileKey { x, ..self }),
             self.x.checked_add(1).map(|x| OriginalTileKey { x, ..self }),
             self.y.checked_sub(1).map(|y| OriginalTileKey { y, ..self }),
             self.y.checked_add(1).map(|y| OriginalTileKey { y, ..self }),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    fn diagonal_neighbors(self) -> impl Iterator<Item = OriginalTileKey> {
+        let xm = self.x.checked_sub(1);
+        let xp = self.x.checked_add(1);
+        let ym = self.y.checked_sub(1);
+        let yp = self.y.checked_add(1);
+        [
+            xm.zip(ym).map(|(x, y)| OriginalTileKey { x, y, ..self }),
+            xp.zip(ym).map(|(x, y)| OriginalTileKey { x, y, ..self }),
+            xp.zip(yp).map(|(x, y)| OriginalTileKey { x, y, ..self }),
+            xm.zip(yp).map(|(x, y)| OriginalTileKey { x, y, ..self }),
         ]
         .into_iter()
         .flatten()
@@ -2281,7 +2549,10 @@ impl CandidateSurfaceType {
 
         match tile_type {
             0x00 => Self::Empty,
-            0x01..=0x04 => Self::Slope,
+            0x01 => Self::SlopeSn,
+            0x02 => Self::SlopeNs,
+            0x03 => Self::SlopeEw,
+            0x04 => Self::SlopeWe,
             0x05 => Self::Ground,
             0x0a => Self::NonWalkable,
             0x06..=0x09 | 0x0b | 0x0f => Self::Road,
@@ -2296,7 +2567,10 @@ impl CandidateSurfaceType {
     fn is_surface_candidate(self) -> bool {
         matches!(
             self,
-            Self::Slope
+            Self::SlopeSn
+                | Self::SlopeNs
+                | Self::SlopeEw
+                | Self::SlopeWe
                 | Self::Ground
                 | Self::Road
                 | Self::Roof
@@ -2314,37 +2588,181 @@ impl CandidateSurfaceType {
     }
 
     fn is_slope_candidate(self) -> bool {
-        matches!(self, Self::Slope)
+        matches!(
+            self,
+            Self::SlopeSn | Self::SlopeNs | Self::SlopeEw | Self::SlopeWe
+        )
+    }
+
+    fn is_road_candidate(self) -> bool {
+        matches!(self, Self::Road | Self::RoadPedCross)
+    }
+
+    fn is_roof_candidate(self) -> bool {
+        matches!(self, Self::Roof)
+    }
+
+    fn is_train_candidate(self) -> bool {
+        matches!(self, Self::TrainPlatform)
+    }
+
+    fn upper_step_delta(self) -> Option<(i16, i16)> {
+        match self {
+            Self::SlopeSn => Some((0, -1)),
+            Self::SlopeNs => Some((0, 1)),
+            Self::SlopeEw => Some((1, 0)),
+            Self::SlopeWe => Some((-1, 0)),
+            _ => None,
+        }
+    }
+}
+
+impl OriginalMissionScriptProbe {
+    fn from_root(root: &Path, mission_id: u16) -> Option<Self> {
+        for relative in data_file_candidates(&format!("MISS{mission_id:02}.DAT")) {
+            let path = root.join(relative);
+            let Some(decoded) = read_original_asset_bytes(&path) else {
+                continue;
+            };
+            return Some(Self::from_bytes(&decoded));
+        }
+        None
+    }
+
+    fn from_bytes(decoded: &[u8]) -> Self {
+        let active_record_candidates = decoded
+            .chunks_exact(8)
+            .filter(|record| record.iter().any(|byte| *byte != 0))
+            .count();
+        let objective_bucket_candidates = decoded
+            .chunks_exact(8)
+            .filter(|record| record.iter().filter(|byte| **byte != 0).count() >= 2)
+            .count();
+        Self {
+            active_record_candidates,
+            objective_bucket_candidates,
+        }
     }
 }
 
 fn count_same_level_edges(route_nodes: &BTreeSet<OriginalTileKey>) -> usize {
     route_nodes
         .iter()
-        .map(|node| {
-            node.cardinal_neighbors()
-                .filter(|neighbor| route_nodes.contains(neighbor))
-                .count()
+        .flat_map(|node| {
+            same_level_neighbors(route_nodes, *node)
+                .into_iter()
+                .map(|neighbor| ordered_edge(*node, neighbor))
         })
-        .sum::<usize>()
-        / 2
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn count_diagonal_edges(route_nodes: &BTreeSet<OriginalTileKey>) -> usize {
+    route_nodes
+        .iter()
+        .flat_map(|node| {
+            node.diagonal_neighbors()
+                .filter(|neighbor| {
+                    route_nodes.contains(neighbor)
+                        && diagonal_corners_clear(route_nodes, *node, *neighbor)
+                })
+                .map(|neighbor| ordered_edge(*node, neighbor))
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn count_diagonal_blocked_edges(route_nodes: &BTreeSet<OriginalTileKey>) -> usize {
+    route_nodes
+        .iter()
+        .flat_map(|node| {
+            node.diagonal_neighbors()
+                .filter(|neighbor| {
+                    route_nodes.contains(neighbor)
+                        && !diagonal_corners_clear(route_nodes, *node, *neighbor)
+                })
+                .map(|neighbor| ordered_edge(*node, neighbor))
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
 }
 
 fn build_slope_transition_edges(
     route_nodes: &BTreeSet<OriginalTileKey>,
-    slope_nodes: &BTreeSet<OriginalTileKey>,
+    slope_nodes: &BTreeMap<OriginalTileKey, CandidateSurfaceType>,
 ) -> BTreeSet<(OriginalTileKey, OriginalTileKey)> {
     let mut edges = BTreeSet::new();
-    for node in route_nodes {
-        for neighbor in node.height_cardinal_neighbors() {
-            if route_nodes.contains(&neighbor)
-                && (slope_nodes.contains(node) || slope_nodes.contains(&neighbor))
-            {
-                edges.insert(ordered_edge(*node, neighbor));
+    for (slope_node, slope_type) in slope_nodes {
+        let Some((dx, dy)) = slope_type.upper_step_delta() else {
+            continue;
+        };
+        if let Some(upper) = slope_node.offset(dx, dy, 1) {
+            if route_nodes.contains(&upper) {
+                edges.insert(ordered_edge(*slope_node, upper));
+            }
+        }
+        if let Some(lower) = slope_node.offset(-dx, -dy, -1) {
+            if route_nodes.contains(&lower) {
+                edges.insert(ordered_edge(*slope_node, lower));
             }
         }
     }
     edges
+}
+
+fn same_level_neighbors(
+    route_nodes: &BTreeSet<OriginalTileKey>,
+    node: OriginalTileKey,
+) -> Vec<OriginalTileKey> {
+    let mut neighbors = node
+        .cardinal_neighbors()
+        .filter(|neighbor| route_nodes.contains(neighbor))
+        .collect::<Vec<_>>();
+    neighbors.extend(node.diagonal_neighbors().filter(|neighbor| {
+        route_nodes.contains(neighbor) && diagonal_corners_clear(route_nodes, node, *neighbor)
+    }));
+    neighbors
+}
+
+fn diagonal_corners_clear(
+    route_nodes: &BTreeSet<OriginalTileKey>,
+    from: OriginalTileKey,
+    to: OriginalTileKey,
+) -> bool {
+    if from.z != to.z || from.x == to.x || from.y == to.y {
+        return true;
+    }
+    let corner_x = OriginalTileKey {
+        x: to.x,
+        y: from.y,
+        z: from.z,
+    };
+    let corner_y = OriginalTileKey {
+        x: from.x,
+        y: to.y,
+        z: from.z,
+    };
+    route_nodes.contains(&corner_x) && route_nodes.contains(&corner_y)
+}
+
+fn count_surface_nodes(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    route_nodes: &BTreeSet<OriginalTileKey>,
+    predicate: fn(CandidateSurfaceType) -> bool,
+) -> usize {
+    route_nodes
+        .iter()
+        .filter(|node| {
+            predicate(surface_type_at(
+                map_tiles,
+                tile_types,
+                node.x as usize,
+                node.y as usize,
+                node.z as usize,
+            ))
+        })
+        .count()
 }
 
 fn ordered_edge(a: OriginalTileKey, b: OriginalTileKey) -> (OriginalTileKey, OriginalTileKey) {
@@ -2959,9 +3377,10 @@ mod tests {
 
     use super::{
         AnimationCatalog, CARS_OFFSET, OriginalAnimationCatalogSupport, OriginalDrawStage,
-        OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionSelection,
-        OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET,
-        collect_candidate_objects, format_mission_scene_report_rows, summarize_sprite_tab_bank,
+        OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
+        OriginalMissionSelection, OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET,
+        STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
+        format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
     use crate::engine::{
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
@@ -3119,6 +3538,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert_eq!(scene.draw_queue.total_candidates(), 3);
@@ -3198,6 +3618,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert_eq!(scene.static_render_proof.candidate_count, 1);
@@ -3244,6 +3665,7 @@ mod tests {
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
             Some(&render_assets),
+            None,
             None,
             None,
         );
@@ -3312,6 +3734,7 @@ mod tests {
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
             Some(&render_assets),
+            None,
             None,
             None,
         );
@@ -3406,6 +3829,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert_eq!(scene.spawn_probe.agent_candidates, 1);
@@ -3483,6 +3907,7 @@ mod tests {
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
             None,
+            None,
             Some(&map_tiles),
             Some(&tile_types),
         );
@@ -3543,6 +3968,7 @@ mod tests {
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
             None,
+            None,
             Some(&map_tiles),
             Some(&tile_types),
         );
@@ -3580,7 +4006,7 @@ mod tests {
 
         let stacks = vec![[2, 0], [0, 1], [0, 1]];
         let map_tiles = synthetic_map_tiles_with_stacks(3, 1, 2, &stacks);
-        let tile_types = synthetic_tile_types(&[(1, 0x05), (2, 0x01)]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05), (2, 0x03)]);
         let scene = OriginalMissionScene::from_parts(
             &selection(),
             "synthetic/GAME01.DAT".to_string(),
@@ -3588,6 +4014,7 @@ mod tests {
             collect_candidate_objects(&decoded),
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
+            None,
             None,
             Some(&map_tiles),
             Some(&tile_types),
@@ -3682,6 +4109,7 @@ mod tests {
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
             None,
+            None,
             Some(&map_tiles),
             Some(&tile_types),
         );
@@ -3708,6 +4136,210 @@ mod tests {
                 .contains("00 00")
         );
         assert!(!scene.navigation_debug_probe.report_label().contains("0x"));
+    }
+
+    #[test]
+    fn eight_direction_routes_respect_diagonal_corner_blockers() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 28] = 0x02;
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x16;
+        write_record(
+            &mut decoded[STATICS_OFFSET + 30..STATICS_OFFSET + 60],
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 30 + 25] = 0x16;
+
+        let map_tiles = synthetic_map_tiles(2, 2, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+
+        assert_eq!(scene.spatial_probe.diagonal_edges, 0);
+        assert!(scene.spatial_probe.diagonal_blocked_edges >= 1);
+        let route = scene.original_route_debug_probe_between(
+            super::OriginalTilePoint {
+                tile_x: 0,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+            super::OriginalTilePoint {
+                tile_x: 1,
+                tile_y: 1,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+        );
+        assert_eq!(
+            route.status,
+            super::OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+    }
+
+    #[test]
+    fn slope_orientation_blocks_wrong_direction_height_edges() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 28] = 0x02;
+
+        let stacks = vec![[2, 0], [0, 1]];
+        let map_tiles = synthetic_map_tiles_with_stacks(2, 1, 2, &stacks);
+        let tile_types = synthetic_tile_types(&[(1, 0x05), (2, 0x01)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+
+        let route = scene.original_route_debug_probe_to_tile(super::OriginalTilePoint {
+            tile_x: 1,
+            tile_y: 0,
+            tile_z: 1,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        });
+
+        assert_eq!(
+            route.status,
+            super::OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(scene.navigation_debug_probe.slope_transition_edges, 0);
+    }
+
+    #[test]
+    fn interaction_probe_summarizes_candidate_buckets_without_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            2,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x0e;
+        write_record(
+            &mut decoded[STATICS_OFFSET + 30..STATICS_OFFSET + 60],
+            3,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 30 + 25] = 0x26;
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            4,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36],
+            5,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[SCENARIOS_OFFSET + 7] = 0x02;
+        let miss_probe = OriginalMissionScriptProbe::from_bytes(&[1, 2, 0, 0, 0, 0, 0, 0]);
+
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            Some(&miss_probe),
+            None,
+            None,
+        );
+
+        assert_eq!(scene.interaction_probe.door_interaction_candidates, 2);
+        assert_eq!(scene.interaction_probe.opening_door_candidates, 1);
+        assert_eq!(scene.interaction_probe.large_door_candidates, 1);
+        assert_eq!(scene.interaction_probe.weapon_pickup_candidates, 1);
+        assert_eq!(scene.interaction_probe.vehicle_entry_candidates, 1);
+        assert_eq!(scene.interaction_probe.scenario_objective_buckets, 1);
+        assert_eq!(scene.interaction_probe.miss_active_record_candidates, 1);
+        assert_eq!(scene.interaction_probe.miss_objective_buckets, 1);
+        assert!(
+            scene
+                .interaction_probe
+                .report_label()
+                .contains("candidate-only")
+        );
+        assert!(!scene.interaction_probe.report_label().contains("00 00"));
+        assert!(!scene.interaction_probe.report_label().contains("0x"));
     }
 
     #[test]
