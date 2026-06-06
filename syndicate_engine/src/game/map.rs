@@ -637,6 +637,32 @@ impl TacticalMap {
             draw_text(label, p.x + 10.0, p.y - 12.0, 12.0, color);
         }
     }
+
+    pub fn draw_original_debug_interaction_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        target_tile: Option<OriginalTilePoint>,
+        label: &str,
+        ready: bool,
+    ) {
+        let Some(target_tile) = target_tile else {
+            return;
+        };
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let p =
+            original_tile_marker_screen(camera, map_tiles, target_tile, tile_width, tile_height);
+        let color = if ready {
+            Color::new(0.2, 1.0, 0.3, 0.86)
+        } else {
+            Color::new(1.0, 0.75, 0.1, 0.86)
+        };
+        draw_circle_lines(p.x, p.y, 15.0, 2.5, color);
+        draw_circle_lines(p.x, p.y, 21.0, 1.5, color);
+        draw_text(label, p.x + 12.0, p.y + 16.0, 12.0, color);
+    }
 }
 
 fn original_candidates_for_tile(

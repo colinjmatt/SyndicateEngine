@@ -10,9 +10,11 @@ use crate::{
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
-            OriginalDebugAgentSpawn, OriginalDebugInteractionProbe, OriginalMissionObjectCandidate,
-            OriginalMissionScene, OriginalObjectRenderDecision, OriginalRuntimeRouteProbe,
-            OriginalRuntimeRouteStatus, OriginalStaticRenderDecision, OriginalTilePoint,
+            OriginalDebugAgentSpawn, OriginalDebugInteractionIntent,
+            OriginalDebugInteractionIntentStatus, OriginalDebugInteractionProbe,
+            OriginalMissionObjectCandidate, OriginalMissionScene, OriginalObjectRenderDecision,
+            OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus, OriginalStaticRenderDecision,
+            OriginalTilePoint,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -85,6 +87,7 @@ struct OriginalDebugAgent {
     sprite_ready: bool,
     route_status: OriginalDebugAgentRouteStatus,
     direction: OriginalDebugAgentDirection,
+    interaction_intent: Option<OriginalDebugInteractionIntent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,11 +566,13 @@ impl WorldState {
                 {
                     ready += 1;
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                        agent.clear_interaction_intent();
                         agent.assign_route(route_probe.path);
                     }
                 } else {
                     blocked += 1;
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                        agent.clear_interaction_intent();
                         agent.block_route();
                     }
                 }
@@ -606,16 +611,74 @@ impl WorldState {
             return true;
         }
         self.ensure_original_debug_agents();
-        let agent_tile = self.selected_original_debug_agent_tile();
+        let selected_agents = self
+            .selected_original_debug_agent_indices()
+            .into_iter()
+            .filter_map(|idx| {
+                self.original_debug_agents
+                    .get(idx)
+                    .map(|agent| (idx, agent.current_tile()))
+            })
+            .collect::<Vec<_>>();
+        let agent_tile = selected_agents
+            .iter()
+            .find(|(idx, _)| *idx == self.selected_original_debug_agent)
+            .or_else(|| selected_agents.first())
+            .map(|(_, tile)| *tile);
         let target_tile = self.original_cursor_tile;
-        let scene_model = self.original_mission_scene.as_ref().expect("checked above");
-        let probe = scene_model.original_debug_interaction_probe_between(
-            agent_tile,
-            target_tile,
-            self.original_navigation_debug_enabled,
+        let (probe, intents) = {
+            let scene_model = self.original_mission_scene.as_ref().expect("checked above");
+            let probe = scene_model.original_debug_interaction_probe_between(
+                agent_tile,
+                target_tile,
+                self.original_navigation_debug_enabled,
+            );
+            let intents = selected_agents
+                .iter()
+                .map(|(idx, start)| {
+                    (
+                        *idx,
+                        scene_model.original_debug_interaction_intent_between(
+                            Some(*start),
+                            target_tile,
+                            self.original_navigation_debug_enabled,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (probe, intents)
+        };
+        self.original_interaction_probe = Some(probe.clone());
+        if intents.is_empty() {
+            self.combat_log = probe.panel_label();
+            return true;
+        }
+
+        let mut queued = 0;
+        let mut ready = 0;
+        let mut blocked = 0;
+        let mut primary_label = None;
+        for (idx, intent) in intents {
+            if primary_label.is_none() || idx == self.selected_original_debug_agent {
+                primary_label = Some(intent.panel_label());
+            }
+            match intent.status {
+                OriginalDebugInteractionIntentStatus::RouteQueued => queued += 1,
+                OriginalDebugInteractionIntentStatus::ReadyAtTarget => ready += 1,
+                _ => blocked += 1,
+            }
+            if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                agent.assign_interaction_intent(intent);
+            }
+        }
+        self.combat_log = format!(
+            "Original debug interaction intents: selected {}, queued {}, ready {}, blocked {}; {}; demo gameplay active",
+            queued + ready + blocked,
+            queued,
+            ready,
+            blocked,
+            primary_label.unwrap_or_else(|| probe.panel_label())
         );
-        self.combat_log = probe.panel_label();
-        self.original_interaction_probe = Some(probe);
         true
     }
 
@@ -699,12 +762,6 @@ impl WorldState {
         }
     }
 
-    fn selected_original_debug_agent_tile(&self) -> Option<OriginalTilePoint> {
-        self.original_debug_agents
-            .get(self.selected_original_debug_agent)
-            .map(OriginalDebugAgent::current_tile)
-    }
-
     fn selected_original_debug_agent_indices(&self) -> Vec<usize> {
         self.original_debug_agents
             .iter()
@@ -716,6 +773,7 @@ impl WorldState {
     fn clear_original_debug_agent_routes(&mut self) {
         for agent in &mut self.original_debug_agents {
             agent.clear_route();
+            agent.clear_interaction_intent();
         }
     }
 
@@ -771,8 +829,31 @@ impl WorldState {
             .iter()
             .filter(|agent| agent.route_status == OriginalDebugAgentRouteStatus::Blocked)
             .count();
+        let interaction_queued = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| {
+                agent.interaction_intent.as_ref().is_some_and(|intent| {
+                    intent.status == OriginalDebugInteractionIntentStatus::RouteQueued
+                })
+            })
+            .count();
+        let interaction_ready = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| {
+                agent.interaction_intent.as_ref().is_some_and(|intent| {
+                    intent.status == OriginalDebugInteractionIntentStatus::ReadyAtTarget
+                })
+            })
+            .count();
+        let primary_intent = agent
+            .interaction_intent
+            .as_ref()
+            .map(|intent| format!("{} {}", intent.focus.label(), intent.status.label()))
+            .unwrap_or_else(|| "none".to_string());
         format!(
-            "debug agents {}; selected set {} primary {} at {},{},{}; route nodes {}; moving {} blocked {}; {}; demo gameplay active",
+            "debug agents {}; selected set {} primary {} at {},{},{}; route nodes {}; moving {} blocked {}; intents q/r {}/{} primary {}; {}; demo gameplay active",
             self.original_debug_agents.len(),
             selected_count,
             agent.slot + 1,
@@ -782,8 +863,22 @@ impl WorldState {
             agent.route.len(),
             moving,
             blocked,
+            interaction_queued,
+            interaction_ready,
+            primary_intent,
             agent.render_label()
         )
+    }
+
+    fn primary_original_debug_interaction_intent(&self) -> Option<&OriginalDebugInteractionIntent> {
+        self.original_debug_agents
+            .get(self.selected_original_debug_agent)
+            .and_then(|agent| agent.interaction_intent.as_ref())
+            .or_else(|| {
+                self.original_debug_agents
+                    .iter()
+                    .find_map(|agent| agent.interaction_intent.as_ref())
+            })
     }
 
     fn selected_agent_hud_name(&self) -> &str {
@@ -1096,6 +1191,16 @@ impl WorldState {
                         self.original_route_probe.as_ref(),
                         self.original_cursor_screen,
                     );
+                    if let Some(intent) = self.primary_original_debug_interaction_intent() {
+                        self.map.draw_original_debug_interaction_overlay(
+                            &self.camera,
+                            map_tiles,
+                            graphics,
+                            intent.target_tile,
+                            intent.focus.label(),
+                            intent.status == OriginalDebugInteractionIntentStatus::ReadyAtTarget,
+                        );
+                    }
                     if self.original_navigation_debug_enabled {
                         for agent in &self.original_debug_agents {
                             let object = agent
@@ -1205,6 +1310,7 @@ impl OriginalDebugAgent {
             sprite_ready: spawn.sprite_ready,
             route_status: OriginalDebugAgentRouteStatus::Idle,
             direction: OriginalDebugAgentDirection::South,
+            interaction_intent: None,
         }
     }
 
@@ -1229,6 +1335,29 @@ impl OriginalDebugAgent {
         self.route_status = OriginalDebugAgentRouteStatus::Blocked;
     }
 
+    fn clear_interaction_intent(&mut self) {
+        self.interaction_intent = None;
+    }
+
+    fn assign_interaction_intent(&mut self, intent: OriginalDebugInteractionIntent) {
+        match intent.status {
+            OriginalDebugInteractionIntentStatus::RouteQueued if intent.route_path.len() > 1 => {
+                self.assign_route(intent.route_path.clone());
+                self.interaction_intent = Some(intent);
+            }
+            OriginalDebugInteractionIntentStatus::ReadyAtTarget => {
+                self.route.clear();
+                self.route_progress = 0.0;
+                self.route_status = OriginalDebugAgentRouteStatus::Arrived;
+                self.interaction_intent = Some(intent);
+            }
+            _ => {
+                self.block_route();
+                self.interaction_intent = Some(intent);
+            }
+        }
+    }
+
     fn update(&mut self, real_dt: f32) {
         if self.route.len() < 2 {
             return;
@@ -1246,6 +1375,9 @@ impl OriginalDebugAgent {
                 self.tile = last;
             }
             self.route_status = OriginalDebugAgentRouteStatus::Arrived;
+            if let Some(intent) = self.interaction_intent.as_mut() {
+                intent.mark_ready_after_route(self.tile);
+            }
         }
     }
 
@@ -1279,9 +1411,13 @@ impl OriginalDebugAgent {
     fn map_label(&self) -> String {
         let selected = if self.selected { "selected" } else { "debug" };
         format!(
-            "{selected} agent {} {}",
+            "{selected} agent {} {}{}",
             self.slot + 1,
-            self.route_status.label()
+            self.route_status.label(),
+            self.interaction_intent
+                .as_ref()
+                .map(|intent| format!(" {}", intent.focus.label()))
+                .unwrap_or_default()
         )
     }
 
@@ -1832,6 +1968,13 @@ fn draw_map_diagnostic_panel(
                     10.5,
                     GRAY,
                 );
+                draw_text(
+                    &scene_model.objective_debug_probe.panel_label(),
+                    x + 16.0,
+                    y + 504.0,
+                    10.5,
+                    GRAY,
+                );
                 let interaction_probe_label = original_interaction_probe
                     .map(OriginalDebugInteractionProbe::panel_label)
                     .unwrap_or_else(|| {
@@ -1840,7 +1983,7 @@ fn draw_map_diagnostic_panel(
                 draw_text(
                     &interaction_probe_label,
                     x + 16.0,
-                    y + 504.0,
+                    y + 524.0,
                     10.5,
                     if original_navigation_debug_enabled {
                         SKYBLUE
@@ -1851,7 +1994,7 @@ fn draw_map_diagnostic_panel(
                 draw_text(
                     "debug movement is marker-only; interactions/objectives are candidate-only",
                     x + 16.0,
-                    y + 524.0,
+                    y + 544.0,
                     10.5,
                     GRAY,
                 );
@@ -1867,14 +2010,14 @@ fn draw_map_diagnostic_panel(
             draw_text(
                 "Map is rendered; objects are candidate-only unless proof passes",
                 x + 16.0,
-                y + 552.0,
+                y + 572.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 570.0,
+                y + 590.0,
                 12.0,
                 GRAY,
             );
@@ -2002,7 +2145,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 594.0,
+        MapRenderMode::OriginalMissionSceneProbe => 614.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
@@ -2132,8 +2275,9 @@ mod tests {
         OriginalDebugAgentSpawn,
     };
     use crate::engine::mission_scene::{
-        OriginalAnimationRefs, OriginalDrawStage, OriginalMissionObjectCandidate,
-        OriginalMissionObjectKind, OriginalTilePoint,
+        OriginalAnimationRefs, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
+        OriginalDebugInteractionIntentStatus, OriginalDrawStage, OriginalMissionObjectCandidate,
+        OriginalMissionObjectKind, OriginalRuntimeRouteStatus, OriginalTilePoint,
     };
 
     fn tile(tile_x: u16, tile_y: u16, tile_z: u16) -> OriginalTilePoint {
@@ -2213,5 +2357,54 @@ mod tests {
         assert_eq!(rendered.orientation, Some(64));
         assert_eq!(rendered.state, Some(0x10));
         assert!(agent.animation_frame(8) > 0);
+    }
+
+    #[test]
+    fn debug_agent_promotes_interaction_intent_after_local_route() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: false,
+            },
+            true,
+        );
+        let intent = OriginalDebugInteractionIntent {
+            status: OriginalDebugInteractionIntentStatus::RouteQueued,
+            focus: OriginalDebugInteractionFocus::WeaponPickupCandidate,
+            agent_tile: Some(tile(1, 1, 0)),
+            target_tile: Some(tile(3, 1, 0)),
+            route_status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            route_nodes: 3,
+            route_path: vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)],
+            interaction_range: 1,
+            candidate_total: 1,
+            message: "synthetic debug interaction queued".to_string(),
+        };
+
+        agent.assign_interaction_intent(intent);
+        assert_eq!(agent.route.len(), 3);
+        assert_eq!(
+            agent.interaction_intent.as_ref().unwrap().status,
+            OriginalDebugInteractionIntentStatus::RouteQueued
+        );
+
+        agent.update(4.0);
+
+        assert_eq!(agent.current_tile(), tile(3, 1, 0));
+        assert_eq!(
+            agent.interaction_intent.as_ref().unwrap().status,
+            OriginalDebugInteractionIntentStatus::ReadyAtTarget
+        );
+        assert!(
+            agent
+                .interaction_intent
+                .as_ref()
+                .unwrap()
+                .panel_label()
+                .contains("candidate-only")
+        );
+        assert_eq!(agent.render_label(), "marker-only sprite proof blocked");
     }
 }

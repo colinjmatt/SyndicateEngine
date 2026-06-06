@@ -70,6 +70,7 @@ pub struct OriginalMissionScene {
     pub spatial_probe: OriginalSpatialProbe,
     pub navigation_debug_probe: OriginalNavigationDebugProbe,
     pub interaction_probe: OriginalInteractionProbe,
+    pub objective_debug_probe: OriginalObjectiveDebugProbe,
     spatial_model: Option<OriginalSpatialModel>,
     objective_model: OriginalObjectiveScenarioModel,
 }
@@ -360,6 +361,61 @@ pub enum OriginalDebugInteractionStatus {
     MissingTarget,
     NoCandidateInteraction,
     CandidateInteractionReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalObjectiveDebugProbe {
+    pub objective_records: usize,
+    pub current_candidate_index: Option<u8>,
+    pub current_candidate_kind: String,
+    pub target_bucket: String,
+    pub scenario_link_candidates: usize,
+    pub success_condition_buckets: usize,
+    pub failure_condition_buckets: usize,
+    pub progress_status: OriginalObjectiveProgressStatus,
+    pub guardrail: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalObjectiveProgressStatus {
+    NoCandidateObjective,
+    CandidateOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalDebugInteractionIntent {
+    pub status: OriginalDebugInteractionIntentStatus,
+    pub focus: OriginalDebugInteractionFocus,
+    pub agent_tile: Option<OriginalTilePoint>,
+    pub target_tile: Option<OriginalTilePoint>,
+    pub route_status: OriginalRuntimeRouteStatus,
+    pub route_nodes: usize,
+    pub route_path: Vec<OriginalTilePoint>,
+    pub interaction_range: u16,
+    pub candidate_total: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalDebugInteractionIntentStatus {
+    DebugDisabled,
+    MissingDebugAgent,
+    MissingTarget,
+    NoCandidateInteraction,
+    RouteBlocked,
+    RouteQueued,
+    ReadyAtTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalDebugInteractionFocus {
+    None,
+    DoorOpenCandidate,
+    LargeDoorCandidate,
+    WeaponPickupCandidate,
+    VehicleEntryCandidate,
+    ObjectiveTargetCandidate,
+    ScenarioTriggerCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -698,6 +754,8 @@ impl OriginalMissionScene {
         let objective_model =
             OriginalObjectiveScenarioModel::from_game_bytes(decoded, mission_script_probe);
         let interaction_probe = OriginalInteractionProbe::from_scene(&objects, &objective_model);
+        let objective_debug_probe =
+            OriginalObjectiveDebugProbe::from_model(&objective_model, &objects);
 
         Self {
             mission_label,
@@ -718,6 +776,7 @@ impl OriginalMissionScene {
             spatial_probe,
             navigation_debug_probe,
             interaction_probe,
+            objective_debug_probe,
             spatial_model,
             objective_model,
         }
@@ -818,7 +877,7 @@ impl OriginalMissionScene {
             self.object_render_report_label(),
             self.spatial_probe.report_label(),
             self.navigation_debug_probe.report_label(),
-            self.interaction_probe.report_label(),
+            self.interaction_objective_report_label(),
             self.navigation_probe.report_label()
         )
     }
@@ -838,6 +897,14 @@ impl OriginalMissionScene {
             self.ped_render_proof.report_label(),
             self.vehicle_render_proof.report_label(),
             self.weapon_render_proof.report_label()
+        )
+    }
+
+    pub fn interaction_objective_report_label(&self) -> String {
+        format!(
+            "{}; {}",
+            self.interaction_probe.report_label(),
+            self.objective_debug_probe.report_label()
         )
     }
 
@@ -931,6 +998,32 @@ impl OriginalMissionScene {
         };
         self.objective_model
             .debug_interaction_probe(agent_tile, target_tile, &self.objects)
+    }
+
+    pub fn original_debug_interaction_intent_between(
+        &self,
+        agent_tile: Option<OriginalTilePoint>,
+        target_tile: Option<OriginalTilePoint>,
+        debug_enabled: bool,
+    ) -> OriginalDebugInteractionIntent {
+        if !debug_enabled {
+            return OriginalDebugInteractionIntent::debug_disabled();
+        }
+        let Some(agent_tile) = agent_tile else {
+            return OriginalDebugInteractionIntent::missing_debug_agent(target_tile);
+        };
+        let Some(target_tile) = target_tile else {
+            return OriginalDebugInteractionIntent::missing_target(agent_tile);
+        };
+        let probe =
+            self.objective_model
+                .debug_interaction_probe(agent_tile, target_tile, &self.objects);
+        let route_probe = self
+            .spatial_model
+            .as_ref()
+            .map(|model| model.route_probe_between(agent_tile, target_tile, true))
+            .unwrap_or_else(OriginalRuntimeRouteProbe::unavailable);
+        OriginalDebugInteractionIntent::from_probe(agent_tile, target_tile, probe, route_probe)
     }
 
     pub fn first_agent_spawn_tile(&self) -> Option<OriginalTilePoint> {
@@ -2228,6 +2321,288 @@ impl OriginalDebugInteractionProbe {
             }
         }
     }
+
+    fn candidate_total(&self) -> usize {
+        self.door_candidates
+            + self.weapon_pickup_candidates
+            + self.vehicle_entry_candidates
+            + self.objective_target_candidates
+            + self.scenario_target_candidates
+    }
+}
+
+impl OriginalObjectiveDebugProbe {
+    fn from_model(
+        model: &OriginalObjectiveScenarioModel,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> Self {
+        let Some(current) = model.objectives.first().copied() else {
+            return Self {
+                objective_records: 0,
+                current_candidate_index: None,
+                current_candidate_kind: "none".to_string(),
+                target_bucket: "none".to_string(),
+                scenario_link_candidates: 0,
+                success_condition_buckets: 0,
+                failure_condition_buckets: 0,
+                progress_status: OriginalObjectiveProgressStatus::NoCandidateObjective,
+                guardrail: "objective progress is candidate-only; mission completion remains inactive",
+            };
+        };
+        Self {
+            objective_records: model.objectives.len(),
+            current_candidate_index: Some(current.record_index),
+            current_candidate_kind: current.kind.label().to_string(),
+            target_bucket: current.target.bucket_label().to_string(),
+            scenario_link_candidates: model.scenario_links_for_objective(current, objects),
+            success_condition_buckets: current.success_buckets as usize,
+            failure_condition_buckets: current.failure_buckets as usize,
+            progress_status: OriginalObjectiveProgressStatus::CandidateOnly,
+            guardrail: "objective progress is candidate-only; mission completion remains inactive",
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        match self.progress_status {
+            OriginalObjectiveProgressStatus::NoCandidateObjective => {
+                "objective debug: no GAME objective candidate; demo gameplay active".to_string()
+            }
+            OriginalObjectiveProgressStatus::CandidateOnly => format!(
+                "objective debug: current {} target {}; scenario links {}; success/failure {}/{}; candidate-only",
+                self.current_candidate_kind,
+                self.target_bucket,
+                self.scenario_link_candidates,
+                self.success_condition_buckets,
+                self.failure_condition_buckets
+            ),
+        }
+    }
+
+    pub fn report_label(&self) -> String {
+        format!(
+            "{}; records {}; {}; runtime-only aggregate, not proof of objective or mission-completion semantics",
+            self.panel_label(),
+            self.objective_records,
+            self.guardrail
+        )
+    }
+}
+
+impl OriginalDebugInteractionIntent {
+    fn debug_disabled() -> Self {
+        Self::blocked(
+            OriginalDebugInteractionIntentStatus::DebugDisabled,
+            OriginalDebugInteractionFocus::None,
+            None,
+            None,
+            OriginalRuntimeRouteStatus::SpatialModelUnavailable,
+            0,
+            0,
+            "interaction intent gated by G; debug-only and demo gameplay remains active",
+        )
+    }
+
+    fn missing_debug_agent(target_tile: Option<OriginalTilePoint>) -> Self {
+        Self::blocked(
+            OriginalDebugInteractionIntentStatus::MissingDebugAgent,
+            OriginalDebugInteractionFocus::None,
+            None,
+            target_tile,
+            OriginalRuntimeRouteStatus::MissingStart,
+            0,
+            0,
+            "interaction intent blocked: no selected original debug-agent marker",
+        )
+    }
+
+    fn missing_target(agent_tile: OriginalTilePoint) -> Self {
+        Self::blocked(
+            OriginalDebugInteractionIntentStatus::MissingTarget,
+            OriginalDebugInteractionFocus::None,
+            Some(agent_tile),
+            None,
+            OriginalRuntimeRouteStatus::GoalOutsideCandidateGraph,
+            0,
+            0,
+            "interaction intent blocked: cursor is outside the candidate map",
+        )
+    }
+
+    fn from_probe(
+        agent_tile: OriginalTilePoint,
+        target_tile: OriginalTilePoint,
+        probe: OriginalDebugInteractionProbe,
+        route_probe: OriginalRuntimeRouteProbe,
+    ) -> Self {
+        let focus = OriginalDebugInteractionFocus::from_probe(&probe);
+        let candidate_total = probe.candidate_total();
+        if focus == OriginalDebugInteractionFocus::None || candidate_total == 0 {
+            return Self::blocked(
+                OriginalDebugInteractionIntentStatus::NoCandidateInteraction,
+                focus,
+                Some(agent_tile),
+                Some(target_tile),
+                route_probe.status,
+                0,
+                candidate_total,
+                "interaction intent blocked: no candidate interaction bucket near cursor",
+            );
+        }
+
+        let interaction_range = focus.interaction_range();
+        let in_range = tile_near(agent_tile, target_tile, interaction_range, 1);
+        let route_ready = route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady;
+        if in_range {
+            return Self {
+                status: OriginalDebugInteractionIntentStatus::ReadyAtTarget,
+                focus,
+                agent_tile: Some(agent_tile),
+                target_tile: Some(target_tile),
+                route_status: route_probe.status,
+                route_nodes: route_probe.path.len(),
+                route_path: Vec::new(),
+                interaction_range,
+                candidate_total,
+                message: format!(
+                    "debug interaction ready: {} candidate at target; no gameplay state changed",
+                    focus.label()
+                ),
+            };
+        }
+
+        if route_ready && route_probe.path.len() > 1 {
+            return Self {
+                status: OriginalDebugInteractionIntentStatus::RouteQueued,
+                focus,
+                agent_tile: Some(agent_tile),
+                target_tile: Some(target_tile),
+                route_status: route_probe.status,
+                route_nodes: route_probe.path.len(),
+                route_path: route_probe.path,
+                interaction_range,
+                candidate_total,
+                message: format!(
+                    "debug interaction queued: route to {} candidate; local intent only",
+                    focus.label()
+                ),
+            };
+        }
+
+        Self::blocked(
+            OriginalDebugInteractionIntentStatus::RouteBlocked,
+            focus,
+            Some(agent_tile),
+            Some(target_tile),
+            route_probe.status,
+            route_probe.path.len(),
+            candidate_total,
+            "interaction intent blocked: route precondition is not proven",
+        )
+    }
+
+    fn blocked(
+        status: OriginalDebugInteractionIntentStatus,
+        focus: OriginalDebugInteractionFocus,
+        agent_tile: Option<OriginalTilePoint>,
+        target_tile: Option<OriginalTilePoint>,
+        route_status: OriginalRuntimeRouteStatus,
+        route_nodes: usize,
+        candidate_total: usize,
+        message: &str,
+    ) -> Self {
+        Self {
+            status,
+            focus,
+            agent_tile,
+            target_tile,
+            route_status,
+            route_nodes,
+            route_path: Vec::new(),
+            interaction_range: focus.interaction_range(),
+            candidate_total,
+            message: message.to_string(),
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        format!(
+            "{}; focus {}; route {:?} nodes {}; range {}; candidate-only",
+            self.message,
+            self.focus.label(),
+            self.route_status,
+            self.route_nodes,
+            self.interaction_range
+        )
+    }
+
+    pub fn mark_ready_after_route(&mut self, agent_tile: OriginalTilePoint) {
+        if self.status == OriginalDebugInteractionIntentStatus::RouteQueued {
+            self.agent_tile = Some(agent_tile);
+            self.route_path.clear();
+            self.route_nodes = 0;
+            self.status = OriginalDebugInteractionIntentStatus::ReadyAtTarget;
+            self.message = format!(
+                "debug interaction ready after route: {} candidate; no gameplay state changed",
+                self.focus.label()
+            );
+        }
+    }
+}
+
+impl OriginalDebugInteractionFocus {
+    fn from_probe(probe: &OriginalDebugInteractionProbe) -> Self {
+        if probe.opening_door_candidates > 0 {
+            Self::DoorOpenCandidate
+        } else if probe.large_door_candidates > 0 {
+            Self::LargeDoorCandidate
+        } else if probe.door_candidates > 0 {
+            Self::DoorOpenCandidate
+        } else if probe.weapon_pickup_candidates > 0 {
+            Self::WeaponPickupCandidate
+        } else if probe.vehicle_entry_candidates > 0 {
+            Self::VehicleEntryCandidate
+        } else if probe.objective_target_candidates > 0 {
+            Self::ObjectiveTargetCandidate
+        } else if probe.scenario_target_candidates > 0 {
+            Self::ScenarioTriggerCandidate
+        } else {
+            Self::None
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::DoorOpenCandidate => "door/open",
+            Self::LargeDoorCandidate => "large-door",
+            Self::WeaponPickupCandidate => "weapon-pickup",
+            Self::VehicleEntryCandidate => "vehicle-entry",
+            Self::ObjectiveTargetCandidate => "objective-target",
+            Self::ScenarioTriggerCandidate => "scenario-trigger",
+        }
+    }
+
+    fn interaction_range(self) -> u16 {
+        match self {
+            Self::VehicleEntryCandidate => 2,
+            Self::None => 0,
+            _ => 1,
+        }
+    }
+}
+
+impl OriginalDebugInteractionIntentStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DebugDisabled => "disabled",
+            Self::MissingDebugAgent => "missing-agent",
+            Self::MissingTarget => "missing-target",
+            Self::NoCandidateInteraction => "no-candidate",
+            Self::RouteBlocked => "route-blocked",
+            Self::RouteQueued => "route-queued",
+            Self::ReadyAtTarget => "ready",
+        }
+    }
 }
 
 impl OriginalRuntimeRouteProbe {
@@ -3138,6 +3513,29 @@ impl OriginalObjectiveScenarioModel {
             scenario_target_candidates,
         )
     }
+
+    fn scenario_links_for_objective(
+        &self,
+        objective: OriginalObjectiveCandidateRecord,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> usize {
+        self.scenarios
+            .iter()
+            .filter(|scenario| {
+                scenario
+                    .object_target
+                    .is_some_and(|target| objective.target.matches_object_target(target))
+                    || objective
+                        .target
+                        .tile_from_objects(objects)
+                        .is_some_and(|tile| {
+                            scenario
+                                .tile
+                                .is_some_and(|scenario_tile| tile_near(tile, scenario_tile, 1, 1))
+                        })
+            })
+            .count()
+    }
 }
 
 impl OriginalObjectiveCandidateRecord {
@@ -3245,6 +3643,22 @@ impl OriginalObjectiveCandidateKind {
             _ => (1, 2),
         }
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SubOrLocation => "sub/location",
+            Self::Persuade => "persuade",
+            Self::Assassinate => "assassinate",
+            Self::Protect => "protect",
+            Self::TakeWeapon => "take-weapon",
+            Self::EliminatePolice => "eliminate-police",
+            Self::EliminateAgents => "eliminate-agents",
+            Self::DestroyVehicle => "destroy-vehicle",
+            Self::UseVehicle => "use-vehicle",
+            Self::Evacuate => "evacuate",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 impl OriginalObjectiveTarget {
@@ -3263,6 +3677,27 @@ impl OriginalObjectiveTarget {
             .iter()
             .find(|object| object.kind == kind && object.record_index == record_index)
             .and_then(|object| object.tile)
+    }
+
+    fn bucket_label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Ped(_) => "ped",
+            Self::Vehicle(_) => "vehicle",
+            Self::Weapon(_) => "weapon",
+            Self::Group => "group",
+            Self::Location(_) => "location",
+            Self::UnresolvedOffset => "unresolved-offset",
+        }
+    }
+
+    fn matches_object_target(self, target: OriginalObjectOffsetTarget) -> bool {
+        matches!(
+            (self, target),
+            (Self::Ped(a), OriginalObjectOffsetTarget::Ped(b))
+                | (Self::Vehicle(a), OriginalObjectOffsetTarget::Vehicle(b))
+                | (Self::Weapon(a), OriginalObjectOffsetTarget::Weapon(b)) if a == b
+        )
     }
 }
 
@@ -4288,10 +4723,11 @@ mod tests {
 
     use super::{
         AnimationCatalog, CARS_OFFSET, OBJECT_OFFSET_PEOPLE_BASE, OBJECT_OFFSET_VEHICLES_BASE,
-        OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport, OriginalDebugInteractionStatus,
-        OriginalDrawStage, OriginalMissionObjectKind, OriginalMissionScene,
-        OriginalMissionScriptProbe, OriginalMissionSelection, OriginalSpriteBankSupport,
-        PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
+        OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport, OriginalDebugInteractionFocus,
+        OriginalDebugInteractionIntentStatus, OriginalDebugInteractionStatus, OriginalDrawStage,
+        OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
+        OriginalMissionSelection, OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET,
+        STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
         format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
     use crate::engine::{
@@ -5437,6 +5873,158 @@ mod tests {
         assert_eq!(
             disabled.status,
             OriginalDebugInteractionStatus::DebugDisabled
+        );
+    }
+
+    #[test]
+    fn objective_debug_probe_links_current_target_to_scenario_candidates_without_bytes() {
+        let mut decoded = vec![0u8; OBJECTIVES_OFFSET + 48];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            2,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[SCENARIOS_OFFSET + 2..SCENARIOS_OFFSET + 4]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+        decoded[SCENARIOS_OFFSET + 7] = 0x08;
+        decoded[OBJECTIVES_OFFSET..OBJECTIVES_OFFSET + 2].copy_from_slice(&1u16.to_le_bytes());
+        decoded[OBJECTIVES_OFFSET + 2..OBJECTIVES_OFFSET + 4]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(scene.objective_debug_probe.current_candidate_index, Some(0));
+        assert_eq!(
+            scene.objective_debug_probe.current_candidate_kind,
+            "persuade"
+        );
+        assert_eq!(scene.objective_debug_probe.target_bucket, "ped");
+        assert_eq!(scene.objective_debug_probe.scenario_link_candidates, 1);
+        assert!(
+            scene
+                .objective_debug_probe
+                .panel_label()
+                .contains("candidate-only")
+        );
+        assert!(
+            scene
+                .objective_debug_probe
+                .report_label()
+                .contains("not proof")
+        );
+        assert!(!scene.objective_debug_probe.report_label().contains("00 00"));
+        assert!(!scene.objective_debug_probe.report_label().contains("0x"));
+    }
+
+    #[test]
+    fn debug_interaction_intent_queues_route_and_blocks_unproven_targets() {
+        let mut decoded = vec![0u8; OBJECTIVES_OFFSET + 48];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 28] = 0x02;
+        write_record(
+            &mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36],
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+
+        let map_tiles = synthetic_map_tiles(4, 1, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+        let agent = super::OriginalTilePoint {
+            tile_x: 0,
+            tile_y: 0,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let weapon = super::OriginalTilePoint {
+            tile_x: 2,
+            tile_y: 0,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+
+        let queued =
+            scene.original_debug_interaction_intent_between(Some(agent), Some(weapon), true);
+        assert_eq!(
+            queued.status,
+            OriginalDebugInteractionIntentStatus::RouteQueued
+        );
+        assert_eq!(
+            queued.focus,
+            OriginalDebugInteractionFocus::WeaponPickupCandidate
+        );
+        assert!(queued.route_path.len() > 1);
+        assert!(queued.panel_label().contains("candidate-only"));
+        assert!(!queued.panel_label().contains("00 00"));
+        assert!(!queued.panel_label().contains("0x"));
+
+        let ready =
+            scene.original_debug_interaction_intent_between(Some(weapon), Some(weapon), true);
+        assert_eq!(
+            ready.status,
+            OriginalDebugInteractionIntentStatus::ReadyAtTarget
+        );
+
+        let empty = scene.original_debug_interaction_intent_between(
+            Some(agent),
+            Some(super::OriginalTilePoint {
+                tile_x: 0,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            }),
+            true,
+        );
+        assert_eq!(
+            empty.status,
+            OriginalDebugInteractionIntentStatus::NoCandidateInteraction
         );
     }
 
