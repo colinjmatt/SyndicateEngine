@@ -9,7 +9,9 @@ use crate::{
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
-        mission_scene::OriginalMissionScene,
+        mission_scene::{
+            OriginalMissionScene, OriginalObjectRenderDecision, OriginalStaticRenderDecision,
+        },
         mission_source::OriginalMissionSelection,
     },
     game::{
@@ -42,6 +44,7 @@ pub struct WorldState {
     original_mission_scene: Option<OriginalMissionScene>,
     original_graphics: Option<RuntimeOriginalGraphics>,
     original_object_graphics: Option<RuntimeOriginalObjectGraphics>,
+    original_object_animation_time: f32,
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
     original_map_view: Option<OriginalMapViewState>,
@@ -180,6 +183,7 @@ impl WorldState {
             original_mission_scene,
             original_graphics,
             original_object_graphics,
+            original_object_animation_time: 0.0,
             original_map_tiles,
             original_tile_types,
             original_map_view,
@@ -191,6 +195,8 @@ impl WorldState {
             std::process::exit(0);
         }
         self.camera.update(real_dt);
+        self.original_object_animation_time =
+            (self.original_object_animation_time + real_dt.max(0.0)).rem_euclid(10_000.0);
         self.clamp_original_map_camera();
         self.update_render_controls();
         self.update_sim_controls();
@@ -367,6 +373,20 @@ impl WorldState {
 
     fn original_map_tiles_ready(&self) -> bool {
         self.original_graphics.is_some() && self.original_map_tiles.is_some()
+    }
+
+    fn original_object_animation_frame(&self) -> u16 {
+        (self.original_object_animation_time * 6.0) as u16
+    }
+
+    fn original_scene_object_render_ready(scene_model: &OriginalMissionScene) -> bool {
+        scene_model.static_render_proof.decision == OriginalStaticRenderDecision::RuntimeRenderReady
+            || scene_model.ped_render_proof.decision
+                == OriginalObjectRenderDecision::RuntimeRenderReady
+            || scene_model.vehicle_render_proof.decision
+                == OriginalObjectRenderDecision::RuntimeRenderReady
+            || scene_model.weapon_render_proof.decision
+                == OriginalObjectRenderDecision::RuntimeRenderReady
     }
 
     fn clamp_original_map_camera(&mut self) {
@@ -635,14 +655,11 @@ impl WorldState {
                     self.original_graphics.as_ref(),
                     self.original_mission_scene.as_ref(),
                 ) {
-                    let object_graphics =
-                        if scene_model.static_render_proof.decision
-                            == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
-                        {
-                            self.original_object_graphics.as_ref()
-                        } else {
-                            None
-                        };
+                    let object_graphics = if Self::original_scene_object_render_ready(scene_model) {
+                        self.original_object_graphics.as_ref()
+                    } else {
+                        None
+                    };
                     self.map.draw_original_mission_scene(
                         &self.camera,
                         map_tiles,
@@ -650,6 +667,7 @@ impl WorldState {
                         graphics,
                         scene_model,
                         object_graphics,
+                        self.original_object_animation_frame(),
                     );
                 }
             }
@@ -1022,29 +1040,69 @@ fn draw_map_diagnostic_panel(
                     y + 242.0,
                     11.0,
                     if scene_model.static_render_proof.decision
-                        == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
+                        == OriginalStaticRenderDecision::RuntimeRenderReady
                     {
                         GREEN
                     } else {
                         ORANGE
                     },
                 );
-                let static_runtime_label =
-                    if scene_model.static_render_proof.decision
-                        == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
+                draw_text(
+                    &scene_model.ped_render_proof.panel_label(),
+                    x + 16.0,
+                    y + 264.0,
+                    11.0,
+                    if scene_model.ped_render_proof.decision
+                        == OriginalObjectRenderDecision::RuntimeRenderReady
                     {
-                        format!(
-                            "map tiles rendered; statics rendered from local assets {}/{}",
-                            scene_model.static_render_proof.runtime_renderable_static_count,
-                            scene_model.static_render_proof.candidate_count
-                        )
+                        GREEN
                     } else {
-                        "map tiles rendered; statics candidate-only/blocked".to_string()
-                    };
+                        GRAY
+                    },
+                );
+                draw_text(
+                    &scene_model.vehicle_render_proof.panel_label(),
+                    x + 16.0,
+                    y + 282.0,
+                    11.0,
+                    if scene_model.vehicle_render_proof.decision
+                        == OriginalObjectRenderDecision::RuntimeRenderReady
+                    {
+                        GREEN
+                    } else {
+                        GRAY
+                    },
+                );
+                draw_text(
+                    &scene_model.weapon_render_proof.panel_label(),
+                    x + 16.0,
+                    y + 300.0,
+                    11.0,
+                    if scene_model.weapon_render_proof.decision
+                        == OriginalObjectRenderDecision::RuntimeRenderReady
+                    {
+                        GREEN
+                    } else {
+                        GRAY
+                    },
+                );
+                let static_runtime_label = if scene_model.static_render_proof.decision
+                    == OriginalStaticRenderDecision::RuntimeRenderReady
+                {
+                    format!(
+                        "map tiles rendered; statics rendered from local assets {}/{}",
+                        scene_model
+                            .static_render_proof
+                            .runtime_renderable_static_count,
+                        scene_model.static_render_proof.candidate_count
+                    )
+                } else {
+                    "map tiles rendered; statics candidate-only/blocked".to_string()
+                };
                 draw_text(
                     &static_runtime_label,
                     x + 16.0,
-                    y + 264.0,
+                    y + 322.0,
                     11.0,
                     if object_graphics.is_some() {
                         YELLOW
@@ -1055,21 +1113,38 @@ fn draw_map_diagnostic_panel(
                 draw_text(
                     &scene_model.spawn_probe.panel_label(),
                     x + 16.0,
-                    y + 286.0,
+                    y + 344.0,
                     11.0,
                     GRAY,
                 );
                 draw_text(
-                    &scene_model.navigation_probe.panel_label(),
+                    &format!(
+                        "nav links {}, occupied {}, blockers {}",
+                        scene_model.navigation_probe.map_object_link_cells,
+                        scene_model.navigation_probe.candidate_occupied_tiles,
+                        scene_model.navigation_probe.static_blocking_candidates
+                    ),
                     x + 16.0,
-                    y + 306.0,
+                    y + 364.0,
                     11.0,
                     GRAY,
                 );
                 draw_text(
-                    "peds/vehicles/weapons/sfx remain candidate-only",
+                    &format!(
+                        "doors {}, windows {}, vehicles {}; demo grid active",
+                        scene_model.navigation_probe.door_candidates,
+                        scene_model.navigation_probe.window_candidates,
+                        scene_model.navigation_probe.vehicle_footprint_candidates
+                    ),
                     x + 16.0,
-                    y + 326.0,
+                    y + 382.0,
+                    11.0,
+                    GRAY,
+                );
+                draw_text(
+                    "gameplay navigation/occupancy remains candidate-only",
+                    x + 16.0,
+                    y + 404.0,
                     11.0,
                     GRAY,
                 );
@@ -1085,14 +1160,14 @@ fn draw_map_diagnostic_panel(
             draw_text(
                 "Map is rendered; objects are candidate-only unless proof passes",
                 x + 16.0,
-                y + 354.0,
+                y + 432.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 372.0,
+                y + 450.0,
                 12.0,
                 GRAY,
             );
@@ -1220,7 +1295,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 390.0,
+        MapRenderMode::OriginalMissionSceneProbe => 472.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
@@ -1231,7 +1306,7 @@ fn map_panel_height(mode: MapRenderMode) -> f32 {
 
 fn map_panel_width(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 440.0,
+        MapRenderMode::OriginalMissionSceneProbe => 520.0,
         _ => 370.0,
     }
 }

@@ -12,7 +12,10 @@ use std::{
 
 use crate::engine::{
     mission_source::OriginalMissionSelection,
-    original_sprites::{OriginalObjectSpriteRenderAssets, OriginalStaticFrameRefs},
+    original_sprites::{
+        OriginalObjectFrameRefs, OriginalObjectSpriteRenderAssets, OriginalRenderObjectKind,
+        OriginalStaticFrameRefs,
+    },
     rnc::{RncBlock, RncError},
 };
 
@@ -41,6 +44,9 @@ pub struct OriginalMissionScene {
     pub animation_support: OriginalAnimationCatalogSupport,
     pub sprite_support: OriginalSpriteBankSupport,
     pub static_render_proof: OriginalStaticRenderProof,
+    pub ped_render_proof: OriginalObjectRenderProof,
+    pub weapon_render_proof: OriginalObjectRenderProof,
+    pub vehicle_render_proof: OriginalObjectRenderProof,
     pub spawn_probe: OriginalSpawnProbe,
     pub navigation_probe: OriginalNavigationProbe,
 }
@@ -189,6 +195,23 @@ pub enum OriginalStaticRenderDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalObjectRenderProof {
+    pub category_label: &'static str,
+    pub kind: OriginalMissionObjectKind,
+    pub candidate_count: usize,
+    pub runtime_frame_assembly_count: usize,
+    pub runtime_renderable_count: usize,
+    pub decision: OriginalObjectRenderDecision,
+    pub blocker: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalObjectRenderDecision {
+    RuntimeRenderDisabled,
+    RuntimeRenderReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginalSpawnProbe {
     pub ped_spawn_candidates: usize,
     pub agent_candidates: usize,
@@ -200,6 +223,12 @@ pub struct OriginalSpawnProbe {
 pub struct OriginalNavigationProbe {
     pub map_object_link_cells: usize,
     pub unique_object_offsets: usize,
+    pub candidate_occupied_tiles: usize,
+    pub static_blocking_candidates: usize,
+    pub door_candidates: usize,
+    pub window_candidates: usize,
+    pub vehicle_footprint_candidates: usize,
+    pub ped_spawn_tile_candidates: usize,
     pub scenario_records: usize,
     pub scenario_tile_target_candidates: usize,
     pub bridge_status: &'static str,
@@ -324,8 +353,26 @@ impl OriginalMissionScene {
             &sprite_support,
             object_render_assets,
         );
+        let ped_render_proof = OriginalObjectRenderProof::from_scene_objects(
+            "candidate peds",
+            OriginalMissionObjectKind::Ped,
+            &objects,
+            object_render_assets,
+        );
+        let weapon_render_proof = OriginalObjectRenderProof::from_scene_objects(
+            "candidate weapons",
+            OriginalMissionObjectKind::Weapon,
+            &objects,
+            object_render_assets,
+        );
+        let vehicle_render_proof = OriginalObjectRenderProof::from_scene_objects(
+            "candidate vehicles",
+            OriginalMissionObjectKind::Vehicle,
+            &objects,
+            object_render_assets,
+        );
         let spawn_probe = OriginalSpawnProbe::from_objects_and_game_bytes(&objects, decoded);
-        let navigation_probe = OriginalNavigationProbe::from_decoded_game_bytes(decoded);
+        let navigation_probe = OriginalNavigationProbe::from_decoded_game_bytes(decoded, &objects);
 
         Self {
             mission_label,
@@ -338,6 +385,9 @@ impl OriginalMissionScene {
             animation_support,
             sprite_support,
             static_render_proof,
+            ped_render_proof,
+            weapon_render_proof,
+            vehicle_render_proof,
             spawn_probe,
             navigation_probe,
         }
@@ -426,7 +476,7 @@ impl OriginalMissionScene {
 
     pub fn report_row(&self) -> String {
         format!(
-            "| mission {} | map {} palette {} | {} | {} | {} | {} | {} | {} |",
+            "| mission {} | map {} palette {} | {} | {} | {} | {} | {} | {} | {} |",
             self.mission_id,
             self.map_id,
             self.palette_id,
@@ -435,7 +485,26 @@ impl OriginalMissionScene {
             self.animation_support.report_label(),
             self.sprite_support.report_label(),
             self.static_render_proof.report_label(),
+            self.object_render_report_label(),
             self.navigation_probe.report_label()
+        )
+    }
+
+    pub fn object_render_panel_label(&self) -> String {
+        format!(
+            "{} | {} | {}",
+            self.ped_render_proof.panel_label(),
+            self.vehicle_render_proof.panel_label(),
+            self.weapon_render_proof.panel_label()
+        )
+    }
+
+    pub fn object_render_report_label(&self) -> String {
+        format!(
+            "{}; {}; {}",
+            self.ped_render_proof.report_label(),
+            self.vehicle_render_proof.report_label(),
+            self.weapon_render_proof.report_label()
         )
     }
 
@@ -480,6 +549,16 @@ impl OriginalMissionObjectKind {
             Self::Sfx => "candidate sfx",
         }
     }
+
+    pub fn plural_label(self) -> &'static str {
+        match self {
+            Self::Ped => "peds",
+            Self::Vehicle => "vehicles",
+            Self::Static => "statics",
+            Self::Weapon => "weapons",
+            Self::Sfx => "sfx",
+        }
+    }
 }
 
 impl OriginalDrawStage {
@@ -522,6 +601,25 @@ impl OriginalMissionObjectCandidate {
             current_frame: self.animation.current_frame,
             subtype: self.subtype_value,
             orientation: self.orientation,
+        }
+    }
+
+    pub fn object_frame_refs(&self, animation_frame: u16) -> OriginalObjectFrameRefs {
+        OriginalObjectFrameRefs {
+            kind: match self.kind {
+                OriginalMissionObjectKind::Ped => OriginalRenderObjectKind::Ped,
+                OriginalMissionObjectKind::Vehicle => OriginalRenderObjectKind::Vehicle,
+                OriginalMissionObjectKind::Static => OriginalRenderObjectKind::Static,
+                OriginalMissionObjectKind::Weapon => OriginalRenderObjectKind::Weapon,
+                OriginalMissionObjectKind::Sfx => OriginalRenderObjectKind::Static,
+            },
+            base_anim: self.animation.base_anim,
+            current_anim: self.animation.current_anim,
+            current_frame: self.animation.current_frame,
+            subtype: self.subtype_value,
+            orientation: self.orientation,
+            state: self.state,
+            animation_frame,
         }
     }
 
@@ -964,6 +1062,136 @@ impl OriginalStaticRenderProof {
     }
 }
 
+impl OriginalObjectRenderProof {
+    fn from_scene_objects(
+        category_label: &'static str,
+        kind: OriginalMissionObjectKind,
+        objects: &[OriginalMissionObjectCandidate],
+        object_render_assets: Option<&OriginalObjectSpriteRenderAssets>,
+    ) -> Self {
+        let candidates = objects
+            .iter()
+            .filter(|object| object.kind == kind)
+            .filter(|object| object.candidate_draw)
+            .collect::<Vec<_>>();
+        let candidate_count = candidates.len();
+        let mut runtime_frame_assembly_count = 0;
+        let mut runtime_renderable_count = 0;
+
+        if let Some(assets) = object_render_assets {
+            for object in &candidates {
+                let support = assets.object_frame_support(object.object_frame_refs(0));
+                if support.assembled {
+                    runtime_frame_assembly_count += 1;
+                }
+                if support.assembled && support.sprites_supported {
+                    runtime_renderable_count += 1;
+                }
+            }
+        }
+
+        let decision = if runtime_renderable_count > 0 {
+            OriginalObjectRenderDecision::RuntimeRenderReady
+        } else {
+            OriginalObjectRenderDecision::RuntimeRenderDisabled
+        };
+        let blocker = if candidate_count == 0 {
+            format!(
+                "no queued {} records for runtime proof",
+                kind.plural_label()
+            )
+        } else if object_render_assets.is_none() {
+            "runtime HSPR/ANI assets unavailable or failed strict bounds checks".to_string()
+        } else if runtime_frame_assembly_count == 0 {
+            format!(
+                "no candidate {} frame could be assembled from guarded animation chains",
+                kind.label()
+            )
+        } else if runtime_renderable_count == 0 {
+            format!(
+                "assembled {} frames reference unsupported HSPR sprites",
+                kind.plural_label()
+            )
+        } else if runtime_renderable_count < candidate_count {
+            format!(
+                "partial runtime {} render proof; unsupported candidates remain candidate-only",
+                kind.plural_label()
+            )
+        } else {
+            format!(
+                "runtime {} render proof ready for all queued candidates",
+                kind.plural_label()
+            )
+        };
+
+        Self {
+            category_label,
+            kind,
+            candidate_count,
+            runtime_frame_assembly_count,
+            runtime_renderable_count,
+            decision,
+            blocker,
+        }
+    }
+
+    pub fn panel_label(&self) -> String {
+        match self.decision {
+            OriginalObjectRenderDecision::RuntimeRenderReady => format!(
+                "{} ready {}/{}; frame proof {}",
+                self.kind.plural_label(),
+                self.runtime_renderable_count,
+                self.candidate_count,
+                self.runtime_frame_assembly_count
+            ),
+            OriginalObjectRenderDecision::RuntimeRenderDisabled => format!(
+                "{} blocked {}; candidates {}; frame proof {}",
+                self.kind.plural_label(),
+                self.short_blocker_label(),
+                self.candidate_count,
+                self.runtime_frame_assembly_count
+            ),
+        }
+    }
+
+    pub fn report_label(&self) -> String {
+        match self.decision {
+            OriginalObjectRenderDecision::RuntimeRenderReady => format!(
+                "{} render ready: {}/{} candidates; frame assembly {}/{}; {}; runtime-only, no previews, not proof of gameplay semantics",
+                self.kind.plural_label(),
+                self.runtime_renderable_count,
+                self.candidate_count,
+                self.runtime_frame_assembly_count,
+                self.candidate_count,
+                self.blocker
+            ),
+            OriginalObjectRenderDecision::RuntimeRenderDisabled => format!(
+                "{} render disabled: {}; frame assembly {}/{}; runtime-only, not proof of decoded layout or semantics",
+                self.kind.plural_label(),
+                self.blocker,
+                self.runtime_frame_assembly_count,
+                self.candidate_count
+            ),
+        }
+    }
+
+    fn short_blocker_label(&self) -> &'static str {
+        if self.candidate_count == 0 {
+            "none queued"
+        } else if self.blocker.contains("HSPR/ANI") {
+            "runtime assets missing"
+        } else if self.blocker.contains("unsupported HSPR") {
+            "sprite refs incomplete"
+        } else if self.blocker.contains("frame could be assembled") {
+            "frame assembly missing"
+        } else if self.blocker.contains("partial") {
+            "partial proof"
+        } else {
+            "proof missing"
+        }
+    }
+}
+
 impl OriginalSpawnProbe {
     fn from_objects_and_game_bytes(
         objects: &[OriginalMissionObjectCandidate],
@@ -1010,7 +1238,7 @@ impl OriginalSpawnProbe {
 }
 
 impl OriginalNavigationProbe {
-    fn from_decoded_game_bytes(decoded: &[u8]) -> Self {
+    fn from_decoded_game_bytes(decoded: &[u8], objects: &[OriginalMissionObjectCandidate]) -> Self {
         let map_object_offsets = decoded
             .get(GAME_MAP_OBJECT_OFFSET..GAME_MAP_OBJECT_OFFSET + GAME_MAP_OBJECT_BYTES)
             .unwrap_or(&[]);
@@ -1021,6 +1249,37 @@ impl OriginalNavigationProbe {
             if offset != 0 {
                 map_object_link_cells += 1;
                 unique_offsets.insert(offset);
+            }
+        }
+
+        let mut occupied_tiles = BTreeSet::new();
+        let mut static_blocking_candidates = 0;
+        let mut door_candidates = 0;
+        let mut window_candidates = 0;
+        let mut vehicle_footprint_candidates = 0;
+        let mut ped_spawn_tile_candidates = 0;
+        for object in objects.iter().filter(|object| object.candidate_draw) {
+            if let Some(tile) = object.tile {
+                occupied_tiles.insert((tile.tile_x, tile.tile_y, tile.tile_z));
+            }
+
+            match object.kind {
+                OriginalMissionObjectKind::Static => {
+                    if is_door_static_subtype(object.subtype_value) {
+                        door_candidates += 1;
+                    } else if is_window_static_subtype(object.subtype_value) {
+                        window_candidates += 1;
+                    } else {
+                        static_blocking_candidates += 1;
+                    }
+                }
+                OriginalMissionObjectKind::Vehicle => {
+                    vehicle_footprint_candidates += 1;
+                }
+                OriginalMissionObjectKind::Ped => {
+                    ped_spawn_tile_candidates += 1;
+                }
+                OriginalMissionObjectKind::Weapon | OriginalMissionObjectKind::Sfx => {}
             }
         }
 
@@ -1040,6 +1299,12 @@ impl OriginalNavigationProbe {
         Self {
             map_object_link_cells,
             unique_object_offsets: unique_offsets.len(),
+            candidate_occupied_tiles: occupied_tiles.len(),
+            static_blocking_candidates,
+            door_candidates,
+            window_candidates,
+            vehicle_footprint_candidates,
+            ped_spawn_tile_candidates,
             scenario_records: active_scenario_records,
             scenario_tile_target_candidates,
             bridge_status: "navigation bridge candidate only; gameplay/pathfinding remains on demo grid",
@@ -1048,13 +1313,25 @@ impl OriginalNavigationProbe {
 
     pub fn panel_label(&self) -> String {
         format!(
-            "nav inputs links {}, scenarios {}; demo grid active",
-            self.map_object_link_cells, self.scenario_tile_target_candidates
+            "nav inputs links {}, occupied {}, blockers {}, doors {}, windows {}, vehicles {}; demo grid active",
+            self.map_object_link_cells,
+            self.candidate_occupied_tiles,
+            self.static_blocking_candidates,
+            self.door_candidates,
+            self.window_candidates,
+            self.vehicle_footprint_candidates
         )
     }
 
     pub fn report_label(&self) -> String {
-        format!("{}; {}", self.panel_label(), self.bridge_status)
+        format!(
+            "{}; ped spawn tiles {}; scenario targets {}; unique links {}; {}",
+            self.panel_label(),
+            self.ped_spawn_tile_candidates,
+            self.scenario_tile_target_candidates,
+            self.unique_object_offsets,
+            self.bridge_status
+        )
     }
 }
 
@@ -1459,6 +1736,14 @@ fn summarize_sprite_tab_bank(label: &str, tab: &[u8], dat_len: usize) -> SpriteT
     }
 }
 
+fn is_door_static_subtype(subtype: Option<u8>) -> bool {
+    matches!(subtype, Some(0x0c..=0x0f))
+}
+
+fn is_window_static_subtype(subtype: Option<u8>) -> bool {
+    matches!(subtype, Some(0x12 | 0x13 | 0x15 | 0x20..=0x25))
+}
+
 fn scenario_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
     let tail = decoded.get(SCENARIOS_OFFSET..).unwrap_or(&[]);
     let len = tail.len().min(2048 * 8);
@@ -1837,6 +2122,71 @@ mod tests {
     }
 
     #[test]
+    fn object_render_proof_gates_peds_vehicles_and_weapons_without_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            4,
+            5,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 11] = 0x10;
+        decoded[PEOPLE_OFFSET + 22] = 0;
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            6,
+            7,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[WEAPONS_OFFSET..WEAPONS_OFFSET + 36],
+            8,
+            9,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let render_assets = synthetic_render_assets();
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            Some(&render_assets),
+        );
+
+        assert_eq!(
+            scene.ped_render_proof.decision,
+            super::OriginalObjectRenderDecision::RuntimeRenderReady
+        );
+        assert_eq!(
+            scene.vehicle_render_proof.decision,
+            super::OriginalObjectRenderDecision::RuntimeRenderReady
+        );
+        assert_eq!(
+            scene.weapon_render_proof.decision,
+            super::OriginalObjectRenderDecision::RuntimeRenderReady
+        );
+        assert_eq!(scene.ped_render_proof.runtime_renderable_count, 1);
+        assert!(scene.object_render_report_label().contains("runtime-only"));
+        assert!(scene.object_render_report_label().contains("not proof"));
+        assert!(!scene.object_render_report_label().contains("00 00"));
+        assert!(!scene.object_render_report_label().contains("0x"));
+    }
+
+    #[test]
     fn reports_spawn_and_navigation_bridge_candidates_conservatively() {
         let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
         decoded[6..8].copy_from_slice(&4u16.to_le_bytes());
@@ -1852,6 +2202,49 @@ mod tests {
             0x04,
         );
         decoded[PEOPLE_OFFSET + 24] = 0x02;
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            10,
+            11,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            12,
+            13,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x0c;
+        write_record(
+            &mut decoded[STATICS_OFFSET + 30..STATICS_OFFSET + 60],
+            14,
+            15,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 30 + 25] = 0x12;
+        write_record(
+            &mut decoded[STATICS_OFFSET + 60..STATICS_OFFSET + 90],
+            16,
+            17,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 60 + 25] = 0x16;
         decoded[SCENARIOS_OFFSET + 7] = 0x08;
 
         let scene = OriginalMissionScene::from_parts(
@@ -1867,6 +2260,12 @@ mod tests {
         assert_eq!(scene.spawn_probe.agent_candidates, 1);
         assert_eq!(scene.spawn_probe.trigger_scenario_candidates, 1);
         assert_eq!(scene.navigation_probe.map_object_link_cells, 2);
+        assert_eq!(scene.navigation_probe.candidate_occupied_tiles, 5);
+        assert_eq!(scene.navigation_probe.door_candidates, 1);
+        assert_eq!(scene.navigation_probe.window_candidates, 1);
+        assert_eq!(scene.navigation_probe.static_blocking_candidates, 1);
+        assert_eq!(scene.navigation_probe.vehicle_footprint_candidates, 1);
+        assert_eq!(scene.navigation_probe.ped_spawn_tile_candidates, 1);
         assert!(
             scene
                 .navigation_probe

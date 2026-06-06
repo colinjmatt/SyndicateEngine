@@ -73,6 +73,9 @@ pub enum OriginalFrameAssemblyStrategy {
     AnimationInitial,
     AnimationOffset,
     DirectFrame,
+    PedDirectional,
+    VehicleDirectional,
+    WeaponGroundCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,12 +96,34 @@ pub struct OriginalStaticFrameRefs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalObjectFrameRefs {
+    pub kind: OriginalRenderObjectKind,
+    pub base_anim: Option<u16>,
+    pub current_anim: Option<u16>,
+    pub current_frame: Option<u16>,
+    pub subtype: Option<u8>,
+    pub orientation: Option<u8>,
+    pub state: Option<u8>,
+    pub animation_frame: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OriginalRenderObjectKind {
+    Static,
+    Ped,
+    Weapon,
+    Vehicle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OriginalStaticFrameSupport {
     pub assembled: bool,
     pub sprites_supported: bool,
     pub element_count: usize,
     pub strategy: Option<OriginalFrameAssemblyStrategy>,
 }
+
+pub type OriginalObjectFrameSupport = OriginalStaticFrameSupport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OriginalSpriteRenderError {
@@ -157,7 +182,14 @@ impl OriginalObjectSpriteRenderAssets {
         &self,
         refs: OriginalStaticFrameRefs,
     ) -> OriginalStaticFrameSupport {
-        match self.assemble_static_frame(refs) {
+        self.object_frame_support(OriginalObjectFrameRefs::from(refs))
+    }
+
+    pub fn object_frame_support(
+        &self,
+        refs: OriginalObjectFrameRefs,
+    ) -> OriginalObjectFrameSupport {
+        match self.assemble_object_frame(refs) {
             Ok(assembly) => {
                 let sprites_supported = assembly.elements.iter().all(|element| {
                     self.sprite_atlas
@@ -184,7 +216,14 @@ impl OriginalObjectSpriteRenderAssets {
         &self,
         refs: OriginalStaticFrameRefs,
     ) -> Result<OriginalFrameAssembly, OriginalSpriteRenderError> {
-        for candidate in static_frame_candidates(refs) {
+        self.assemble_object_frame(OriginalObjectFrameRefs::from(refs))
+    }
+
+    pub fn assemble_object_frame(
+        &self,
+        refs: OriginalObjectFrameRefs,
+    ) -> Result<OriginalFrameAssembly, OriginalSpriteRenderError> {
+        for candidate in object_frame_candidates(refs) {
             let assembly = match candidate.strategy {
                 OriginalFrameAssemblyStrategy::AnimationInitial => self
                     .animation_bank
@@ -199,6 +238,20 @@ impl OriginalObjectSpriteRenderAssets {
                 OriginalFrameAssemblyStrategy::DirectFrame => self
                     .animation_bank
                     .assemble_direct_frame(candidate.animation_id, candidate.strategy),
+                OriginalFrameAssemblyStrategy::PedDirectional
+                | OriginalFrameAssemblyStrategy::VehicleDirectional
+                | OriginalFrameAssemblyStrategy::WeaponGroundCandidate => {
+                    let frame_id = animation_frame_for_candidate(
+                        &self.animation_bank,
+                        candidate.animation_id,
+                        candidate.frame_offset.unwrap_or_default(),
+                    );
+                    self.animation_bank.assemble_animation_frame(
+                        candidate.animation_id,
+                        frame_id,
+                        candidate.strategy,
+                    )
+                }
             };
             let Ok(assembly) = assembly else {
                 continue;
@@ -223,6 +276,33 @@ impl OriginalObjectSpriteRenderAssets {
             self.animation_bank.frame_records,
             self.animation_bank.animation_records
         )
+    }
+}
+
+fn animation_frame_for_candidate(
+    animation_bank: &OriginalAnimationBank,
+    animation_id: u16,
+    requested_frame: u16,
+) -> u16 {
+    animation_bank
+        .animation_frame_count(animation_id)
+        .filter(|count| *count > 0)
+        .map(|count| requested_frame % count)
+        .unwrap_or(requested_frame)
+}
+
+impl From<OriginalStaticFrameRefs> for OriginalObjectFrameRefs {
+    fn from(value: OriginalStaticFrameRefs) -> Self {
+        Self {
+            kind: OriginalRenderObjectKind::Static,
+            base_anim: value.base_anim,
+            current_anim: value.current_anim,
+            current_frame: value.current_frame,
+            subtype: value.subtype,
+            orientation: value.orientation,
+            state: None,
+            animation_frame: 0,
+        }
     }
 }
 
@@ -562,6 +642,24 @@ impl OriginalAnimationBank {
             frame_id = frame_id.checked_add(1)?;
         }
     }
+
+    pub fn animation_frame_count(&self, anim_id: u16) -> Option<u16> {
+        let start = *self.animations.get(anim_id as usize)?;
+        let mut frame_index = start;
+        let mut count = 1u16;
+        let mut visited = BTreeSet::new();
+        loop {
+            let frame = self.frames.get(frame_index as usize)?;
+            if frame.next_frame == start {
+                return Some(count);
+            }
+            if !visited.insert(frame_index) {
+                return None;
+            }
+            frame_index = frame.next_frame;
+            count = count.checked_add(1)?;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -572,17 +670,26 @@ struct DecodedGameSprite {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct StaticFrameCandidate {
+struct ObjectFrameCandidate {
     animation_id: u16,
     frame_offset: Option<u16>,
     strategy: OriginalFrameAssemblyStrategy,
 }
 
-fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCandidate> {
+fn object_frame_candidates(refs: OriginalObjectFrameRefs) -> Vec<ObjectFrameCandidate> {
+    match refs.kind {
+        OriginalRenderObjectKind::Static => static_frame_candidates(refs),
+        OriginalRenderObjectKind::Ped => ped_frame_candidates(refs),
+        OriginalRenderObjectKind::Weapon => weapon_frame_candidates(refs),
+        OriginalRenderObjectKind::Vehicle => vehicle_frame_candidates(refs),
+    }
+}
+
+fn static_frame_candidates(refs: OriginalObjectFrameRefs) -> Vec<ObjectFrameCandidate> {
     let mut candidates = Vec::new();
     match refs.subtype {
         Some(0x05..=0x08) => {
-            candidates.push(StaticFrameCandidate {
+            candidates.push(ObjectFrameCandidate {
                 animation_id: 1040,
                 frame_offset: Some(refs.subtype.unwrap_or(0x05).saturating_sub(0x05) as u16),
                 strategy: OriginalFrameAssemblyStrategy::AnimationOffset,
@@ -599,7 +706,7 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
                     Some(0x0e | 0x0f) => 2,
                     _ => 0,
                 };
-                candidates.push(StaticFrameCandidate {
+                candidates.push(ObjectFrameCandidate {
                     animation_id: base
                         .saturating_add(orientation_adjust)
                         .saturating_add(state_adjust),
@@ -610,7 +717,7 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
         }
         Some(0x12) => {
             if let Some(anim) = refs.current_anim.and_then(|anim| anim.checked_sub(2)) {
-                candidates.push(StaticFrameCandidate {
+                candidates.push(ObjectFrameCandidate {
                     animation_id: anim.saturating_add(2),
                     frame_offset: None,
                     strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
@@ -619,7 +726,7 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
         }
         Some(0x15) => {
             if let Some(anim) = refs.current_anim.and_then(|anim| anim.checked_sub(6)) {
-                candidates.push(StaticFrameCandidate {
+                candidates.push(ObjectFrameCandidate {
                     animation_id: anim.saturating_add(6),
                     frame_offset: None,
                     strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
@@ -628,7 +735,7 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
         }
         Some(0x1f) => {
             if let Some(current_anim) = refs.current_anim {
-                candidates.push(StaticFrameCandidate {
+                candidates.push(ObjectFrameCandidate {
                     animation_id: current_anim,
                     frame_offset: None,
                     strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
@@ -637,7 +744,7 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
         }
         _ => {
             if let Some(current_anim) = refs.current_anim {
-                candidates.push(StaticFrameCandidate {
+                candidates.push(ObjectFrameCandidate {
                     animation_id: current_anim,
                     frame_offset: None,
                     strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
@@ -647,14 +754,14 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
     }
 
     if let Some(frame) = refs.current_frame {
-        candidates.push(StaticFrameCandidate {
+        candidates.push(ObjectFrameCandidate {
             animation_id: frame,
             frame_offset: None,
             strategy: OriginalFrameAssemblyStrategy::DirectFrame,
         });
     }
     if let Some(base_anim) = refs.base_anim {
-        candidates.push(StaticFrameCandidate {
+        candidates.push(ObjectFrameCandidate {
             animation_id: base_anim,
             frame_offset: None,
             strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
@@ -664,7 +771,115 @@ fn static_frame_candidates(refs: OriginalStaticFrameRefs) -> Vec<StaticFrameCand
     dedup_frame_candidates(candidates)
 }
 
-fn dedup_frame_candidates(candidates: Vec<StaticFrameCandidate>) -> Vec<StaticFrameCandidate> {
+fn ped_frame_candidates(refs: OriginalObjectFrameRefs) -> Vec<ObjectFrameCandidate> {
+    let mut candidates = Vec::new();
+    let direction = refs.orientation.map_or(0, |dir| discrete_direction(dir, 8));
+    if let Some(base) = refs.base_anim {
+        match refs.state {
+            Some(0x11) => candidates.push(ObjectFrameCandidate {
+                animation_id: base.saturating_add(206),
+                frame_offset: Some(0),
+                strategy: OriginalFrameAssemblyStrategy::PedDirectional,
+            }),
+            Some(0x10) => candidates.push(ObjectFrameCandidate {
+                animation_id: base.saturating_add(8).saturating_add(direction as u16),
+                frame_offset: Some(refs.animation_frame),
+                strategy: OriginalFrameAssemblyStrategy::PedDirectional,
+            }),
+            _ => candidates.push(ObjectFrameCandidate {
+                animation_id: base.saturating_add(direction as u16),
+                frame_offset: Some(0),
+                strategy: OriginalFrameAssemblyStrategy::PedDirectional,
+            }),
+        }
+    }
+
+    add_current_animation_fallbacks(&mut candidates, refs);
+    dedup_frame_candidates(candidates)
+}
+
+fn weapon_frame_candidates(refs: OriginalObjectFrameRefs) -> Vec<ObjectFrameCandidate> {
+    let mut candidates = Vec::new();
+    if let Some(current_anim) = refs.current_anim {
+        candidates.push(ObjectFrameCandidate {
+            animation_id: current_anim,
+            frame_offset: Some(refs.animation_frame),
+            strategy: OriginalFrameAssemblyStrategy::WeaponGroundCandidate,
+        });
+    }
+    add_current_animation_fallbacks(&mut candidates, refs);
+    dedup_frame_candidates(candidates)
+}
+
+fn vehicle_frame_candidates(refs: OriginalObjectFrameRefs) -> Vec<ObjectFrameCandidate> {
+    let mut candidates = Vec::new();
+    let direction_8 = refs.orientation.unwrap_or_default() >> 5;
+    let direction_4 = discrete_direction(refs.orientation.unwrap_or_default(), 4);
+    if let Some(current_anim) = refs.current_anim {
+        let base = current_anim.saturating_sub(direction_8 as u16);
+        let anim_id = if refs.subtype == Some(0x04) {
+            base.saturating_sub(12)
+                .saturating_add((direction_8 >> 1) as u16)
+                .saturating_add(12)
+                .saturating_add(direction_4 as u16)
+        } else {
+            base.saturating_add((direction_4 as u16) * 2)
+        };
+        candidates.push(ObjectFrameCandidate {
+            animation_id: anim_id,
+            frame_offset: Some(refs.animation_frame),
+            strategy: OriginalFrameAssemblyStrategy::VehicleDirectional,
+        });
+    }
+    add_current_animation_fallbacks(&mut candidates, refs);
+    dedup_frame_candidates(candidates)
+}
+
+fn add_current_animation_fallbacks(
+    candidates: &mut Vec<ObjectFrameCandidate>,
+    refs: OriginalObjectFrameRefs,
+) {
+    if let Some(current_anim) = refs.current_anim {
+        candidates.push(ObjectFrameCandidate {
+            animation_id: current_anim,
+            frame_offset: Some(refs.animation_frame),
+            strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
+        });
+    }
+    if let Some(frame) = refs.current_frame {
+        candidates.push(ObjectFrameCandidate {
+            animation_id: frame,
+            frame_offset: None,
+            strategy: OriginalFrameAssemblyStrategy::DirectFrame,
+        });
+    }
+    if let Some(base_anim) = refs.base_anim {
+        candidates.push(ObjectFrameCandidate {
+            animation_id: base_anim,
+            frame_offset: Some(0),
+            strategy: OriginalFrameAssemblyStrategy::AnimationInitial,
+        });
+    }
+}
+
+fn discrete_direction(direction: u8, directions: u8) -> u8 {
+    let sector = 256 / directions as u16;
+    let half = sector / 2;
+    let direction = direction as u16;
+    for index in 0..directions {
+        let center = index as u16 * sector;
+        if index == 0 {
+            if direction >= 256 - half || direction < center + half {
+                return index;
+            }
+        } else if direction >= center - half && direction < center + half {
+            return index;
+        }
+    }
+    0
+}
+
+fn dedup_frame_candidates(candidates: Vec<ObjectFrameCandidate>) -> Vec<ObjectFrameCandidate> {
     let mut seen = BTreeSet::new();
     candidates
         .into_iter()
@@ -824,8 +1039,9 @@ fn le_i16(bytes: &[u8], offset: usize) -> i16 {
 mod tests {
     use super::{
         HELE_RECORD_BYTES, HFRA_RECORD_BYTES, HSTA_RECORD_BYTES, OriginalAnimationBank,
-        OriginalFrameAssemblyStrategy, OriginalGameSpriteAtlas, OriginalObjectSpriteRenderAssets,
-        OriginalStaticFrameRefs, SPRITE_TAB_ENTRY_BYTES, decode_game_sprite,
+        OriginalFrameAssemblyStrategy, OriginalGameSpriteAtlas, OriginalObjectFrameRefs,
+        OriginalObjectSpriteRenderAssets, OriginalRenderObjectKind, OriginalStaticFrameRefs,
+        SPRITE_TAB_ENTRY_BYTES, decode_game_sprite,
     };
     use crate::engine::palette_decode::Palette;
 
@@ -952,6 +1168,85 @@ mod tests {
             Some(OriginalFrameAssemblyStrategy::AnimationInitial)
         );
         assert!(!assets.render_support_label().contains("00 00"));
+    }
+
+    #[test]
+    fn object_support_assembles_ped_weapon_and_vehicle_frames_conservatively() {
+        let palette = synthetic_palette();
+        let mut tab = vec![0u8; SPRITE_TAB_ENTRY_BYTES];
+        tab[4] = 8;
+        tab[5] = 1;
+        let dat = [0u8; 5];
+        let sprite_atlas = OriginalGameSpriteAtlas::from_bytes(
+            "synthetic/HSPR-0".to_string(),
+            "synthetic/HPAL".to_string(),
+            &tab,
+            &dat,
+            &palette,
+        )
+        .unwrap();
+        let mut hele = vec![0u8; HELE_RECORD_BYTES];
+        write_element(&mut hele, 0, 0, 0, false, 0);
+        let mut hfra = vec![0u8; HFRA_RECORD_BYTES];
+        write_frame(&mut hfra, 0, 0x0100, 0);
+        let mut hsta = Vec::new();
+        for _ in 0..16 {
+            hsta.extend_from_slice(&0u16.to_le_bytes());
+        }
+        let animation_bank =
+            OriginalAnimationBank::from_bytes(vec!["synthetic".to_string()], &hele, &hfra, &hsta)
+                .unwrap();
+        let assets = OriginalObjectSpriteRenderAssets {
+            sprite_atlas,
+            animation_bank,
+        };
+
+        let ped = assets.object_frame_support(OriginalObjectFrameRefs {
+            kind: OriginalRenderObjectKind::Ped,
+            base_anim: Some(0),
+            current_anim: Some(0),
+            current_frame: Some(0),
+            subtype: Some(0x02),
+            orientation: Some(0),
+            state: Some(0x10),
+            animation_frame: 9,
+        });
+        let weapon = assets.object_frame_support(OriginalObjectFrameRefs {
+            kind: OriginalRenderObjectKind::Weapon,
+            base_anim: None,
+            current_anim: Some(0),
+            current_frame: Some(0),
+            subtype: None,
+            orientation: None,
+            state: None,
+            animation_frame: 3,
+        });
+        let vehicle = assets.object_frame_support(OriginalObjectFrameRefs {
+            kind: OriginalRenderObjectKind::Vehicle,
+            base_anim: None,
+            current_anim: Some(0),
+            current_frame: Some(0),
+            subtype: Some(0),
+            orientation: Some(0),
+            state: None,
+            animation_frame: 4,
+        });
+
+        assert_eq!(
+            ped.strategy,
+            Some(OriginalFrameAssemblyStrategy::PedDirectional)
+        );
+        assert_eq!(
+            weapon.strategy,
+            Some(OriginalFrameAssemblyStrategy::WeaponGroundCandidate)
+        );
+        assert_eq!(
+            vehicle.strategy,
+            Some(OriginalFrameAssemblyStrategy::VehicleDirectional)
+        );
+        assert!(ped.sprites_supported);
+        assert!(weapon.sprites_supported);
+        assert!(vehicle.sprites_supported);
     }
 
     #[test]

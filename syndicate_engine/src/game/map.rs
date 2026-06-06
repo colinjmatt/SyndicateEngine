@@ -404,6 +404,7 @@ impl TacticalMap {
         graphics: &RuntimeOriginalGraphics,
         scene_model: &crate::engine::mission_scene::OriginalMissionScene,
         object_graphics: Option<&RuntimeOriginalObjectGraphics>,
+        object_animation_frame: u16,
     ) {
         let tile_size = vec2(
             graphics.bank().record_width as f32 * camera.zoom,
@@ -436,20 +437,28 @@ impl TacticalMap {
             }
 
             if let Some(object_graphics) = object_graphics {
-                for object in original_static_candidates_for_tile(
-                    scene_model,
-                    item.x as u16,
-                    item.y as u16,
-                    item.z as u16,
-                ) {
-                    object_graphics.draw_static_object(object, top_left, tile_size, camera.zoom);
+                if let Some(object_z) = item.z.checked_sub(1) {
+                    for object in original_candidates_for_tile(
+                        scene_model,
+                        item.x as u16,
+                        item.y as u16,
+                        object_z as u16,
+                    ) {
+                        object_graphics.draw_mission_object(
+                            object,
+                            top_left,
+                            tile_size,
+                            camera.zoom,
+                            object_animation_frame,
+                        );
+                    }
                 }
             }
         }
     }
 }
 
-fn original_static_candidates_for_tile(
+fn original_candidates_for_tile(
     scene_model: &crate::engine::mission_scene::OriginalMissionScene,
     tile_x: u16,
     tile_y: u16,
@@ -460,14 +469,13 @@ fn original_static_candidates_for_tile(
         .entries()
         .iter()
         .filter(|entry| {
-            entry.stage == crate::engine::mission_scene::OriginalDrawStage::Statics
-                && entry.tile.tile_x == tile_x
+            entry.tile.tile_x == tile_x
                 && entry.tile.tile_y == tile_y
                 && entry.tile.tile_z == tile_z
         })
         .filter_map(|entry| {
             scene_model.objects.iter().find(|object| {
-                object.kind == crate::engine::mission_scene::OriginalMissionObjectKind::Static
+                object.kind == entry.kind
                     && object.record_index == entry.record_index
                     && object.candidate_draw
             })
