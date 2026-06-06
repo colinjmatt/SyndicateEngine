@@ -481,12 +481,14 @@ impl TacticalMap {
             {
                 continue;
             }
+            let off_x = ((tile_x - x as f32) * 255.0).round().clamp(0.0, 255.0) as u8;
+            let off_y = ((tile_y - y as f32) * 255.0).round().clamp(0.0, 255.0) as u8;
             return Some(OriginalTilePoint {
                 tile_x: x as u16,
                 tile_y: y as u16,
                 tile_z: z as u16,
-                off_x: 128,
-                off_y: 128,
+                off_x,
+                off_y,
                 off_z: 0,
             });
         }
@@ -531,13 +533,38 @@ impl TacticalMap {
             if let Some(goal) = route_probe.goal_tile {
                 let p =
                     original_tile_marker_screen(camera, map_tiles, goal, tile_width, tile_height);
-                draw_circle_lines(p.x, p.y, 7.0, 2.0, YELLOW);
+                let color = if route_probe
+                    .requested_goal_tile
+                    .is_some_and(|requested| requested.key_tuple() != goal.key_tuple())
+                {
+                    SKYBLUE
+                } else {
+                    YELLOW
+                };
+                draw_circle_lines(p.x, p.y, 7.0, 2.0, color);
+            }
+            if let Some(requested) = route_probe.requested_goal_tile {
+                let p = original_tile_local_marker_screen(
+                    camera,
+                    map_tiles,
+                    requested,
+                    tile_width,
+                    tile_height,
+                );
+                draw_circle_lines(p.x, p.y, 10.0, 2.5, YELLOW);
+                draw_circle(p.x, p.y, 2.5, YELLOW);
             }
         }
 
         if let Some(cursor_tile) = cursor_tile {
             let p = cursor_screen.unwrap_or_else(|| {
-                original_tile_marker_screen(camera, map_tiles, cursor_tile, tile_width, tile_height)
+                original_tile_local_marker_screen(
+                    camera,
+                    map_tiles,
+                    cursor_tile,
+                    tile_width,
+                    tile_height,
+                )
             });
             draw_circle_lines(p.x, p.y, 9.0, 2.0, ORANGE);
             draw_circle(p.x, p.y, 2.5, ORANGE);
@@ -820,6 +847,16 @@ impl OriginalMapDrawPlan {
     }
 }
 
+trait OriginalTilePointKey {
+    fn key_tuple(self) -> (u16, u16, u16);
+}
+
+impl OriginalTilePointKey for OriginalTilePoint {
+    fn key_tuple(self) -> (u16, u16, u16) {
+        (self.tile_x, self.tile_y, self.tile_z)
+    }
+}
+
 fn original_map_tile_index(map_tiles: &OriginalMapTiles, x: i32, y: i32, z: usize) -> Option<u8> {
     if x >= 0 && y >= 0 && (x as usize) < map_tiles.width && (y as usize) < map_tiles.depth {
         return map_tiles.tile_at(x as usize, y as usize, z);
@@ -889,6 +926,45 @@ fn original_tile_marker_screen(
         tile_height,
     );
     camera.world_to_screen(top_left) + vec2(tile_width * 0.5, tile_height * 2.0 / 3.0) * camera.zoom
+}
+
+fn original_tile_local_marker_screen(
+    camera: &CameraRig,
+    map_tiles: &OriginalMapTiles,
+    tile: OriginalTilePoint,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    camera.world_to_screen(original_tile_local_marker_world(
+        map_tiles,
+        tile,
+        tile_width,
+        tile_height,
+    ))
+}
+
+fn original_tile_local_marker_world(
+    map_tiles: &OriginalMapTiles,
+    tile: OriginalTilePoint,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    let draw_z = tile.tile_z.saturating_add(1) as f32;
+    let top_left = original_map_tile_world_top_left(
+        map_tiles,
+        tile.tile_x as f32,
+        tile.tile_y as f32,
+        draw_z,
+        tile_width,
+        tile_height,
+    );
+    let frac_x = tile.off_x as f32 / 255.0;
+    let frac_y = tile.off_y as f32 / 255.0;
+    let local = vec2(
+        tile_width * 0.5 + (frac_x - frac_y) * tile_width * 0.5,
+        tile_height * 2.0 / 3.0 + (frac_x + frac_y) * tile_height / 3.0,
+    );
+    top_left + local
 }
 
 fn world_tile_intersects_viewport(
@@ -1023,8 +1099,9 @@ mod tests {
     use super::{
         OriginalMapDrawPlan, OriginalMapViewport, is_renderable_original_tile,
         original_map_tile_index, original_map_tile_world_top_left, original_screen_to_tile,
-        original_screen_to_tile_at_z,
+        original_screen_to_tile_at_z, original_tile_local_marker_world,
     };
+    use crate::engine::mission_scene::OriginalTilePoint;
     use crate::engine::{
         block_texture::IndexedBlockGraphics, map_tiles::OriginalMapTiles, palette_decode::Palette,
     };
@@ -1079,6 +1156,27 @@ mod tests {
 
         assert!((x - 3.0).abs() < 0.001);
         assert!((y - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn original_local_cursor_marker_roundtrips_fractional_pick() {
+        let map = synthetic_map_tiles(8, 8, 4);
+        let tile_width = 64.0;
+        let tile_height = 48.0;
+        let tile = OriginalTilePoint {
+            tile_x: 3,
+            tile_y: 5,
+            tile_z: 2,
+            off_x: 64,
+            off_y: 191,
+            off_z: 0,
+        };
+
+        let marker = original_tile_local_marker_world(&map, tile, tile_width, tile_height);
+        let (x, y) = original_screen_to_tile_at_z(&map, marker, 2, tile_width, tile_height);
+
+        assert!((x - (3.0 + 64.0 / 255.0)).abs() < 0.001);
+        assert!((y - (5.0 + 191.0 / 255.0)).abs() < 0.001);
     }
 
     #[test]

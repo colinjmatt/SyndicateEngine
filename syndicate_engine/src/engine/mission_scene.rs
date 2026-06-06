@@ -902,7 +902,7 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}",
+            "{}; {}; debug action resolution gate ready for local control labels only; no gameplay movement, door, inventory, vehicle, combat, or mission-completion mutation",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label()
         )
@@ -1983,7 +1983,7 @@ impl OriginalNavigationDebugProbe {
         match self.decision {
             OriginalNavigationDebugDecision::RuntimeDebugDisabled => self.guardrail.to_string(),
             OriginalNavigationDebugDecision::RuntimeDebugReady => format!(
-                "nav debug ready: nodes {}, edges8 {} diag {}/{}, slope {}, snap {}; debug-only",
+                "original control route graph ready: nodes {}, edges8 {} diag {}/{}, slope {}, snap {}; gated/local",
                 self.route_nodes,
                 self.same_level_edges,
                 self.diagonal_edges,
@@ -2212,7 +2212,7 @@ impl OriginalDebugInteractionProbe {
             vehicle_entry_candidates: 0,
             objective_target_candidates: 0,
             scenario_target_candidates: 0,
-            message: "interaction probe gated by G; debug-only and demo gameplay remains active"
+            message: "interaction/action gate disabled by G; original control is local-only and demo gameplay remains active"
                 .to_string(),
         }
     }
@@ -2229,8 +2229,7 @@ impl OriginalDebugInteractionProbe {
             vehicle_entry_candidates: 0,
             objective_target_candidates: 0,
             scenario_target_candidates: 0,
-            message: "interaction probe blocked: no selected original debug-agent marker"
-                .to_string(),
+            message: "interaction/action blocked: no selected original-agent marker".to_string(),
         }
     }
 
@@ -2246,7 +2245,7 @@ impl OriginalDebugInteractionProbe {
             vehicle_entry_candidates: 0,
             objective_target_candidates: 0,
             scenario_target_candidates: 0,
-            message: "interaction probe blocked: cursor is outside the candidate map".to_string(),
+            message: "interaction/action blocked: cursor is outside the candidate map".to_string(),
         }
     }
 
@@ -2272,10 +2271,10 @@ impl OriginalDebugInteractionProbe {
             OriginalDebugInteractionStatus::CandidateInteractionReady
         };
         let message = if total == 0 {
-            "interaction probe: no candidate door, pickup, vehicle, objective, or scenario bucket near cursor; candidate-only".to_string()
+            "interaction/action: no candidate door, pickup, vehicle, objective, or scenario bucket near cursor; candidate-only".to_string()
         } else {
             format!(
-                "interaction probe: candidate buckets near cursor doors {} pickups {} vehicles {} objectives {} scenarios {}; debug-only",
+                "interaction/action: candidate buckets near cursor doors {} pickups {} vehicles {} objectives {} scenarios {}; local-control only",
                 door_candidates,
                 weapon_pickup_candidates,
                 vehicle_entry_candidates,
@@ -2398,7 +2397,7 @@ impl OriginalDebugInteractionIntent {
             OriginalRuntimeRouteStatus::SpatialModelUnavailable,
             0,
             0,
-            "interaction intent gated by G; debug-only and demo gameplay remains active",
+            "interaction intent gated by G; original control is local-only and demo gameplay remains active",
         )
     }
 
@@ -2411,7 +2410,7 @@ impl OriginalDebugInteractionIntent {
             OriginalRuntimeRouteStatus::MissingStart,
             0,
             0,
-            "interaction intent blocked: no selected original debug-agent marker",
+            "interaction intent blocked: no selected original-agent marker",
         )
     }
 

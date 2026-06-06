@@ -14,8 +14,8 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
 - Metadata-selected mission loading reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime.
 - A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, candidate occupied/blocking buckets, typed GAME objective records, scenario action/trigger chains, MISS aggregate buckets, a conservative object draw queue, and aggregate original-map spatial/route/debug-navigation probes.
-- First-mission statics and any peds, vehicles, or ground weapons whose runtime proof gates pass can render from local original `HSPR-0`/`HELE`/`HFRA`/`HSTA` assets. The scene probe distinguishes original map tiles, rendered original statics, rendered/proven object candidates, candidate-only categories, candidate same-level and debug route probes, selectable/multi-select debug-agent markers, clicked candidate interaction buckets, queued debug interaction intents, and blocked navigation/gameplay semantics. Gameplay/pathfinding remain on the hand-authored demo grid.
-- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, static/object render readiness, spawn candidates, cursor tile candidates, route target snap status, gated debug-route status, candidate interaction/objective/scenario buckets, debug objective-progress labels, debug interaction-intent status, and navigation-probe counts without exposing local asset bytes or per-object dumps.
+- First-mission statics and any peds, vehicles, or ground weapons whose runtime proof gates pass can render from local original `HSPR-0`/`HELE`/`HFRA`/`HSTA` assets. The first-mission control view distinguishes original map tiles, rendered original statics, rendered/proven object candidates, selectable/multi-select original-agent markers, clicked candidate interaction buckets, queued original movement, local action-resolution state, candidate combat probes, and blocked navigation/gameplay semantics. Demo gameplay/pathfinding remain available on the hand-authored grid.
+- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, static/object render readiness, spawn candidates, cursor tile candidates with local offsets, route target snap status, gated original-control status, candidate interaction/objective/scenario buckets, debug objective-progress labels, local action results, and navigation-probe counts without exposing local asset bytes or per-object dumps.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -29,12 +29,13 @@ Controls:
 
 - `WASD` / arrow keys: pan camera
 - Mouse wheel: zoom
-- `1`-`4`: select agent; with `G` enabled in first-mission scene probe mode, select candidate original debug-agent markers instead. Hold Shift to add/remove markers from the debug selection set.
-- Right click: send selected agent to a tile in the demo city; in first-mission scene probe mode, run a local original-map candidate route probe, and with `G` enabled move only the selected debug marker set along proven candidate routes
-- Left click: attack in the demo city; with `G` enabled in first-mission scene probe mode, select a nearby candidate debug-agent marker
-- `E`: with first-mission scene probe mode active, queue debug-only interaction intents for selected original debug-agent markers at the current original cursor tile
-- `G`: in first-mission scene probe mode, toggle debug-only original-navigation markers that can follow proven candidate route overlays without moving real gameplay agents
-- `M`: cycle between the runtime original mission-map tile render, first-mission scene probe, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
+- `1`-`4`: select agents; in first-mission control mode, select candidate original-agent markers instead. Hold Shift to add/remove markers from the selected original-agent set.
+- Right click: send selected agent to a tile in the demo city; in first-mission control mode, move selected original-agent markers along proven original route overlays. Hold Shift while right-clicking to append to the current original movement queue.
+- Left click: attack in the demo city; in first-mission control mode, select a nearby original-agent marker or run a candidate combat/range probe against a clicked non-squad ped.
+- `E`: in first-mission control mode, queue debug-gated interaction/action intents for selected original-agent markers at the current original cursor tile.
+- `F`: focus the camera on the selected original-agent marker in first-mission control mode.
+- `G`: in first-mission control mode, toggle gated original control on/off.
+- `M`: cycle between the runtime original mission-map tile render, first-mission control view, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
 
@@ -96,8 +97,8 @@ Screenshots are written under `visual_diagnostics/`, which is ignored by git. Do
 1. Decode Bullfrog `.TAB`/`.DAT` sprite banks into runtime textures.
 2. Remap indexed art through decoded palettes into RGBA textures.
 3. Prove the original sprite/frame renderer for statics, peds, weapons, vehicles, and sfx using runtime-local assets only.
-4. Prove original map walkability, height transitions, door/window behavior, object occupancy, and spawn layers enough to promote gated debug-agent movement into an original-navigation gameplay option.
-5. Prove objective, scenario, door, pickup, vehicle-entry, AI, and mission-completion semantics beyond the current candidate-only GAME/MISS buckets.
+4. Promote the gated first-mission control layer into a real original-navigation gameplay option as walkability, height transitions, door/window behavior, object occupancy, and spawn layers are proven.
+5. Promote local action-resolution state into real objective, scenario, door, pickup, vehicle-entry, AI, combat, and mission-completion semantics as each behavior is proven.
 6. Add tactical systems: weapons, civilians, vehicles, persuasion, destructibility, and AI.
 7. Add modern UX: scalable UI, remappable controls, saves, accessibility, and mod packs.
 
