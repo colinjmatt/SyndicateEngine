@@ -11,7 +11,8 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Four controllable agents with selection and right-click movement orders.
 - Asset indexer that scans `original_assets/` for maps, missions, palettes, sprites, and sounds.
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
-- Runtime-local decoded `MAP01.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, mission palette `HPAL02.DAT`, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original MAP01 compound render; gameplay still uses the hand-authored demo grid.
+- Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
+- Metadata-only mission selection reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime without decoding objectives, people, vehicles, or gameplay semantics.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -27,7 +28,7 @@ Controls:
 - Mouse wheel: zoom
 - `1`-`4`: select agent
 - Right click: send selected agent to a tile
-- `M`: cycle between the runtime original MAP01 tile render, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
+- `M`: cycle between the runtime original mission-map tile render, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
 
@@ -73,6 +74,16 @@ cargo run --bin probe_manifest -- --execute ../original_assets
 ```
 
 These commands print capped aggregate selector IDs, dry-run phases, support tiers, execution readiness, group/support counts, and stop conditions for local clean-room decoder probes. They do not print asset bytes, chunk data, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics.
+
+## Local visual diagnostics
+
+When the engine is running, capture a local screenshot for visual comparison:
+
+```bash
+scripts/capture_visual_diagnostic.sh
+```
+
+Screenshots are written under `visual_diagnostics/`, which is ignored by git. Do not commit rendered original-asset previews.
 
 ## Roadmap
 

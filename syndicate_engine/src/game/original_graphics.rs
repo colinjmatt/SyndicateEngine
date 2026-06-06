@@ -10,7 +10,14 @@ pub struct RuntimeOriginalGraphics {
 
 impl RuntimeOriginalGraphics {
     pub fn from_root(root: impl AsRef<Path>) -> Option<Self> {
-        let bank = IndexedBlockGraphics::from_root(root).ok()?;
+        Self::from_root_with_palette_id(root, None)
+    }
+
+    pub fn from_root_with_palette_id(
+        root: impl AsRef<Path>,
+        palette_id: Option<u8>,
+    ) -> Option<Self> {
+        let bank = IndexedBlockGraphics::from_root_with_palette_id(root, palette_id).ok()?;
         let (width, height) = bank.texture_size_u16();
         let texture = Texture2D::from_rgba8(width, height, bank.rgba());
         texture.set_filter(FilterMode::Nearest);

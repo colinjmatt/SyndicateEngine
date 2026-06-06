@@ -6,7 +6,10 @@
 
 use std::{collections::VecDeque, fs, path::Path};
 
-use crate::engine::map_decode::{MapDecodeError, decode_map_payload_bytes};
+use crate::engine::{
+    map_decode::{MapDecodeError, decode_map_payload_bytes},
+    mission_source,
+};
 
 const HEADER_BYTES: usize = 12;
 const MAX_REASONABLE_DIMENSION: usize = 256;
@@ -55,9 +58,16 @@ pub enum OriginalMapTilesError {
 
 impl OriginalMapTiles {
     pub fn from_root(root: impl AsRef<Path>) -> Result<Self, OriginalMapTilesError> {
+        Self::from_root_for_map_id(root, 1)
+    }
+
+    pub fn from_root_for_map_id(
+        root: impl AsRef<Path>,
+        map_id: u16,
+    ) -> Result<Self, OriginalMapTilesError> {
         let root = root.as_ref();
-        for relative in MAP_TILE_STACK_CANDIDATES {
-            let path = root.join(relative);
+        for relative in mission_source::map_candidates(map_id) {
+            let path = root.join(&relative);
             let Ok(data) = fs::read(&path) else {
                 continue;
             };
@@ -364,8 +374,6 @@ fn count_unique(values: impl Iterator<Item = usize>) -> usize {
 fn map_decode_error_label(err: MapDecodeError) -> OriginalMapTilesError {
     OriginalMapTilesError::Decode(format!("{err:?}"))
 }
-
-const MAP_TILE_STACK_CANDIDATES: &[&str] = &["SYNDICAT/DATA/MAP01.DAT", "DATADISK/DATA/MAP01.DAT"];
 
 const TILE_TYPE_CANDIDATES: &[&str] = &["SYNDICAT/DATA/COL01.DAT", "DATADISK/DATA/COL01.DAT"];
 

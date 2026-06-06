@@ -3,17 +3,18 @@ use crate::{
         assets::AssetIndex,
         block_decode::BlockIndexPlausibility,
         camera::CameraRig,
-        iso::{grid_to_iso, iso_to_grid},
+        iso::iso_to_grid,
         map_block_correlation::MapBlockCorrelationScene,
         map_catalog::MapDiagnosticSceneEntry,
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
+        mission_source::OriginalMissionSelection,
     },
     game::{
         agent::Agent,
         combat::{AttackResult, Combatant, resolve_attack},
-        map::TacticalMap,
+        map::{TacticalMap, original_map_tile_world_top_left},
         original_graphics::RuntimeOriginalGraphics,
         pathfinding::{GridPos, find_path},
         save::{AgentSave, HostileSave, SaveGame, read_save, write_save},
@@ -34,6 +35,7 @@ pub struct WorldState {
     sim_clock: SimClock,
     render_mode: MapRenderMode,
     selected_map_scene: usize,
+    original_mission: Option<OriginalMissionSelection>,
     original_graphics: Option<RuntimeOriginalGraphics>,
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
@@ -61,7 +63,7 @@ impl MapRenderMode {
             Self::InferredLayer => "MAP inferred layer".to_string(),
             Self::CandidateField(field) => format!("MAP {}", field.provisional_label()),
             Self::BlockAddressability => "MAP block addressability".to_string(),
-            Self::OriginalMapTiles => "original MAP01 tiles".to_string(),
+            Self::OriginalMapTiles => "original mission map tiles".to_string(),
             Self::OriginalGraphicsMap => "MAP original graphics candidate".to_string(),
             Self::OriginalGraphicsAtlas => "original graphics atlas".to_string(),
         }
@@ -83,8 +85,20 @@ impl MapRenderMode {
 
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
-        let original_graphics = RuntimeOriginalGraphics::from_root(assets.root_path());
-        let original_map_tiles = OriginalMapTiles::from_root(assets.root_path()).ok();
+        let original_mission = OriginalMissionSelection::from_root(assets.root_path()).ok();
+        let selected_map_id = original_mission
+            .as_ref()
+            .map(|selection| selection.map_id)
+            .unwrap_or(1);
+        let selected_palette_id = original_mission
+            .as_ref()
+            .map(|selection| selection.palette_id);
+        let original_graphics = RuntimeOriginalGraphics::from_root_with_palette_id(
+            assets.root_path(),
+            selected_palette_id,
+        );
+        let original_map_tiles =
+            OriginalMapTiles::from_root_for_map_id(assets.root_path(), selected_map_id).ok();
         let original_tile_types = OriginalTileTypes::from_root(assets.root_path()).ok();
         let graphics_loaded = original_graphics.is_some();
         let original_map_loaded = graphics_loaded && original_map_tiles.is_some();
@@ -96,12 +110,19 @@ impl WorldState {
             MapRenderMode::DemoCity
         };
         let camera = if original_map_loaded {
-            original_map_start_camera(original_map_tiles.as_ref(), original_tile_types.as_ref())
+            original_map_start_camera(
+                original_map_tiles.as_ref(),
+                original_tile_types.as_ref(),
+                original_graphics.as_ref(),
+            )
         } else {
             CameraRig::default()
         };
         let combat_log = if original_map_loaded {
-            "Runtime original MAP01 tile stacks loaded".to_string()
+            original_mission
+                .as_ref()
+                .map(OriginalMissionSelection::status_label)
+                .unwrap_or_else(|| "Runtime original mission map tile stacks loaded".to_string())
         } else if graphics_loaded {
             "Runtime original graphics loaded".to_string()
         } else {
@@ -122,6 +143,7 @@ impl WorldState {
             sim_clock: SimClock::default(),
             render_mode,
             selected_map_scene: 0,
+            original_mission,
             original_graphics,
             original_map_tiles,
             original_tile_types,
@@ -573,10 +595,18 @@ impl WorldState {
             }
             draw_minimap(&self.agents);
         } else {
-            let map_label = self.current_map_panel_label();
+            let map_label = if self.render_mode == MapRenderMode::OriginalMapTiles {
+                self.original_mission
+                    .as_ref()
+                    .map(OriginalMissionSelection::panel_label)
+                    .unwrap_or_else(|| self.current_map_panel_label())
+            } else {
+                self.current_map_panel_label()
+            };
             draw_map_diagnostic_panel(
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
+                self.original_mission.as_ref(),
                 self.original_graphics.as_ref(),
                 self.original_map_tiles.as_ref(),
                 self.original_tile_types.as_ref(),
@@ -603,15 +633,25 @@ impl WorldState {
 fn original_map_start_camera(
     map_tiles: Option<&OriginalMapTiles>,
     tile_types: Option<&OriginalTileTypes>,
+    graphics: Option<&RuntimeOriginalGraphics>,
 ) -> CameraRig {
     let mut camera = CameraRig::default();
     camera.zoom = 0.82;
 
-    if let Some(region) =
-        map_tiles.and_then(|map_tiles| map_tiles.primary_runtime_region(tile_types))
-    {
+    if let (Some(map_tiles), Some(graphics), Some(region)) = (
+        map_tiles,
+        graphics,
+        map_tiles.and_then(|map_tiles| map_tiles.primary_runtime_region(tile_types)),
+    ) {
         let (center_x, center_y) = region.center();
-        let focus = grid_to_iso(center_x, center_y, 1.0);
+        let focus = original_map_tile_world_top_left(
+            map_tiles,
+            center_x,
+            center_y,
+            1.0,
+            graphics.bank().record_width as f32,
+            graphics.bank().record_height as f32,
+        );
         camera.offset = vec2(720.0, 430.0) - focus * camera.zoom;
     }
 
@@ -671,6 +711,7 @@ fn draw_minimap(agents: &[Agent]) {
 fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
+    mission_selection: Option<&OriginalMissionSelection>,
     graphics: Option<&RuntimeOriginalGraphics>,
     map_tiles: Option<&OriginalMapTiles>,
     tile_types: Option<&OriginalTileTypes>,
@@ -797,18 +838,33 @@ fn draw_map_diagnostic_panel(
                     })
                     .unwrap_or_else(|| map_tiles.source_label.clone());
                 draw_text(&source_label, x + 16.0, y + 160.0, 12.0, GRAY);
+                if let Some(selection) = mission_selection {
+                    draw_text(
+                        &format!(
+                            "mission {} map {} scroll {:?}->{:?}",
+                            selection.mission_id,
+                            selection.map_id,
+                            selection.min_scroll_tile,
+                            selection.max_scroll_tile
+                        ),
+                        x + 16.0,
+                        y + 178.0,
+                        12.0,
+                        GRAY,
+                    );
+                }
             }
             draw_text(
                 "Runtime MAP tile placement; local pixels only",
                 x + 16.0,
-                y + 184.0,
+                y + 202.0,
                 13.0,
                 YELLOW,
             );
             draw_text(
                 "No walkability, objects, mission, or entity semantics",
                 x + 16.0,
-                y + 202.0,
+                y + 220.0,
                 12.0,
                 GRAY,
             );
@@ -936,7 +992,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMapTiles => 220.0,
+        MapRenderMode::OriginalMapTiles => 238.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,

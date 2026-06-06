@@ -7,6 +7,7 @@
 use std::{fs, path::Path};
 
 use crate::engine::{
+    mission_source,
     palette_decode::{Palette, Rgb8},
     rnc::{RncBlock, RncError},
 };
@@ -56,8 +57,15 @@ struct BlockGraphicsCandidate {
 
 impl IndexedBlockGraphics {
     pub fn from_root(root: impl AsRef<Path>) -> Result<Self, IndexedBlockGraphicsError> {
+        Self::from_root_with_palette_id(root, None)
+    }
+
+    pub fn from_root_with_palette_id(
+        root: impl AsRef<Path>,
+        palette_id: Option<u8>,
+    ) -> Result<Self, IndexedBlockGraphicsError> {
         let root = root.as_ref();
-        let (palette_label, palette) = load_palette(root)?;
+        let (palette_label, palette) = load_palette(root, palette_id)?;
         if let Ok((candidate, decoded)) = load_hblk_tile_candidate(root) {
             return Self::from_hblk_map_tiles(
                 candidate.relative_path.to_string(),
@@ -383,9 +391,12 @@ fn choose_atlas_columns(record_count: usize) -> usize {
     }
 }
 
-fn load_palette(root: &Path) -> Result<(String, Palette), IndexedBlockGraphicsError> {
-    for relative in PALETTE_CANDIDATES {
-        let path = root.join(relative);
+fn load_palette(
+    root: &Path,
+    preferred_palette_id: Option<u8>,
+) -> Result<(String, Palette), IndexedBlockGraphicsError> {
+    for relative in palette_candidates(preferred_palette_id) {
+        let path = root.join(&relative);
         let Ok(data) = fs::read(&path) else {
             continue;
         };
@@ -396,6 +407,22 @@ fn load_palette(root: &Path) -> Result<(String, Palette), IndexedBlockGraphicsEr
         }
     }
     Err(IndexedBlockGraphicsError::NoPaletteCandidate)
+}
+
+fn palette_candidates(preferred_palette_id: Option<u8>) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if let Some(palette_id) = preferred_palette_id {
+        candidates.extend(mission_source::palette_candidates(palette_id));
+    }
+
+    for relative in FALLBACK_PALETTE_CANDIDATES {
+        let relative = relative.to_string();
+        if !candidates.contains(&relative) {
+            candidates.push(relative);
+        }
+    }
+
+    candidates
 }
 
 fn load_hblk_tile_candidate(
@@ -445,7 +472,7 @@ fn decode_maybe_rnc(data: &[u8]) -> Result<Vec<u8>, RncError> {
     }
 }
 
-const PALETTE_CANDIDATES: &[&str] = &[
+const FALLBACK_PALETTE_CANDIDATES: &[&str] = &[
     "SYNDICAT/DATA/HPAL02.DAT",
     "DATADISK/DATA/HPAL02.DAT",
     "SYNDICAT/DATA/HPAL01.DAT",

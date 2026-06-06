@@ -15,6 +15,9 @@ use crate::game::original_graphics::RuntimeOriginalGraphics;
 use crate::game::pathfinding::GridPos;
 use macroquad::prelude::*;
 
+const ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES: i32 = 14;
+const ORIGINAL_MAP_OUT_OF_BOUNDS_GROUND_TILE: u8 = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileKind {
     Road,
@@ -356,50 +359,203 @@ impl TacticalMap {
         _tile_types: Option<&OriginalTileTypes>,
         graphics: &RuntimeOriginalGraphics,
     ) {
-        let size = vec2(
+        let tile_size = vec2(
             graphics.bank().record_width as f32 * camera.zoom,
             graphics.bank().record_height as f32 * camera.zoom,
         );
+        let viewport = OriginalMapViewport::from_camera(camera);
+        let draw_plan = OriginalMapDrawPlan::for_viewport(
+            map_tiles,
+            &viewport,
+            graphics.bank().record_width as f32,
+            graphics.bank().record_height as f32,
+        );
 
-        for diagonal in 0..(map_tiles.width + map_tiles.depth).saturating_sub(1) {
-            let min_y = diagonal.saturating_sub(map_tiles.width.saturating_sub(1));
-            let max_y = diagonal.min(map_tiles.depth.saturating_sub(1));
-            for y in min_y..=max_y {
-                let x = diagonal - y;
-                let Some(stack) = map_tiles.stack_at(x, y) else {
-                    continue;
-                };
-
-                for visual_z in 0..stack.len() {
-                    let tile_index = stack[visual_z];
-                    if tile_index as usize >= graphics.bank().record_count
-                        || !is_renderable_original_tile(tile_index, graphics.bank())
-                    {
-                        continue;
-                    }
-
-                    let center = camera.world_to_screen(grid_to_iso(
-                        x as f32,
-                        y as f32,
-                        visual_z as f32 * 0.5,
-                    ));
-                    let top_left = vec2(
-                        center.x - size.x * 0.5,
-                        center.y - size.y + 16.0 * camera.zoom,
-                    );
-                    if top_left.x > screen_width() + size.x
-                        || top_left.y > screen_height() + size.y
-                        || top_left.x + size.x < -size.x
-                        || top_left.y + size.y < -size.y
-                    {
-                        continue;
-                    }
-
-                    graphics.draw_record(tile_index as usize, top_left, size, WHITE);
-                }
+        for item in draw_plan.items() {
+            let Some(tile_index) = original_map_tile_index(map_tiles, item.x, item.y, item.z)
+            else {
+                continue;
+            };
+            if tile_index as usize >= graphics.bank().record_count
+                || !is_renderable_original_tile(tile_index, graphics.bank())
+            {
+                continue;
             }
+
+            let top_left = camera.world_to_screen(item.world_top_left);
+            if top_left.x > screen_width() + tile_size.x
+                || top_left.y > screen_height() + tile_size.y
+                || top_left.x + tile_size.x < -tile_size.x
+                || top_left.y + tile_size.y < -tile_size.y
+            {
+                continue;
+            }
+
+            graphics.draw_record(tile_index as usize, top_left, tile_size, WHITE);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OriginalMapViewport {
+    pub origin: Vec2,
+    pub size: Vec2,
+    pub zoom: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OriginalMapDrawItem {
+    x: i32,
+    y: i32,
+    z: usize,
+    world_top_left: Vec2,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct OriginalMapDrawPlan {
+    items: Vec<OriginalMapDrawItem>,
+}
+
+impl OriginalMapViewport {
+    fn from_camera(camera: &CameraRig) -> Self {
+        Self {
+            origin: camera.screen_to_world(vec2(0.0, 0.0)),
+            size: vec2(screen_width(), screen_height()) / camera.zoom,
+            zoom: camera.zoom,
+        }
+    }
+}
+
+impl OriginalMapDrawPlan {
+    fn for_viewport(
+        map_tiles: &OriginalMapTiles,
+        viewport: &OriginalMapViewport,
+        tile_width: f32,
+        tile_height: f32,
+    ) -> Self {
+        let start_tile =
+            original_screen_to_tile(map_tiles, viewport.origin, tile_width, tile_height);
+        let sw = start_tile.0.floor() as i32 - ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES;
+        let sh = start_tile.1.floor() as i32 - ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES;
+        let max_tz = map_tiles.height as i32 + 1;
+        let step_x = tile_width * 0.5;
+        let step_y = tile_height / 3.0;
+        let chk = (viewport.size.x / step_x).ceil() as i32
+            + 2
+            + (viewport.size.y / step_y).ceil() as i32
+            + max_tz * 2
+            + ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES * 2;
+        let shm = sh + chk;
+        let chky = sh.max(0);
+        let min_tile_y = chky - ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES;
+        let max_tile_x = map_tiles.width as i32 + ORIGINAL_MAP_VIEWPORT_OVERSCAN_TILES;
+        let zr = shm + max_tz + 1;
+        let mut items = Vec::new();
+
+        for inc in 0..zr {
+            let ye = sh + inc;
+            let ys = ye - max_tz - 2;
+            let mut tile_z = max_tz + 1;
+            for yb in ys..ye {
+                if yb < 0 || yb < sh || yb >= shm {
+                    tile_z -= 1;
+                    continue;
+                }
+
+                let mut tile_y = yb;
+                let mut tile_x = sw;
+                while tile_y >= min_tile_y && tile_x < max_tile_x {
+                    if tile_z >= 0
+                        && (tile_z as usize) < map_tiles.height
+                        && original_map_tile_index(map_tiles, tile_x, tile_y, tile_z as usize)
+                            .is_some()
+                    {
+                        let world_top_left = original_map_tile_world_top_left(
+                            map_tiles,
+                            tile_x as f32,
+                            tile_y as f32,
+                            tile_z as f32,
+                            tile_width,
+                            tile_height,
+                        );
+                        if world_tile_intersects_viewport(
+                            world_top_left,
+                            vec2(tile_width, tile_height),
+                            viewport,
+                        ) {
+                            items.push(OriginalMapDrawItem {
+                                x: tile_x,
+                                y: tile_y,
+                                z: tile_z as usize,
+                                world_top_left,
+                            });
+                        }
+                    }
+
+                    tile_x += 1;
+                    tile_y -= 1;
+                }
+                tile_z -= 1;
+            }
+        }
+
+        Self { items }
+    }
+
+    fn items(&self) -> &[OriginalMapDrawItem] {
+        &self.items
+    }
+}
+
+fn original_map_tile_index(map_tiles: &OriginalMapTiles, x: i32, y: i32, z: usize) -> Option<u8> {
+    if x >= 0 && y >= 0 && (x as usize) < map_tiles.width && (y as usize) < map_tiles.depth {
+        return map_tiles.tile_at(x as usize, y as usize, z);
+    }
+
+    if z < 2 {
+        return Some(ORIGINAL_MAP_OUT_OF_BOUNDS_GROUND_TILE);
+    }
+
+    None
+}
+
+pub fn original_map_tile_world_top_left(
+    map_tiles: &OriginalMapTiles,
+    x: f32,
+    y: f32,
+    z: f32,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    let step_y = tile_height / 3.0;
+    vec2(
+        (map_tiles.width as f32 + (x - y)) * tile_width * 0.5,
+        ((map_tiles.height as f32 + 1.0 + x + y) - (z - 1.0)) * step_y,
+    )
+}
+
+fn original_screen_to_tile(
+    map_tiles: &OriginalMapTiles,
+    screen: Vec2,
+    tile_width: f32,
+    tile_height: f32,
+) -> (f32, f32) {
+    let x = screen.x - (map_tiles.width as f32 + 1.0) * tile_width * 0.5;
+    let y = screen.y - (map_tiles.height as f32 + 2.0) * tile_height / 3.0;
+    let dx = x / (tile_width * 0.5);
+    let dy = y / (tile_height / 3.0);
+    ((dx + dy) * 0.5, (dy - dx) * 0.5)
+}
+
+fn world_tile_intersects_viewport(
+    top_left: Vec2,
+    size: Vec2,
+    viewport: &OriginalMapViewport,
+) -> bool {
+    top_left.x <= viewport.origin.x + viewport.size.x + size.x
+        && top_left.y <= viewport.origin.y + viewport.size.y + size.y
+        && top_left.x + size.x >= viewport.origin.x - size.x
+        && top_left.y + size.y >= viewport.origin.y - size.y
 }
 
 fn is_renderable_original_tile(tile_index: u8, graphics: &IndexedBlockGraphics) -> bool {
@@ -520,8 +676,14 @@ fn signature_tile_color(class: u8) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::is_renderable_original_tile;
-    use crate::engine::{block_texture::IndexedBlockGraphics, palette_decode::Palette};
+    use super::{
+        OriginalMapDrawPlan, OriginalMapViewport, is_renderable_original_tile,
+        original_map_tile_index, original_map_tile_world_top_left,
+    };
+    use crate::engine::{
+        block_texture::IndexedBlockGraphics, map_tiles::OriginalMapTiles, palette_decode::Palette,
+    };
+    use macroquad::prelude::*;
 
     #[test]
     fn renders_tiles_by_runtime_pixel_visibility_not_col_type() {
@@ -530,6 +692,49 @@ mod tests {
         assert!(!is_renderable_original_tile(0, &graphics));
         assert!(is_renderable_original_tile(1, &graphics));
         assert!(!is_renderable_original_tile(2, &graphics));
+    }
+
+    #[test]
+    fn original_projection_matches_freesynd_tile_step() {
+        let map = synthetic_map_tiles(4, 4, 3);
+
+        let ground = original_map_tile_world_top_left(&map, 1.0, 2.0, 0.0, 64.0, 48.0);
+        let upper = original_map_tile_world_top_left(&map, 1.0, 2.0, 1.0, 64.0, 48.0);
+
+        assert_eq!(ground.x, 96.0);
+        assert_eq!(ground.y - upper.y, 16.0);
+    }
+
+    #[test]
+    fn viewport_draw_plan_keeps_only_map_or_low_z_fallbacks_without_asset_bytes() {
+        let map = synthetic_map_tiles(5, 5, 3);
+        let viewport = OriginalMapViewport {
+            origin: vec2(0.0, 0.0),
+            size: vec2(640.0, 480.0),
+            zoom: 1.0,
+        };
+
+        let plan = OriginalMapDrawPlan::for_viewport(&map, &viewport, 64.0, 48.0);
+
+        assert!(!plan.items().is_empty());
+        assert!(plan.items().iter().all(|item| {
+            let inside = item.x >= 0
+                && item.y >= 0
+                && (item.x as usize) < map.width
+                && (item.y as usize) < map.depth;
+            inside || item.z < 2
+        }));
+        assert!(plan.items().iter().all(|item| item.z < map.height));
+    }
+
+    #[test]
+    fn out_of_bounds_low_z_uses_freesynd_ground_fallback_without_asset_bytes() {
+        let map = synthetic_map_tiles(5, 5, 3);
+
+        assert_eq!(original_map_tile_index(&map, 2, 2, 0), Some(1));
+        assert_eq!(original_map_tile_index(&map, -1, 2, 0), Some(6));
+        assert_eq!(original_map_tile_index(&map, 5, 2, 1), Some(6));
+        assert_eq!(original_map_tile_index(&map, -1, 2, 2), None);
     }
 
     fn synthetic_graphics_bank() -> IndexedBlockGraphics {
@@ -545,5 +750,24 @@ mod tests {
             &palette,
         )
         .unwrap()
+    }
+
+    fn synthetic_map_tiles(width: u32, depth: u32, height: u32) -> OriginalMapTiles {
+        let column_count = (width * depth) as usize;
+        let height = height as usize;
+        let mut data = Vec::new();
+        data.extend_from_slice(&width.to_le_bytes());
+        data.extend_from_slice(&depth.to_le_bytes());
+        data.extend_from_slice(&(height as u32).to_le_bytes());
+        let offset_table_bytes = column_count * 4;
+        let mut stack_payload = Vec::new();
+        for _ in 0..column_count {
+            let offset_from_byte_12 = (offset_table_bytes + stack_payload.len()) as u32;
+            data.extend_from_slice(&offset_from_byte_12.to_le_bytes());
+            stack_payload.extend(std::iter::repeat_n(1u8, height));
+        }
+        data.extend_from_slice(&stack_payload);
+
+        OriginalMapTiles::from_decoded_bytes("synthetic/MAP01.DAT".to_string(), &data).unwrap()
     }
 }
