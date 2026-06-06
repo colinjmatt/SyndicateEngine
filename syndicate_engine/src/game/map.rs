@@ -12,6 +12,7 @@ use crate::engine::{
     palette,
 };
 use crate::game::original_graphics::RuntimeOriginalGraphics;
+use crate::game::original_sprites::RuntimeOriginalObjectGraphics;
 use crate::game::pathfinding::GridPos;
 use macroquad::prelude::*;
 
@@ -394,6 +395,84 @@ impl TacticalMap {
             graphics.draw_record(tile_index as usize, top_left, tile_size, WHITE);
         }
     }
+
+    pub fn draw_original_mission_scene(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        _tile_types: Option<&OriginalTileTypes>,
+        graphics: &RuntimeOriginalGraphics,
+        scene_model: &crate::engine::mission_scene::OriginalMissionScene,
+        object_graphics: Option<&RuntimeOriginalObjectGraphics>,
+    ) {
+        let tile_size = vec2(
+            graphics.bank().record_width as f32 * camera.zoom,
+            graphics.bank().record_height as f32 * camera.zoom,
+        );
+        let viewport = OriginalMapViewport::from_camera(camera);
+        let draw_plan = OriginalMapDrawPlan::for_viewport(
+            map_tiles,
+            &viewport,
+            graphics.bank().record_width as f32,
+            graphics.bank().record_height as f32,
+        );
+
+        for item in draw_plan.items() {
+            let top_left = camera.world_to_screen(item.world_top_left);
+            if top_left.x > screen_width() + tile_size.x
+                || top_left.y > screen_height() + tile_size.y
+                || top_left.x + tile_size.x < -tile_size.x
+                || top_left.y + tile_size.y < -tile_size.y
+            {
+                continue;
+            }
+
+            if let Some(tile_index) = original_map_tile_index(map_tiles, item.x, item.y, item.z) {
+                if (tile_index as usize) < graphics.bank().record_count
+                    && is_renderable_original_tile(tile_index, graphics.bank())
+                {
+                    graphics.draw_record(tile_index as usize, top_left, tile_size, WHITE);
+                }
+            }
+
+            if let Some(object_graphics) = object_graphics {
+                for object in original_static_candidates_for_tile(
+                    scene_model,
+                    item.x as u16,
+                    item.y as u16,
+                    item.z as u16,
+                ) {
+                    object_graphics.draw_static_object(object, top_left, tile_size, camera.zoom);
+                }
+            }
+        }
+    }
+}
+
+fn original_static_candidates_for_tile(
+    scene_model: &crate::engine::mission_scene::OriginalMissionScene,
+    tile_x: u16,
+    tile_y: u16,
+    tile_z: u16,
+) -> Vec<&crate::engine::mission_scene::OriginalMissionObjectCandidate> {
+    scene_model
+        .draw_queue
+        .entries()
+        .iter()
+        .filter(|entry| {
+            entry.stage == crate::engine::mission_scene::OriginalDrawStage::Statics
+                && entry.tile.tile_x == tile_x
+                && entry.tile.tile_y == tile_y
+                && entry.tile.tile_z == tile_z
+        })
+        .filter_map(|entry| {
+            scene_model.objects.iter().find(|object| {
+                object.kind == crate::engine::mission_scene::OriginalMissionObjectKind::Static
+                    && object.record_index == entry.record_index
+                    && object.candidate_draw
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

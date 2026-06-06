@@ -13,6 +13,7 @@ pub mod map_scene;
 pub mod map_tiles;
 pub mod mission_scene;
 pub mod mission_source;
+pub mod original_sprites;
 pub mod palette;
 pub mod palette_decode;
 pub mod report;

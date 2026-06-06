@@ -12,6 +12,7 @@ use std::{
 
 use crate::engine::{
     mission_source::OriginalMissionSelection,
+    original_sprites::{OriginalObjectSpriteRenderAssets, OriginalStaticFrameRefs},
     rnc::{RncBlock, RncError},
 };
 
@@ -175,6 +176,8 @@ pub struct OriginalStaticRenderProof {
     pub supported_animation_count: usize,
     pub supported_frame_count: usize,
     pub supported_sprite_count: usize,
+    pub runtime_frame_assembly_count: usize,
+    pub runtime_renderable_static_count: usize,
     pub decision: OriginalStaticRenderDecision,
     pub blocker: String,
 }
@@ -282,6 +285,11 @@ impl OriginalMissionScene {
         let objects = collect_candidate_objects(decoded);
         let sprite_support = OriginalSpriteBankSupport::from_root(root);
         let animation_catalog = AnimationCatalog::from_root(root);
+        let object_render_assets = OriginalObjectSpriteRenderAssets::from_root_with_palette_id(
+            root,
+            Some(selection.palette_id),
+        )
+        .ok();
         Self::from_parts(
             selection,
             mission_label,
@@ -289,6 +297,7 @@ impl OriginalMissionScene {
             objects,
             sprite_support,
             animation_catalog,
+            object_render_assets.as_ref(),
         )
     }
 
@@ -299,6 +308,7 @@ impl OriginalMissionScene {
         objects: Vec<OriginalMissionObjectCandidate>,
         sprite_support: OriginalSpriteBankSupport,
         animation_catalog: AnimationCatalog,
+        object_render_assets: Option<&OriginalObjectSpriteRenderAssets>,
     ) -> Self {
         let animation_support = OriginalAnimationCatalogSupport::from_catalog(
             &animation_catalog,
@@ -312,6 +322,7 @@ impl OriginalMissionScene {
             &objects,
             &animation_catalog,
             &sprite_support,
+            object_render_assets,
         );
         let spawn_probe = OriginalSpawnProbe::from_objects_and_game_bytes(&objects, decoded);
         let navigation_probe = OriginalNavigationProbe::from_decoded_game_bytes(decoded);
@@ -400,10 +411,17 @@ impl OriginalMissionScene {
     }
 
     pub fn runtime_status_label(&self) -> String {
-        format!(
-            "First mission scene model loaded; static render disabled ({} candidates)",
-            self.static_render_proof.candidate_count
-        )
+        match self.static_render_proof.decision {
+            OriginalStaticRenderDecision::RuntimeRenderReady => format!(
+                "First mission scene model loaded; runtime static rendering ready ({}/{} candidates)",
+                self.static_render_proof.runtime_renderable_static_count,
+                self.static_render_proof.candidate_count
+            ),
+            OriginalStaticRenderDecision::RuntimeRenderDisabled => format!(
+                "First mission scene model loaded; static render disabled ({} candidates)",
+                self.static_render_proof.candidate_count
+            ),
+        }
     }
 
     pub fn report_row(&self) -> String {
@@ -497,6 +515,16 @@ impl OriginalDrawStage {
 }
 
 impl OriginalMissionObjectCandidate {
+    pub fn static_frame_refs(&self) -> OriginalStaticFrameRefs {
+        OriginalStaticFrameRefs {
+            base_anim: self.animation.base_anim,
+            current_anim: self.animation.current_anim,
+            current_frame: self.animation.current_frame,
+            subtype: self.subtype_value,
+            orientation: self.orientation,
+        }
+    }
+
     fn animation_supported_by(&self, catalog: &AnimationCatalog) -> bool {
         self.animation
             .current_anim
@@ -794,6 +822,7 @@ impl OriginalStaticRenderProof {
         objects: &[OriginalMissionObjectCandidate],
         catalog: &AnimationCatalog,
         sprite_support: &OriginalSpriteBankSupport,
+        object_render_assets: Option<&OriginalObjectSpriteRenderAssets>,
     ) -> Self {
         let statics = objects
             .iter()
@@ -813,16 +842,54 @@ impl OriginalStaticRenderProof {
             .iter()
             .filter(|object| object.sprite_supported_by(catalog, sprite_support))
             .count();
+        let mut runtime_frame_assembly_count = 0;
+        let mut runtime_renderable_static_count = 0;
+        if let Some(assets) = object_render_assets {
+            for object in &statics {
+                let support = assets.static_frame_support(object.static_frame_refs());
+                if support.assembled {
+                    runtime_frame_assembly_count += 1;
+                }
+                if support.assembled && support.sprites_supported {
+                    runtime_renderable_static_count += 1;
+                }
+            }
+        }
+
+        let decision = if runtime_renderable_static_count > 0 {
+            OriginalStaticRenderDecision::RuntimeRenderReady
+        } else {
+            OriginalStaticRenderDecision::RuntimeRenderDisabled
+        };
         let blocker = if candidate_count == 0 {
             "no candidate static records queued for runtime proof".to_string()
-        } else if supported_animation_count < candidate_count {
-            "candidate static animation references are not fully supported".to_string()
-        } else if supported_frame_count < candidate_count {
-            "candidate static frame references are not fully supported".to_string()
-        } else if supported_sprite_count < candidate_count {
-            "candidate static sprite-bank references are not fully supported".to_string()
+        } else if object_render_assets.is_none() {
+            "runtime HSPR/ANI assets unavailable or failed strict bounds checks".to_string()
+        } else if runtime_frame_assembly_count == 0 {
+            "no candidate static frame could be assembled from guarded HELE/HFRA/HSTA chains"
+                .to_string()
+        } else if runtime_renderable_static_count == 0 {
+            "assembled static frames reference unsupported HSPR sprites".to_string()
+        } else if runtime_renderable_static_count < candidate_count {
+            "partial runtime static render proof; unsupported or semantic statics remain candidate-only"
+                .to_string()
         } else {
-            "sprite pixel decoder and anchor-safe frame assembly are not proven".to_string()
+            "runtime static render proof ready for all queued static candidates".to_string()
+        };
+
+        let blocker = if decision == OriginalStaticRenderDecision::RuntimeRenderDisabled {
+            blocker
+        } else if supported_animation_count < candidate_count {
+            "partial runtime static render proof; aggregate animation catalog refs remain incomplete"
+                .to_string()
+        } else if supported_frame_count < candidate_count {
+            "partial runtime static render proof; aggregate frame refs remain incomplete"
+                .to_string()
+        } else if supported_sprite_count < candidate_count {
+            "partial runtime static render proof; aggregate sprite-bank refs remain incomplete"
+                .to_string()
+        } else {
+            blocker
         };
 
         Self {
@@ -831,32 +898,60 @@ impl OriginalStaticRenderProof {
             supported_animation_count,
             supported_frame_count,
             supported_sprite_count,
-            decision: OriginalStaticRenderDecision::RuntimeRenderDisabled,
+            runtime_frame_assembly_count,
+            runtime_renderable_static_count,
+            decision,
             blocker,
         }
     }
 
     pub fn panel_label(&self) -> String {
-        format!(
-            "static render disabled: {}; {} candidates; support {}/{}/{}",
-            self.short_blocker_label(),
-            self.candidate_count,
-            self.supported_animation_count,
-            self.supported_frame_count,
-            self.supported_sprite_count
-        )
+        match self.decision {
+            OriginalStaticRenderDecision::RuntimeRenderReady => format!(
+                "static render ready: {}/{} candidates; frame proof {}; support {}/{}/{}",
+                self.runtime_renderable_static_count,
+                self.candidate_count,
+                self.runtime_frame_assembly_count,
+                self.supported_animation_count,
+                self.supported_frame_count,
+                self.supported_sprite_count
+            ),
+            OriginalStaticRenderDecision::RuntimeRenderDisabled => format!(
+                "static render disabled: {}; {} candidates; frame proof {}; support {}/{}/{}",
+                self.short_blocker_label(),
+                self.candidate_count,
+                self.runtime_frame_assembly_count,
+                self.supported_animation_count,
+                self.supported_frame_count,
+                self.supported_sprite_count
+            ),
+        }
     }
 
     pub fn report_label(&self) -> String {
-        format!(
-            "static render disabled: {}; {} candidates; runtime-only, not proof of decoded layout or semantics",
-            self.blocker, self.candidate_count
-        )
+        match self.decision {
+            OriginalStaticRenderDecision::RuntimeRenderReady => format!(
+                "static render ready: {}/{} candidate statics; frame assembly {}/{}; {}; runtime-only, no previews, not proof of gameplay semantics",
+                self.runtime_renderable_static_count,
+                self.candidate_count,
+                self.runtime_frame_assembly_count,
+                self.candidate_count,
+                self.blocker
+            ),
+            OriginalStaticRenderDecision::RuntimeRenderDisabled => format!(
+                "static render disabled: {}; frame assembly {}/{}; runtime-only, not proof of decoded layout or semantics",
+                self.blocker, self.runtime_frame_assembly_count, self.candidate_count
+            ),
+        }
     }
 
     fn short_blocker_label(&self) -> &'static str {
-        if self.blocker.contains("pixel") || self.blocker.contains("anchor") {
-            "sprite/anchor proof missing"
+        if self.blocker.contains("HSPR/ANI") {
+            "runtime sprite assets missing"
+        } else if self.blocker.contains("assembled static frames") {
+            "sprite refs incomplete"
+        } else if self.blocker.contains("frame could be assembled") {
+            "frame assembly missing"
         } else if self.blocker.contains("animation") {
             "animation refs incomplete"
         } else if self.blocker.contains("frame") {
@@ -1443,6 +1538,12 @@ mod tests {
         OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET,
         collect_candidate_objects, format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
+    use crate::engine::{
+        original_sprites::{
+            OriginalAnimationBank, OriginalGameSpriteAtlas, OriginalObjectSpriteRenderAssets,
+        },
+        palette_decode::Palette,
+    };
 
     fn selection() -> OriginalMissionSelection {
         OriginalMissionSelection {
@@ -1565,6 +1666,16 @@ mod tests {
             0,
             0x04,
         );
+        write_record(
+            &mut decoded[STATICS_OFFSET + 30..STATICS_OFFSET + 60],
+            10,
+            10,
+            1,
+            8,
+            9,
+            0,
+            0x04,
+        );
         let mut objects = collect_candidate_objects(&decoded);
         let sprite_support = OriginalSpriteBankSupport::from_primary_counts(8, 8);
         let catalog = synthetic_catalog();
@@ -1579,9 +1690,10 @@ mod tests {
             objects,
             sprite_support,
             catalog,
+            None,
         );
 
-        assert_eq!(scene.draw_queue.total_candidates(), 2);
+        assert_eq!(scene.draw_queue.total_candidates(), 3);
         assert_eq!(
             scene.draw_queue.stage_counts[0].stage,
             OriginalDrawStage::People
@@ -1598,7 +1710,9 @@ mod tests {
             scene.draw_queue.entries()[1].stage,
             OriginalDrawStage::Statics
         );
-        assert!(scene.draw_queue_health_label().contains("anim 2/2"));
+        assert_eq!(scene.draw_queue.entries()[1].tile.off_x, 8);
+        assert_eq!(scene.draw_queue.entries()[2].tile.off_x, 9);
+        assert!(scene.draw_queue_health_label().contains("anim 3/3"));
     }
 
     #[test]
@@ -1653,6 +1767,7 @@ mod tests {
             objects,
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
+            None,
         );
 
         assert_eq!(scene.static_render_proof.candidate_count, 1);
@@ -1673,6 +1788,52 @@ mod tests {
                 .report_label()
                 .contains("not proof")
         );
+    }
+
+    #[test]
+    fn static_render_path_becomes_ready_with_guarded_sprite_and_frame_proof() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 16];
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            4,
+            5,
+            1,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x16;
+        let objects = collect_candidate_objects(&decoded);
+        let render_assets = synthetic_render_assets();
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            objects,
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            Some(&render_assets),
+        );
+
+        assert_eq!(
+            scene.static_render_proof.decision,
+            super::OriginalStaticRenderDecision::RuntimeRenderReady
+        );
+        assert_eq!(scene.static_render_proof.runtime_renderable_static_count, 1);
+        assert!(
+            scene
+                .static_render_proof
+                .report_label()
+                .contains("runtime-only")
+        );
+        assert!(
+            scene
+                .static_render_proof
+                .report_label()
+                .contains("no previews")
+        );
+        assert!(!scene.static_render_proof.report_label().contains("00 00"));
     }
 
     #[test]
@@ -1700,6 +1861,7 @@ mod tests {
             collect_candidate_objects(&decoded),
             OriginalSpriteBankSupport::from_primary_counts(4, 4),
             synthetic_catalog(),
+            None,
         );
 
         assert_eq!(scene.spawn_probe.agent_candidates, 1);
@@ -1756,6 +1918,55 @@ mod tests {
 
         let hsta = 0u16.to_le_bytes();
         AnimationCatalog::from_bytes(vec!["synthetic".to_string()], &hele, &hfra, &hsta)
+    }
+
+    fn synthetic_render_assets() -> OriginalObjectSpriteRenderAssets {
+        let palette = synthetic_palette();
+        let mut tab = vec![0u8; 6];
+        tab[4] = 8;
+        tab[5] = 1;
+        let dat = [0u8; 5];
+        let sprite_atlas = OriginalGameSpriteAtlas::from_bytes(
+            "synthetic/HSPR-0".to_string(),
+            "synthetic/HPAL".to_string(),
+            &tab,
+            &dat,
+            &palette,
+        )
+        .unwrap();
+
+        let mut hele = Vec::new();
+        hele.extend_from_slice(&0u16.to_le_bytes());
+        hele.extend_from_slice(&0i16.to_le_bytes());
+        hele.extend_from_slice(&0i16.to_le_bytes());
+        hele.extend_from_slice(&0u16.to_le_bytes());
+        hele.extend_from_slice(&0u16.to_le_bytes());
+
+        let mut hfra = Vec::new();
+        hfra.extend_from_slice(&0u16.to_le_bytes());
+        hfra.extend_from_slice(&[1, 1]);
+        hfra.extend_from_slice(&0x0100u16.to_le_bytes());
+        hfra.extend_from_slice(&0u16.to_le_bytes());
+
+        let hsta = 0u16.to_le_bytes();
+        let animation_bank =
+            OriginalAnimationBank::from_bytes(vec!["synthetic".to_string()], &hele, &hfra, &hsta)
+                .unwrap();
+
+        OriginalObjectSpriteRenderAssets {
+            sprite_atlas,
+            animation_bank,
+        }
+    }
+
+    fn synthetic_palette() -> Palette {
+        let mut data = vec![0u8; 768];
+        for i in 0..256 {
+            data[i * 3] = (i % 64) as u8;
+            data[i * 3 + 1] = ((i * 2) % 64) as u8;
+            data[i * 3 + 2] = ((i * 3) % 64) as u8;
+        }
+        Palette::decode_vga_6bit(&data).unwrap()
     }
 
     fn write_record(

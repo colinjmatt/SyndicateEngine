@@ -3,6 +3,7 @@ pub mod combat;
 pub mod map;
 pub mod original_graphics;
 pub mod original_map_view;
+pub mod original_sprites;
 pub mod pathfinding;
 pub mod save;
 pub mod sim;

@@ -13,15 +13,16 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
 - Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
 - Metadata-selected mission loading reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime.
-- A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, and a conservative object draw queue. This is still candidate-only: object rendering is guarded behind proof checks, and gameplay/pathfinding remain on the hand-authored demo grid.
-- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, and the current static-render blocker without exposing local asset bytes or per-object dumps.
+- A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, and a conservative object draw queue.
+- First-mission static objects can render from local original `HSPR-0`/`HELE`/`HFRA`/`HSTA` assets when the runtime proof gates pass. The scene probe distinguishes original map tiles, static sprites rendered from local assets, blocked/candidate statics, and peds/vehicles/weapons/sfx that remain candidate-only. Gameplay/pathfinding remain on the hand-authored demo grid.
+- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, and static render readiness without exposing local asset bytes or per-object dumps.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
 
 ```bash
 cd syndicate_engine
-cargo run
+cargo run --bin syndicate_engine
 ```
 
 Controls:

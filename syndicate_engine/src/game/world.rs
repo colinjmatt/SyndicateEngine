@@ -18,6 +18,7 @@ use crate::{
         map::TacticalMap,
         original_graphics::RuntimeOriginalGraphics,
         original_map_view::OriginalMapViewState,
+        original_sprites::RuntimeOriginalObjectGraphics,
         pathfinding::{GridPos, find_path},
         save::{AgentSave, HostileSave, SaveGame, read_save, write_save},
         sim::SimClock,
@@ -40,6 +41,7 @@ pub struct WorldState {
     original_mission: Option<OriginalMissionSelection>,
     original_mission_scene: Option<OriginalMissionScene>,
     original_graphics: Option<RuntimeOriginalGraphics>,
+    original_object_graphics: Option<RuntimeOriginalObjectGraphics>,
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
     original_map_view: Option<OriginalMapViewState>,
@@ -104,6 +106,10 @@ impl WorldState {
             .as_ref()
             .map(|selection| selection.palette_id);
         let original_graphics = RuntimeOriginalGraphics::from_root_with_palette_id(
+            assets.root_path(),
+            selected_palette_id,
+        );
+        let original_object_graphics = RuntimeOriginalObjectGraphics::from_root_with_palette_id(
             assets.root_path(),
             selected_palette_id,
         );
@@ -173,6 +179,7 @@ impl WorldState {
             original_mission,
             original_mission_scene,
             original_graphics,
+            original_object_graphics,
             original_map_tiles,
             original_tile_types,
             original_map_view,
@@ -623,15 +630,26 @@ impl WorldState {
                 }
             }
             MapRenderMode::OriginalMissionSceneProbe => {
-                if let (Some(map_tiles), Some(graphics)) = (
+                if let (Some(map_tiles), Some(graphics), Some(scene_model)) = (
                     self.original_map_tiles.as_ref(),
                     self.original_graphics.as_ref(),
+                    self.original_mission_scene.as_ref(),
                 ) {
-                    self.map.draw_original_map_tiles(
+                    let object_graphics =
+                        if scene_model.static_render_proof.decision
+                            == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
+                        {
+                            self.original_object_graphics.as_ref()
+                        } else {
+                            None
+                        };
+                    self.map.draw_original_mission_scene(
                         &self.camera,
                         map_tiles,
                         self.original_tile_types.as_ref(),
                         graphics,
+                        scene_model,
+                        object_graphics,
                     );
                 }
             }
@@ -677,6 +695,7 @@ impl WorldState {
                 self.original_mission_scene.as_ref(),
                 self.original_map_view.as_ref(),
                 self.original_graphics.as_ref(),
+                self.original_object_graphics.as_ref(),
                 self.original_map_tiles.as_ref(),
                 self.original_tile_types.as_ref(),
                 self.original_graphics_field(),
@@ -757,6 +776,7 @@ fn draw_map_diagnostic_panel(
     mission_scene: Option<&OriginalMissionScene>,
     original_map_view: Option<&OriginalMapViewState>,
     graphics: Option<&RuntimeOriginalGraphics>,
+    object_graphics: Option<&RuntimeOriginalObjectGraphics>,
     map_tiles: Option<&OriginalMapTiles>,
     tile_types: Option<&OriginalTileTypes>,
     original_graphics_field: MapCandidateField,
@@ -1001,19 +1021,55 @@ fn draw_map_diagnostic_panel(
                     x + 16.0,
                     y + 242.0,
                     11.0,
-                    ORANGE,
+                    if scene_model.static_render_proof.decision
+                        == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
+                    {
+                        GREEN
+                    } else {
+                        ORANGE
+                    },
+                );
+                let static_runtime_label =
+                    if scene_model.static_render_proof.decision
+                        == crate::engine::mission_scene::OriginalStaticRenderDecision::RuntimeRenderReady
+                    {
+                        format!(
+                            "map tiles rendered; statics rendered from local assets {}/{}",
+                            scene_model.static_render_proof.runtime_renderable_static_count,
+                            scene_model.static_render_proof.candidate_count
+                        )
+                    } else {
+                        "map tiles rendered; statics candidate-only/blocked".to_string()
+                    };
+                draw_text(
+                    &static_runtime_label,
+                    x + 16.0,
+                    y + 264.0,
+                    11.0,
+                    if object_graphics.is_some() {
+                        YELLOW
+                    } else {
+                        GRAY
+                    },
                 );
                 draw_text(
                     &scene_model.spawn_probe.panel_label(),
                     x + 16.0,
-                    y + 266.0,
+                    y + 286.0,
                     11.0,
                     GRAY,
                 );
                 draw_text(
                     &scene_model.navigation_probe.panel_label(),
                     x + 16.0,
-                    y + 286.0,
+                    y + 306.0,
+                    11.0,
+                    GRAY,
+                );
+                draw_text(
+                    "peds/vehicles/weapons/sfx remain candidate-only",
+                    x + 16.0,
+                    y + 326.0,
                     11.0,
                     GRAY,
                 );
@@ -1029,14 +1085,14 @@ fn draw_map_diagnostic_panel(
             draw_text(
                 "Map is rendered; objects are candidate-only unless proof passes",
                 x + 16.0,
-                y + 314.0,
+                y + 354.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 332.0,
+                y + 372.0,
                 12.0,
                 GRAY,
             );
@@ -1164,7 +1220,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 350.0,
+        MapRenderMode::OriginalMissionSceneProbe => 390.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
