@@ -99,7 +99,7 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         SKYBLUE,
     );
     draw_text(
-        "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M MAP field explorer | Space pause | . step | +/- speed | F5/F9 | Esc",
+        "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M MAP layers | N/P MAP | Space pause | . step | +/- speed | F5/F9 | Esc",
         28.0,
         352.0,
         15.0,
@@ -128,7 +128,7 @@ fn draw_map_previews(
 
 fn draw_signature_minimap(origin: Vec2, scale: f32, preview: Option<&MapSignaturePreview>) {
     draw_text(
-        "MAP01 signatures",
+        "MAP sample signatures",
         origin.x,
         origin.y - 8.0,
         13.0,
@@ -181,7 +181,7 @@ fn draw_inferred_minimap(
     substrate: Option<&MapPrimarySubstrateCandidate>,
 ) {
     draw_text(
-        "MAP01 inferred/fields",
+        "MAP sample inferred/fields",
         origin.x,
         origin.y - 8.0,
         13.0,
