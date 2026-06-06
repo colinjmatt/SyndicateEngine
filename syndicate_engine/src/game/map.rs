@@ -465,20 +465,79 @@ impl TacticalMap {
         graphics: &RuntimeOriginalGraphics,
         screen: Vec2,
     ) -> Option<OriginalTilePoint> {
+        self.pick_original_tile_at_screen_with_preferred(camera, map_tiles, graphics, screen, None)
+    }
+
+    pub fn pick_original_tile_at_screen_with_preferred(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        screen: Vec2,
+        preferred: Option<OriginalTilePoint>,
+    ) -> Option<OriginalTilePoint> {
         let world = camera.screen_to_world(screen);
         let tile_width = graphics.bank().record_width as f32;
         let tile_height = graphics.bank().record_height as f32;
+        Self::pick_original_tile_at_world(
+            map_tiles,
+            graphics.bank(),
+            world,
+            preferred,
+            14.0 / camera.zoom.max(0.01),
+            tile_width,
+            tile_height,
+        )
+    }
+
+    pub fn original_tile_point_screen(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        tile: OriginalTilePoint,
+    ) -> Vec2 {
+        original_tile_local_marker_screen(
+            camera,
+            map_tiles,
+            tile,
+            graphics.bank().record_width as f32,
+            graphics.bank().record_height as f32,
+        )
+    }
+
+    fn pick_original_tile_at_world(
+        map_tiles: &OriginalMapTiles,
+        graphics: &IndexedBlockGraphics,
+        world: Vec2,
+        preferred: Option<OriginalTilePoint>,
+        preferred_radius_world: f32,
+        tile_width: f32,
+        tile_height: f32,
+    ) -> Option<OriginalTilePoint> {
+        if let Some(preferred) = preferred {
+            let marker =
+                original_tile_local_marker_world(map_tiles, preferred, tile_width, tile_height);
+            if marker.distance(world) <= preferred_radius_world
+                && original_tile_is_pickable(map_tiles, graphics, preferred)
+            {
+                return Some(preferred);
+            }
+        }
+
         for z in (0..map_tiles.height).rev() {
             let (tile_x, tile_y) =
                 original_screen_to_tile_at_z(map_tiles, world, z, tile_width, tile_height);
             let x = tile_x.floor() as i32;
             let y = tile_y.floor() as i32;
-            if x < 0
-                || y < 0
-                || (x as usize) >= map_tiles.width
-                || (y as usize) >= map_tiles.depth
-                || map_tiles.tile_at(x as usize, y as usize, z).unwrap_or(0) == 0
+            if x < 0 || y < 0 || (x as usize) >= map_tiles.width || (y as usize) >= map_tiles.depth
             {
+                continue;
+            }
+            let Some(tile_index) = map_tiles.tile_at(x as usize, y as usize, z) else {
+                continue;
+            };
+            if !is_renderable_original_tile(tile_index, graphics) {
                 continue;
             }
             let off_x = ((tile_x - x as f32) * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -986,6 +1045,22 @@ fn is_renderable_original_tile(tile_index: u8, graphics: &IndexedBlockGraphics) 
     graphics.record_has_visible_pixels(tile_index as usize)
 }
 
+fn original_tile_is_pickable(
+    map_tiles: &OriginalMapTiles,
+    graphics: &IndexedBlockGraphics,
+    tile: OriginalTilePoint,
+) -> bool {
+    let x = tile.tile_x as usize;
+    let y = tile.tile_y as usize;
+    let z = tile.tile_z as usize;
+    if x >= map_tiles.width || y >= map_tiles.depth || z >= map_tiles.height {
+        return false;
+    }
+    map_tiles
+        .tile_at(x, y, z)
+        .is_some_and(|tile_index| is_renderable_original_tile(tile_index, graphics))
+}
+
 fn candidate_field_color(
     field: MapCandidateField,
     value: u8,
@@ -1097,7 +1172,7 @@ fn signature_tile_color(class: u8) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        OriginalMapDrawPlan, OriginalMapViewport, is_renderable_original_tile,
+        OriginalMapDrawPlan, OriginalMapViewport, TacticalMap, is_renderable_original_tile,
         original_map_tile_index, original_map_tile_world_top_left, original_screen_to_tile,
         original_screen_to_tile_at_z, original_tile_local_marker_world,
     };
@@ -1180,6 +1255,35 @@ mod tests {
     }
 
     #[test]
+    fn preferred_original_pick_keeps_existing_yellow_marker_tile() {
+        let map = synthetic_map_tiles(8, 8, 4);
+        let graphics = synthetic_hblk_sized_graphics_bank();
+        let tile_width = 64.0;
+        let tile_height = 48.0;
+        let preferred = OriginalTilePoint {
+            tile_x: 3,
+            tile_y: 5,
+            tile_z: 1,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let marker = original_tile_local_marker_world(&map, preferred, tile_width, tile_height);
+
+        let picked = TacticalMap::pick_original_tile_at_world(
+            &map,
+            &graphics,
+            marker,
+            Some(preferred),
+            14.0,
+            tile_width,
+            tile_height,
+        );
+
+        assert_eq!(picked, Some(preferred));
+    }
+
+    #[test]
     fn viewport_draw_plan_keeps_only_map_or_low_z_fallbacks_without_asset_bytes() {
         let map = synthetic_map_tiles(5, 5, 3);
         let viewport = OriginalMapViewport {
@@ -1219,6 +1323,22 @@ mod tests {
             "synthetic/HPAL02.DAT".to_string(),
             1,
             1,
+            0,
+            &decoded,
+            &palette,
+        )
+        .unwrap()
+    }
+
+    fn synthetic_hblk_sized_graphics_bank() -> IndexedBlockGraphics {
+        let palette = Palette::decode_vga_6bit(&vec![0u8; 768]).unwrap();
+        let mut decoded = vec![0u8; 64 * 48];
+        decoded.extend(std::iter::repeat_n(1u8, 64 * 48));
+        IndexedBlockGraphics::from_fixed_records(
+            "synthetic/HBLK01.DAT".to_string(),
+            "synthetic/HPAL02.DAT".to_string(),
+            64,
+            48,
             0,
             &decoded,
             &palette,

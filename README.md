@@ -35,9 +35,20 @@ Controls:
 - `E`: in first-mission control mode, queue debug-gated interaction/action intents for selected original-agent markers at the current original cursor tile.
 - `F`: focus the camera on the selected original-agent marker in first-mission control mode.
 - `G`: in first-mission control mode, toggle gated original control on/off.
+- `O`: in first-mission control mode, queue a local smoke-test route for the selected original-agent marker.
+- `T`: toggle original-control console tracing for marker positions, route status, and control state.
 - `M`: cycle between the runtime original mission-map tile render, first-mission control view, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
+
+Local original-control smoke test:
+
+```bash
+cd syndicate_engine
+SYNDICATE_ORIGINAL_CONTROL_SMOKE=1 cargo run --bin syndicate_engine
+```
+
+That runtime-only mode queues a candidate original route, prints aggregate marker/route status to stdout, and exits after a short run. Use `SYNDICATE_ORIGINAL_CONTROL_TRACE=1` for tracing without autopilot, or set `SYNDICATE_ORIGINAL_CONTROL_QUIT_FRAMES=480` to change the smoke-test duration.
 
 ## Project layout
 

@@ -62,9 +62,11 @@ pub struct WorldState {
     original_debug_agents: Vec<OriginalDebugAgent>,
     selected_original_debug_agent: usize,
     original_control_runtime: OriginalMissionControlRuntime,
+    original_control_trace: OriginalControlTrace,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
+const ORIGINAL_DEBUG_AGENT_MAX_STEP_DT: f32 = 0.05;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapRenderMode {
@@ -125,6 +127,18 @@ struct OriginalMissionControlRuntime {
     blocked_action_resolutions: usize,
     combat_probe_count: usize,
     last_result: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OriginalControlTrace {
+    enabled: bool,
+    autopilot: bool,
+    quit_after_frames: Option<u32>,
+    frame: u32,
+    elapsed: f32,
+    next_emit_elapsed: f32,
+    last_signature: String,
+    smoke_queued: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -212,6 +226,56 @@ impl OriginalMissionControlRuntime {
             self.scenario_trigger_resolutions,
             self.combat_probe_count
         )
+    }
+}
+
+impl OriginalControlTrace {
+    fn from_env() -> Self {
+        let autopilot = env_flag("SYNDICATE_ORIGINAL_CONTROL_SMOKE");
+        Self {
+            enabled: autopilot || env_flag("SYNDICATE_ORIGINAL_CONTROL_TRACE"),
+            autopilot,
+            quit_after_frames: std::env::var("SYNDICATE_ORIGINAL_CONTROL_QUIT_FRAMES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .or_else(|| autopilot.then_some(240)),
+            frame: 0,
+            elapsed: 0.0,
+            next_emit_elapsed: 0.0,
+            last_signature: String::new(),
+            smoke_queued: false,
+        }
+    }
+
+    fn begin_frame(&mut self, real_dt: f32) -> bool {
+        self.frame = self.frame.saturating_add(1);
+        self.elapsed += real_dt.max(0.0);
+        if self.autopilot && !self.smoke_queued {
+            self.smoke_queued = true;
+            return true;
+        }
+        false
+    }
+
+    fn should_emit(&mut self, signature: &str, force: bool) -> bool {
+        if force || self.elapsed >= self.next_emit_elapsed || self.last_signature != signature {
+            self.last_signature = signature.to_string();
+            self.next_emit_elapsed = self.elapsed + 0.5;
+            return true;
+        }
+        false
+    }
+
+    fn trace_line(&self, signature: &str) -> String {
+        format!(
+            "[original-control] frame {} t {:.2} {signature}",
+            self.frame, self.elapsed
+        )
+    }
+
+    fn should_quit(&self) -> bool {
+        self.quit_after_frames
+            .is_some_and(|quit_after_frames| self.frame >= quit_after_frames)
     }
 }
 
@@ -419,14 +483,12 @@ impl WorldState {
             };
         let graphics_loaded = original_graphics.is_some();
         let original_map_loaded = graphics_loaded && original_map_tiles.is_some();
-        let render_mode = if original_map_loaded {
-            MapRenderMode::OriginalMapTiles
-        } else if graphics_loaded {
-            MapRenderMode::OriginalGraphicsAtlas
-        } else {
-            MapRenderMode::DemoCity
-        };
-        let camera = if original_map_loaded {
+        let render_mode = initial_render_mode(
+            original_map_loaded,
+            original_mission_scene.is_some(),
+            graphics_loaded,
+        );
+        let mut camera = if original_map_loaded {
             original_map_view
                 .as_ref()
                 .zip(original_map_tiles.as_ref())
@@ -456,6 +518,24 @@ impl WorldState {
             .as_ref()
             .map(original_debug_agents_from_scene)
             .unwrap_or_default();
+        if render_mode == MapRenderMode::OriginalMissionSceneProbe {
+            if let (Some(agent), Some(map_tiles), Some(graphics)) = (
+                original_debug_agents.first(),
+                original_map_tiles.as_ref(),
+                original_graphics.as_ref(),
+            ) {
+                camera.offset = original_agent_focus_camera_offset(
+                    map_tiles,
+                    graphics,
+                    agent.current_tile(),
+                    camera.zoom,
+                    vec2(screen_width() * 0.5, screen_height() * 0.56),
+                );
+                if let Some(view) = original_map_view.as_ref() {
+                    view.clamp_camera(&mut camera);
+                }
+            }
+        }
         Self {
             assets,
             camera,
@@ -483,10 +563,12 @@ impl WorldState {
             original_cursor_screen: None,
             original_route_probe: None,
             original_interaction_probe: None,
-            original_navigation_debug_enabled: false,
+            original_navigation_debug_enabled: render_mode
+                == MapRenderMode::OriginalMissionSceneProbe,
             original_debug_agents,
             selected_original_debug_agent: 0,
             original_control_runtime: OriginalMissionControlRuntime::default(),
+            original_control_trace: OriginalControlTrace::from_env(),
         }
     }
 
@@ -502,6 +584,7 @@ impl WorldState {
         self.update_sim_controls();
         self.update_original_scene_cursor_probe();
         self.update_original_debug_agents(real_dt);
+        self.update_original_control_trace(real_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
@@ -520,6 +603,12 @@ impl WorldState {
         }
         if is_key_pressed(KeyCode::E) {
             self.try_original_interaction_probe();
+        }
+        if is_key_pressed(KeyCode::O) {
+            self.try_original_control_smoke_route("keyboard");
+        }
+        if is_key_pressed(KeyCode::T) {
+            self.toggle_original_control_trace();
         }
         if is_mouse_button_pressed(MouseButton::Right) {
             if !self.try_original_route_probe_order() {
@@ -756,10 +845,25 @@ impl WorldState {
         };
 
         let mouse = vec2(mouse_position().0, mouse_position().1);
-        self.original_cursor_tile =
+        let preferred_tile = self
+            .original_route_probe
+            .as_ref()
+            .and_then(|probe| probe.requested_goal_tile.or(probe.goal_tile))
+            .or_else(|| {
+                self.primary_original_debug_interaction_intent()
+                    .and_then(|intent| intent.target_tile)
+            });
+        self.original_cursor_tile = self.map.pick_original_tile_at_screen_with_preferred(
+            &self.camera,
+            map_tiles,
+            graphics,
+            mouse,
+            preferred_tile,
+        );
+        self.original_cursor_screen = self.original_cursor_tile.map(|tile| {
             self.map
-                .pick_original_tile_at_screen(&self.camera, map_tiles, graphics, mouse);
-        self.original_cursor_screen = self.original_cursor_tile.map(|_| mouse);
+                .original_tile_point_screen(&self.camera, map_tiles, graphics, tile)
+        });
     }
 
     fn try_original_route_probe_order(&mut self) -> bool {
@@ -796,7 +900,7 @@ impl WorldState {
                 .collect::<Vec<_>>();
             if selected_agents.is_empty() {
                 self.combat_log =
-                    "Original movement blocked: no candidate player-agent spawn".to_string();
+                    "Original movement blocked: no movable original-control ped seed".to_string();
                 self.original_route_probe = None;
                 return true;
             }
@@ -948,14 +1052,143 @@ impl WorldState {
         }
         self.ensure_original_debug_agents();
         let mut resolutions = Vec::new();
+        let movement_dt = real_dt.clamp(0.0, ORIGINAL_DEBUG_AGENT_MAX_STEP_DT);
         for agent in &mut self.original_debug_agents {
-            if let Some(resolution) = agent.update(real_dt) {
+            if let Some(resolution) = agent.update(movement_dt) {
                 resolutions.push(resolution);
             }
         }
         for resolution in resolutions {
             self.original_control_runtime.apply_resolution(resolution);
         }
+    }
+
+    fn update_original_control_trace(&mut self, real_dt: f32) {
+        let force_emit = self.original_control_trace.begin_frame(real_dt);
+        if force_emit {
+            self.try_original_control_smoke_route("autopilot");
+        }
+        if self.original_control_trace.enabled {
+            let signature = self.original_control_trace_signature();
+            if self
+                .original_control_trace
+                .should_emit(&signature, force_emit)
+            {
+                println!("{}", self.original_control_trace.trace_line(&signature));
+            }
+        }
+        if self.original_control_trace.should_quit() {
+            println!(
+                "[original-control] smoke complete after {} frames; exiting",
+                self.original_control_trace.frame
+            );
+            std::process::exit(0);
+        }
+    }
+
+    fn toggle_original_control_trace(&mut self) {
+        self.original_control_trace.enabled = !self.original_control_trace.enabled;
+        self.original_control_trace.next_emit_elapsed = 0.0;
+        let state = if self.original_control_trace.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        self.combat_log = format!("Original control console trace {state}; local diagnostics only");
+    }
+
+    fn try_original_control_smoke_route(&mut self, trigger: &str) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            self.combat_log =
+                "Original smoke route is available only in first-mission control mode".to_string();
+            return false;
+        }
+        if self.original_mission_scene.is_none() {
+            self.combat_log =
+                "Original smoke route blocked: first-mission scene model unavailable".to_string();
+            return true;
+        }
+        self.original_navigation_debug_enabled = true;
+        self.ensure_original_debug_agents();
+        let Some(idx) = self
+            .selected_original_debug_agent_indices()
+            .into_iter()
+            .next()
+            .or_else(|| (!self.original_debug_agents.is_empty()).then_some(0))
+        else {
+            self.combat_log =
+                "Original smoke route blocked: no movable original-control ped seed".to_string();
+            self.original_route_probe = None;
+            return true;
+        };
+        self.select_original_debug_agent(idx, false);
+        let start = self.original_debug_agents[idx].route_order_start_tile(false);
+        let route_probe = self
+            .original_mission_scene
+            .as_ref()
+            .expect("checked above")
+            .original_control_smoke_route_from(start);
+        self.original_route_probe = Some(route_probe.clone());
+        if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+            && route_probe.path.len() > 1
+        {
+            let route_len = route_probe.path.len();
+            if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                agent.clear_interaction_intent();
+                agent.assign_route(route_probe.path, false);
+            }
+            self.combat_log = format!(
+                "Original smoke route {trigger}: agent {} queued {} nodes; demo gameplay active",
+                idx + 1,
+                route_len
+            );
+        } else {
+            if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                agent.block_route();
+            }
+            self.combat_log = format!(
+                "Original smoke route {trigger} blocked: {}; demo gameplay active",
+                route_probe.panel_label()
+            );
+        }
+        true
+    }
+
+    fn original_control_trace_signature(&self) -> String {
+        let route = self
+            .original_route_probe
+            .as_ref()
+            .map(|probe| format!("route={:?}/{}nodes", probe.status, probe.path.len()))
+            .unwrap_or_else(|| "route=none".to_string());
+        let agents = self
+            .original_debug_agents
+            .iter()
+            .take(4)
+            .map(|agent| {
+                let tile = agent.current_tile();
+                let selected = if agent.selected { "*" } else { "" };
+                format!(
+                    "a{}{} rec{} {} tile={},{},{} route={}/{}",
+                    agent.slot + 1,
+                    selected,
+                    agent.record_index,
+                    agent.route_status.label(),
+                    tile.tile_x,
+                    tile.tile_y,
+                    tile.tile_z,
+                    agent.route_progress.floor() as usize,
+                    agent.route.len().saturating_sub(1)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!(
+            "mode={} control={} agents={} selected={} {route} {agents}",
+            self.render_mode.label(),
+            self.original_navigation_debug_enabled,
+            self.original_debug_agents.len(),
+            self.selected_original_debug_agent + 1,
+        )
     }
 
     fn ensure_original_debug_agents(&mut self) {
@@ -1076,7 +1309,7 @@ impl WorldState {
             .original_debug_agents
             .get(self.selected_original_debug_agent)
         else {
-            return "debug agents unavailable: no candidate player-agent spawn".to_string();
+            return "debug agents unavailable: no movable original-control ped seed".to_string();
         };
         let selected_count = self
             .original_debug_agents
@@ -1157,19 +1390,13 @@ impl WorldState {
         };
         let tile = agent.current_tile();
         let slot = agent.slot;
-        let world = original_map_tile_world_top_left(
+        self.camera.offset = original_agent_focus_camera_offset(
             map_tiles,
-            tile.tile_x as f32,
-            tile.tile_y as f32,
-            tile.tile_z.saturating_add(1) as f32,
-            graphics.bank().record_width as f32,
-            graphics.bank().record_height as f32,
-        ) + vec2(
-            graphics.bank().record_width as f32 * 0.5,
-            graphics.bank().record_height as f32 * 2.0 / 3.0,
+            graphics,
+            tile,
+            self.camera.zoom,
+            vec2(screen_width() * 0.5, screen_height() * 0.56),
         );
-        self.camera.offset =
-            vec2(screen_width() * 0.5, screen_height() * 0.56) - world * self.camera.zoom;
         self.clamp_original_map_camera();
         self.combat_log = format!(
             "Focused camera on original agent {}; original control active",
@@ -1910,6 +2137,85 @@ fn original_debug_agents_from_scene(scene_model: &OriginalMissionScene) -> Vec<O
         .enumerate()
         .map(|(idx, spawn)| OriginalDebugAgent::from_spawn(spawn, idx == 0))
         .collect()
+}
+
+fn original_agent_focus_camera_offset(
+    map_tiles: &OriginalMapTiles,
+    graphics: &RuntimeOriginalGraphics,
+    tile: OriginalTilePoint,
+    zoom: f32,
+    screen_anchor: Vec2,
+) -> Vec2 {
+    let world = original_agent_focus_world_point(map_tiles, graphics, tile);
+    screen_anchor - world * zoom
+}
+
+#[cfg(test)]
+fn original_agent_focus_camera_offset_from_tile_size(
+    map_tiles: &OriginalMapTiles,
+    tile: OriginalTilePoint,
+    zoom: f32,
+    screen_anchor: Vec2,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    let world =
+        original_agent_focus_world_point_from_tile_size(map_tiles, tile, tile_width, tile_height);
+    screen_anchor - world * zoom
+}
+
+fn original_agent_focus_world_point(
+    map_tiles: &OriginalMapTiles,
+    graphics: &RuntimeOriginalGraphics,
+    tile: OriginalTilePoint,
+) -> Vec2 {
+    original_agent_focus_world_point_from_tile_size(
+        map_tiles,
+        tile,
+        graphics.bank().record_width as f32,
+        graphics.bank().record_height as f32,
+    )
+}
+
+fn original_agent_focus_world_point_from_tile_size(
+    map_tiles: &OriginalMapTiles,
+    tile: OriginalTilePoint,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    original_map_tile_world_top_left(
+        map_tiles,
+        tile.tile_x as f32,
+        tile.tile_y as f32,
+        tile.tile_z.saturating_add(1) as f32,
+        tile_width,
+        tile_height,
+    ) + vec2(tile_width * 0.5, tile_height * 2.0 / 3.0)
+}
+
+fn initial_render_mode(
+    original_map_loaded: bool,
+    original_scene_loaded: bool,
+    graphics_loaded: bool,
+) -> MapRenderMode {
+    if original_map_loaded && original_scene_loaded {
+        MapRenderMode::OriginalMissionSceneProbe
+    } else if original_map_loaded {
+        MapRenderMode::OriginalMapTiles
+    } else if graphics_loaded {
+        MapRenderMode::OriginalGraphicsAtlas
+    } else {
+        MapRenderMode::DemoCity
+    }
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn compact_asset_label(label: &str) -> &str {
@@ -2710,14 +3016,21 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 #[cfg(test)]
 mod tests {
     use super::{
-        OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
+        MapRenderMode, OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
         OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalMissionControlRuntime,
+        initial_render_mode, original_agent_focus_camera_offset_from_tile_size,
+        original_agent_focus_world_point_from_tile_size,
     };
-    use crate::engine::mission_scene::{
-        OriginalAnimationRefs, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
-        OriginalDebugInteractionIntentStatus, OriginalDrawStage, OriginalMissionObjectCandidate,
-        OriginalMissionObjectKind, OriginalRuntimeRouteStatus, OriginalTilePoint,
+    use crate::engine::{
+        map_tiles::OriginalMapTiles,
+        mission_scene::{
+            OriginalAnimationRefs, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
+            OriginalDebugInteractionIntentStatus, OriginalDrawStage,
+            OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalRuntimeRouteStatus,
+            OriginalTilePoint,
+        },
     };
+    use macroquad::prelude::*;
 
     fn tile(tile_x: u16, tile_y: u16, tile_z: u16) -> OriginalTilePoint {
         OriginalTilePoint {
@@ -2935,5 +3248,58 @@ mod tests {
         assert!(label.contains("no hit state"));
         assert!(!label.contains("0x"));
         assert!(!label.contains("00 00"));
+    }
+
+    #[test]
+    fn startup_prefers_original_control_when_scene_model_is_available() {
+        assert_eq!(
+            initial_render_mode(true, true, true),
+            MapRenderMode::OriginalMissionSceneProbe
+        );
+        assert_eq!(
+            initial_render_mode(true, false, true),
+            MapRenderMode::OriginalMapTiles
+        );
+        assert_eq!(
+            initial_render_mode(false, false, true),
+            MapRenderMode::OriginalGraphicsAtlas
+        );
+        assert_eq!(
+            initial_render_mode(false, false, false),
+            MapRenderMode::DemoCity
+        );
+    }
+
+    #[test]
+    fn original_agent_start_camera_offset_places_agent_on_anchor() {
+        let map_tiles = synthetic_original_map_tiles(128, 128, 12);
+        let agent_tile = tile(91, 41, 2);
+        let anchor = vec2(800.0, 520.0);
+        let zoom = 0.82;
+
+        let offset = original_agent_focus_camera_offset_from_tile_size(
+            &map_tiles, agent_tile, zoom, anchor, 64.0, 48.0,
+        );
+        let world =
+            original_agent_focus_world_point_from_tile_size(&map_tiles, agent_tile, 64.0, 48.0);
+        let screen = world * zoom + offset;
+
+        assert!((screen.x - anchor.x).abs() < 0.001);
+        assert!((screen.y - anchor.y).abs() < 0.001);
+    }
+
+    fn synthetic_original_map_tiles(width: u32, depth: u32, height: u32) -> OriginalMapTiles {
+        let column_count = (width * depth) as usize;
+        let offset_table_bytes = column_count * 4;
+        let stack = vec![0u8; height as usize];
+        let mut decoded = Vec::new();
+        decoded.extend_from_slice(&width.to_le_bytes());
+        decoded.extend_from_slice(&depth.to_le_bytes());
+        decoded.extend_from_slice(&height.to_le_bytes());
+        for _ in 0..column_count {
+            decoded.extend_from_slice(&(offset_table_bytes as u32).to_le_bytes());
+        }
+        decoded.extend_from_slice(&stack);
+        OriginalMapTiles::from_decoded_bytes("synthetic/MAP01.DAT".to_string(), &decoded).unwrap()
     }
 }

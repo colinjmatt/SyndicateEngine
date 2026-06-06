@@ -49,6 +49,7 @@ const SPRITE_TAB_ENTRY_BYTES: usize = 6;
 const ROUTE_PROBE_SEARCH_RADIUS: u16 = 8;
 const ROUTE_PROBE_DEBUG_SEARCH_RADIUS: u16 = 14;
 const MAX_ROUTE_PROBE_PATH_NODES: usize = 512;
+const MAX_ORIGINAL_DEBUG_AGENT_SPAWNS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginalMissionScene {
@@ -956,8 +957,19 @@ impl OriginalMissionScene {
         model.route_probe_between(start, goal, true)
     }
 
+    pub fn original_control_smoke_route_from(
+        &self,
+        start: OriginalTilePoint,
+    ) -> OriginalRuntimeRouteProbe {
+        let Some(model) = &self.spatial_model else {
+            return OriginalRuntimeRouteProbe::unavailable();
+        };
+        model.smoke_route_from(start)
+    }
+
     pub fn debug_agent_spawns(&self) -> Vec<OriginalDebugAgentSpawn> {
-        self.objects
+        let strict_spawns = self
+            .objects
             .iter()
             .filter(|object| is_player_agent_spawn_candidate(object))
             .filter_map(|object| {
@@ -969,6 +981,25 @@ impl OriginalMissionScene {
                     sprite_ready: self.ped_render_proof.decision
                         == OriginalObjectRenderDecision::RuntimeRenderReady,
                 })
+            })
+            .take(MAX_ORIGINAL_DEBUG_AGENT_SPAWNS)
+            .collect::<Vec<_>>();
+        if !strict_spawns.is_empty() {
+            return strict_spawns;
+        }
+
+        self.objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
+            .filter_map(|object| Some((object.record_index, object.tile?)))
+            .take(MAX_ORIGINAL_DEBUG_AGENT_SPAWNS)
+            .enumerate()
+            .map(|(slot, (record_index, tile))| OriginalDebugAgentSpawn {
+                slot: slot as u8,
+                record_index,
+                tile,
+                sprite_ready: self.ped_render_proof.decision
+                    == OriginalObjectRenderDecision::RuntimeRenderReady,
             })
             .collect()
     }
@@ -2630,7 +2661,7 @@ impl OriginalRuntimeRouteProbe {
             transition_kind: OriginalRouteTransitionKind::None,
             path: Vec::new(),
             message:
-                "original route probe blocked: no supported player-agent spawn seed; demo grid active"
+                "original route probe blocked: no supported original-control route seed; demo grid active"
                     .to_string(),
         }
     }
@@ -2941,6 +2972,45 @@ impl OriginalSpatialModel {
         self.route_probe_from_start(start, goal, debug_enabled)
     }
 
+    fn smoke_route_from(&self, start: OriginalTilePoint) -> OriginalRuntimeRouteProbe {
+        let Some(start) = self
+            .nearest_route_node_same_z(start.key(), start.tile_z, ROUTE_PROBE_SEARCH_RADIUS)
+            .or_else(|| {
+                self.nearest_route_node_any_z(start.key(), ROUTE_PROBE_DEBUG_SEARCH_RADIUS)
+            })
+        else {
+            return OriginalRuntimeRouteProbe::missing_start(start);
+        };
+        let Some((path, transition_kind)) = self.short_debug_route_from_start(start, 8, 512) else {
+            return OriginalRuntimeRouteProbe::blocked(
+                start.to_tile_point(),
+                start.to_tile_point(),
+                start.to_tile_point(),
+                OriginalRouteTargetSnap {
+                    xy_distance: 0,
+                    z_delta: 0,
+                    radius: ROUTE_PROBE_DEBUG_SEARCH_RADIUS,
+                },
+                true,
+            );
+        };
+        let goal = path.last().copied().unwrap_or(start);
+        OriginalRuntimeRouteProbe::ready(
+            start.to_tile_point(),
+            goal.to_tile_point(),
+            goal.to_tile_point(),
+            OriginalRouteTargetSnap {
+                xy_distance: 0,
+                z_delta: 0,
+                radius: ROUTE_PROBE_DEBUG_SEARCH_RADIUS,
+            },
+            transition_kind,
+            path.into_iter()
+                .map(OriginalTileKey::to_tile_point)
+                .collect(),
+        )
+    }
+
     fn route_probe_from_start(
         &self,
         start: OriginalTileKey,
@@ -3170,6 +3240,68 @@ impl OriginalSpatialModel {
 
         let mut path = Vec::new();
         let mut cursor = goal;
+        path.push(cursor);
+        let mut used_height_transition = false;
+        while let Some(Some(parent)) = previous.get(&cursor).copied() {
+            if parent.z != cursor.z {
+                used_height_transition = true;
+            }
+            cursor = parent;
+            path.push(cursor);
+        }
+        path.reverse();
+        let transition_kind = if used_height_transition {
+            OriginalRouteTransitionKind::CandidateSlopeHeight
+        } else {
+            OriginalRouteTransitionKind::SameLevelOnly
+        };
+        Some((path, transition_kind))
+    }
+
+    fn short_debug_route_from_start(
+        &self,
+        start: OriginalTileKey,
+        min_steps: usize,
+        max_visited: usize,
+    ) -> Option<(Vec<OriginalTileKey>, OriginalRouteTransitionKind)> {
+        if !self.route_nodes.contains(&start) {
+            return None;
+        }
+
+        let mut queue = VecDeque::from([start]);
+        let mut previous = BTreeMap::<OriginalTileKey, Option<OriginalTileKey>>::new();
+        let mut depth = BTreeMap::<OriginalTileKey, usize>::new();
+        previous.insert(start, None);
+        depth.insert(start, 0);
+        let mut best = start;
+
+        while let Some(node) = queue.pop_front() {
+            let node_depth = depth.get(&node).copied().unwrap_or(0);
+            if node_depth >= min_steps {
+                best = node;
+                break;
+            }
+            if previous.len() >= max_visited {
+                break;
+            }
+            for neighbor in self.debug_neighbors(node) {
+                if previous.contains_key(&neighbor) {
+                    continue;
+                }
+                previous.insert(neighbor, Some(node));
+                depth.insert(neighbor, node_depth + 1);
+                if depth.get(&best).copied().unwrap_or(0) < node_depth + 1 {
+                    best = neighbor;
+                }
+                queue.push_back(neighbor);
+            }
+        }
+
+        if best == start {
+            return None;
+        }
+        let mut path = Vec::new();
+        let mut cursor = best;
         path.push(cursor);
         let mut used_height_transition = false;
         while let Some(Some(parent)) = previous.get(&cursor).copied() {
@@ -5286,6 +5418,98 @@ mod tests {
         assert!(scene.spatial_probe.report_label().contains("not proof"));
         assert!(!scene.spatial_probe.report_label().contains("00 00"));
         assert!(!scene.spatial_probe.report_label().contains("0x"));
+    }
+
+    #[test]
+    fn debug_agent_spawns_fall_back_to_rendered_ped_candidates() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        let ped_offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * 6;
+        write_record(
+            &mut decoded[ped_offset..ped_offset + super::PEOPLE_RECORD_BYTES],
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let spawns = scene.debug_agent_spawns();
+
+        assert_eq!(scene.spawn_probe.agent_candidates, 0);
+        assert_eq!(spawns.len(), 1);
+        assert_eq!(spawns[0].slot, 0);
+        assert_eq!(spawns[0].record_index, 6);
+        assert_eq!(
+            spawns[0].tile,
+            super::OriginalTilePoint {
+                tile_x: 1,
+                tile_y: 1,
+                tile_z: 0,
+                off_x: 0,
+                off_y: 0,
+                off_z: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn original_control_smoke_route_uses_fallback_ped_seed_without_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        let ped_offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * 6;
+        write_record(
+            &mut decoded[ped_offset..ped_offset + super::PEOPLE_RECORD_BYTES],
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let map_tiles = synthetic_map_tiles(5, 5, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+        let spawn = scene
+            .debug_agent_spawns()
+            .first()
+            .copied()
+            .expect("fallback debug ped spawn");
+
+        let route = scene.original_control_smoke_route_from(spawn.tile);
+
+        assert_eq!(
+            route.status,
+            super::OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert!(route.path.len() > 1);
+        assert!(route.panel_label().contains("demo gameplay"));
+        assert!(!route.panel_label().contains("00 00"));
+        assert!(!route.panel_label().contains("0x"));
     }
 
     #[test]
