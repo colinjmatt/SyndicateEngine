@@ -5,6 +5,7 @@ use crate::{
         camera::CameraRig,
         iso::iso_to_grid,
         map_block_correlation::MapBlockCorrelationScene,
+        map_catalog::MapDiagnosticSceneEntry,
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     },
@@ -30,6 +31,7 @@ pub struct WorldState {
     combat_log: String,
     sim_clock: SimClock,
     render_mode: MapRenderMode,
+    selected_map_scene: usize,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -47,10 +49,10 @@ impl MapRenderMode {
     fn label(self) -> String {
         match self {
             Self::DemoCity => "demo city".to_string(),
-            Self::DecodedSignature => "MAP01 signatures".to_string(),
-            Self::InferredLayer => "MAP01 inferred layer".to_string(),
-            Self::CandidateField(field) => format!("MAP01 {}", field.provisional_label()),
-            Self::BlockAddressability => "MAP01 block addressability".to_string(),
+            Self::DecodedSignature => "MAP signatures".to_string(),
+            Self::InferredLayer => "MAP inferred layer".to_string(),
+            Self::CandidateField(field) => format!("MAP {}", field.provisional_label()),
+            Self::BlockAddressability => "MAP block addressability".to_string(),
         }
     }
 
@@ -81,6 +83,7 @@ impl WorldState {
             combat_log: "No contact".to_string(),
             sim_clock: SimClock::default(),
             render_mode: MapRenderMode::DemoCity,
+            selected_map_scene: 0,
         }
     }
 
@@ -140,8 +143,16 @@ impl WorldState {
     }
 
     fn update_render_controls(&mut self) {
+        if is_key_pressed(KeyCode::N) {
+            self.select_next_map_scene();
+        }
+        if is_key_pressed(KeyCode::P) {
+            self.select_previous_map_scene();
+        }
         if is_key_pressed(KeyCode::M) {
-            if self.assets.diagnostics().map_preview.is_none() {
+            if self.current_diagnostic_scene().is_none()
+                && self.assets.diagnostics().map_preview.is_none()
+            {
                 self.combat_log = "MAP signature preview unavailable".to_string();
                 return;
             }
@@ -152,7 +163,8 @@ impl WorldState {
     }
 
     fn next_render_mode(&self) -> MapRenderMode {
-        let inferred_available = self.assets.diagnostics().map_inferred_preview.is_some();
+        let inferred_available = self.current_diagnostic_scene().is_some()
+            || self.assets.diagnostics().map_inferred_preview.is_some();
         match self.render_mode {
             MapRenderMode::DemoCity => MapRenderMode::DecodedSignature,
             MapRenderMode::DecodedSignature if inferred_available => MapRenderMode::InferredLayer,
@@ -173,13 +185,68 @@ impl WorldState {
                 MapRenderMode::CandidateField(MapCandidateField::Height)
             }
             MapRenderMode::CandidateField(MapCandidateField::Height)
-                if self.assets.map_block_correlation().is_some() =>
+                if self.current_block_correlation().is_some() =>
             {
                 MapRenderMode::BlockAddressability
             }
             MapRenderMode::CandidateField(_) => MapRenderMode::DemoCity,
             MapRenderMode::BlockAddressability => MapRenderMode::DemoCity,
         }
+    }
+
+    fn select_next_map_scene(&mut self) {
+        let catalog = self.assets.map_scene_catalog();
+        if catalog.len() < 2 {
+            return;
+        }
+        self.selected_map_scene = catalog.next_index(self.selected_map_scene);
+        self.ensure_render_mode_supported_by_selected_map();
+        self.combat_log = format!("Decoded MAP: {}", self.current_map_panel_label());
+    }
+
+    fn select_previous_map_scene(&mut self) {
+        let catalog = self.assets.map_scene_catalog();
+        if catalog.len() < 2 {
+            return;
+        }
+        self.selected_map_scene = catalog.previous_index(self.selected_map_scene);
+        self.ensure_render_mode_supported_by_selected_map();
+        self.combat_log = format!("Decoded MAP: {}", self.current_map_panel_label());
+    }
+
+    fn ensure_render_mode_supported_by_selected_map(&mut self) {
+        if self.render_mode == MapRenderMode::BlockAddressability
+            && self.current_block_correlation().is_none()
+        {
+            self.render_mode = MapRenderMode::InferredLayer;
+        }
+    }
+
+    fn current_map_entry_with_index(&self) -> Option<(usize, &MapDiagnosticSceneEntry)> {
+        let catalog = self.assets.map_scene_catalog();
+        if catalog.is_empty() {
+            return None;
+        }
+        let index = self.selected_map_scene.min(catalog.len() - 1);
+        catalog.entry(index).map(|entry| (index, entry))
+    }
+
+    fn current_diagnostic_scene(&self) -> Option<&MapDiagnosticScene> {
+        self.current_map_entry_with_index()
+            .map(|(_, entry)| &entry.scene)
+            .or_else(|| self.assets.map_scene())
+    }
+
+    fn current_block_correlation(&self) -> Option<&MapBlockCorrelationScene> {
+        self.current_map_entry_with_index()
+            .and_then(|(_, entry)| entry.block_correlation.as_ref())
+            .or_else(|| self.assets.map_block_correlation())
+    }
+
+    fn current_map_panel_label(&self) -> String {
+        self.current_map_entry_with_index()
+            .map(|(index, entry)| entry.panel_label(index, self.assets.map_scene_catalog().len()))
+            .unwrap_or_else(|| "MAP01.DAT".to_string())
     }
 
     fn update_sim_controls(&mut self) {
@@ -310,7 +377,7 @@ impl WorldState {
         match self.render_mode {
             MapRenderMode::DemoCity => self.map.draw(&self.camera),
             MapRenderMode::DecodedSignature => {
-                if let Some(scene) = self.assets.map_scene() {
+                if let Some(scene) = self.current_diagnostic_scene() {
                     self.map.draw_diagnostic_scene(
                         &self.camera,
                         scene,
@@ -323,7 +390,7 @@ impl WorldState {
                 }
             }
             MapRenderMode::InferredLayer => {
-                if let Some(scene) = self.assets.map_scene() {
+                if let Some(scene) = self.current_diagnostic_scene() {
                     self.map.draw_diagnostic_scene(
                         &self.camera,
                         scene,
@@ -338,7 +405,7 @@ impl WorldState {
                 }
             }
             MapRenderMode::CandidateField(field) => {
-                if let Some(scene) = self.assets.map_scene() {
+                if let Some(scene) = self.current_diagnostic_scene() {
                     self.map.draw_diagnostic_scene(
                         &self.camera,
                         scene,
@@ -354,12 +421,13 @@ impl WorldState {
                 }
             }
             MapRenderMode::BlockAddressability => {
-                if let (Some(scene), Some(correlation)) =
-                    (self.assets.map_scene(), self.assets.map_block_correlation())
-                {
+                if let (Some(scene), Some(correlation)) = (
+                    self.current_diagnostic_scene(),
+                    self.current_block_correlation(),
+                ) {
                     self.map
                         .draw_block_addressability_scene(&self.camera, scene, correlation);
-                } else if let Some(scene) = self.assets.map_scene() {
+                } else if let Some(scene) = self.current_diagnostic_scene() {
                     self.map.draw_diagnostic_scene(
                         &self.camera,
                         scene,
@@ -388,10 +456,12 @@ impl WorldState {
             }
             draw_minimap(&self.agents);
         } else {
+            let map_label = self.current_map_panel_label();
             draw_map_diagnostic_panel(
-                self.assets.map_scene(),
-                self.assets.map_block_correlation(),
+                self.current_diagnostic_scene(),
+                self.current_block_correlation(),
                 self.render_mode,
+                &map_label,
             );
         }
 
@@ -459,6 +529,7 @@ fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
     mode: MapRenderMode,
+    map_label: &str,
 ) {
     let x = screen_width() - 392.0;
     let y = 22.0;
@@ -470,7 +541,7 @@ fn draw_map_diagnostic_panel(
     draw_rectangle(x, y, 370.0, panel_height, Color::new(0.0, 0.0, 0.0, 0.60));
     draw_rectangle_lines(x, y, 370.0, panel_height, 2.0, SKYBLUE);
     draw_text("DECODED MAP DIAGNOSTIC", x + 16.0, y + 26.0, 18.0, SKYBLUE);
-    draw_text(&mode.label(), x + 16.0, y + 50.0, 16.0, WHITE);
+    draw_text(map_label, x + 16.0, y + 50.0, 14.0, WHITE);
 
     if let Some(scene) = scene {
         let layer = mode
@@ -478,7 +549,7 @@ fn draw_map_diagnostic_panel(
             .map(|layer| layer.label())
             .unwrap_or("demo city");
         draw_text(
-            &format!("Layer: {layer}"),
+            &format!("{} | {layer}", mode.label()),
             x + 16.0,
             y + 74.0,
             14.0,

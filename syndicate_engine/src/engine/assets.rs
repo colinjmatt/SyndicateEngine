@@ -3,7 +3,8 @@ use walkdir::WalkDir;
 
 use crate::engine::{
     formats::DecodeDiagnostics, map_block_correlation::MapBlockCorrelationScene,
-    map_scene::MapDiagnosticScene, runtime_probe::TabRuntimeProbeManifest,
+    map_catalog::MapDiagnosticSceneCatalog, map_scene::MapDiagnosticScene,
+    runtime_probe::TabRuntimeProbeManifest,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -18,6 +19,7 @@ pub struct AssetIndex {
     diagnostics: DecodeDiagnostics,
     map_scene: Option<MapDiagnosticScene>,
     map_block_correlation: Option<MapBlockCorrelationScene>,
+    map_scene_catalog: MapDiagnosticSceneCatalog,
     tab_probe_manifest: TabRuntimeProbeManifest,
     total_files: usize,
 }
@@ -65,18 +67,20 @@ impl AssetIndex {
             }
         }
 
-        index.diagnostics = DecodeDiagnostics::inspect(&root);
-        index.map_scene = build_map_scene(&index.diagnostics);
-        index.map_block_correlation = index
-            .map_scene
-            .as_ref()
-            .and_then(|scene| MapBlockCorrelationScene::from_root(&root, scene));
-        index.tab_probe_manifest = TabRuntimeProbeManifest::from_root(&root);
         index.maps.sort();
         index.missions.sort();
         index.palettes.sort();
         index.sprites.sort();
         index.sounds.sort();
+        let block_analyses = MapBlockCorrelationScene::block_analyses_from_root(&root);
+        index.diagnostics = DecodeDiagnostics::inspect(&root);
+        index.map_scene = build_map_scene(&index.diagnostics);
+        index.map_block_correlation = index.map_scene.as_ref().and_then(|scene| {
+            MapBlockCorrelationScene::from_block_analyses(scene, block_analyses.clone())
+        });
+        index.map_scene_catalog =
+            MapDiagnosticSceneCatalog::from_map_paths(&root, &index.maps, block_analyses);
+        index.tab_probe_manifest = TabRuntimeProbeManifest::from_root(&root);
         index
     }
 
@@ -109,6 +113,9 @@ impl AssetIndex {
     }
     pub fn map_block_correlation(&self) -> Option<&MapBlockCorrelationScene> {
         self.map_block_correlation.as_ref()
+    }
+    pub fn map_scene_catalog(&self) -> &MapDiagnosticSceneCatalog {
+        &self.map_scene_catalog
     }
     pub fn tab_probe_manifest(&self) -> &TabRuntimeProbeManifest {
         &self.tab_probe_manifest

@@ -48,7 +48,9 @@ pub struct MapBlockFieldCorrelation {
 }
 
 impl MapBlockCorrelationScene {
-    pub fn from_root(root: impl AsRef<Path>, scene: &MapDiagnosticScene) -> Option<Self> {
+    pub fn block_analyses_from_root(
+        root: impl AsRef<Path>,
+    ) -> Vec<(String, BlockGraphicsAnalysis)> {
         let root = root.as_ref();
         let mut analyses = Vec::new();
 
@@ -77,7 +79,12 @@ impl MapBlockCorrelationScene {
             }
         }
 
-        Self::from_block_analyses(scene, analyses)
+        analyses
+    }
+
+    pub fn from_root(root: impl AsRef<Path>, scene: &MapDiagnosticScene) -> Option<Self> {
+        let root = root.as_ref();
+        Self::from_block_analyses(scene, Self::block_analyses_from_root(root))
     }
 
     pub fn from_block_analyses(
