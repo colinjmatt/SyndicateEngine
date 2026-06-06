@@ -45,19 +45,19 @@ impl RuntimeOriginalGraphics {
         true
     }
 
-    pub fn draw_atlas_preview(&self, origin: Vec2, columns: usize, rows: usize, tile_size: f32) {
+    pub fn draw_atlas_preview(&self, origin: Vec2, columns: usize, rows: usize, tile_size: Vec2) {
         let visible = columns.saturating_mul(rows).min(self.bank.record_count);
         for record_index in 0..visible {
-            let x = origin.x + (record_index % columns) as f32 * tile_size;
-            let y = origin.y + (record_index / columns) as f32 * tile_size;
-            self.draw_record(record_index, vec2(x, y), vec2(tile_size, tile_size), WHITE);
+            let x = origin.x + (record_index % columns) as f32 * tile_size.x;
+            let y = origin.y + (record_index / columns) as f32 * tile_size.y;
+            self.draw_record(record_index, vec2(x, y), tile_size, WHITE);
         }
 
         draw_rectangle_lines(
             origin.x,
             origin.y,
-            columns as f32 * tile_size,
-            rows as f32 * tile_size,
+            columns as f32 * tile_size.x,
+            rows as f32 * tile_size.y,
             1.0,
             SKYBLUE,
         );

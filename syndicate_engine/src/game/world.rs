@@ -494,7 +494,6 @@ impl WorldState {
                 }
             }
             MapRenderMode::OriginalGraphicsAtlas => {
-                self.map.draw(&self.camera);
                 if let Some(graphics) = self.original_graphics.as_ref() {
                     draw_original_graphics_atlas(graphics);
                 }
@@ -815,22 +814,37 @@ fn map_panel_height(mode: MapRenderMode) -> f32 {
 }
 
 fn draw_original_graphics_atlas(graphics: &RuntimeOriginalGraphics) {
-    let origin = vec2(908.0, 238.0);
-    let columns = 18;
-    let rows = 16;
-    let tile_size = 26.0;
+    let columns = if graphics.bank().record_count <= 256 {
+        16
+    } else {
+        18
+    };
+    let rows = graphics.bank().record_count.div_ceil(columns).min(16);
+    let base_tile_width = if graphics.bank().record_width >= 64 {
+        32.0
+    } else {
+        26.0
+    };
+    let tile_size = vec2(
+        base_tile_width,
+        base_tile_width * graphics.bank().record_height as f32
+            / graphics.bank().record_width.max(1) as f32,
+    );
+    let panel_width = columns as f32 * tile_size.x + 28.0;
+    let panel_height = rows as f32 * tile_size.y + 92.0;
+    let origin = vec2((screen_width() - panel_width - 40.0).max(900.0), 286.0);
     draw_rectangle(
         origin.x - 14.0,
         origin.y - 54.0,
-        columns as f32 * tile_size + 28.0,
-        rows as f32 * tile_size + 92.0,
+        panel_width,
+        panel_height,
         Color::new(0.0, 0.0, 0.0, 0.68),
     );
     draw_rectangle_lines(
         origin.x - 14.0,
         origin.y - 54.0,
-        columns as f32 * tile_size + 28.0,
-        rows as f32 * tile_size + 92.0,
+        panel_width,
+        panel_height,
         2.0,
         SKYBLUE,
     );
@@ -856,7 +870,7 @@ fn draw_original_graphics_atlas(graphics: &RuntimeOriginalGraphics) {
     draw_text(
         "Local asset pixels only; not saved to report/source/tests",
         origin.x,
-        origin.y + rows as f32 * tile_size + 24.0,
+        origin.y + rows as f32 * tile_size.y + 24.0,
         13.0,
         YELLOW,
     );

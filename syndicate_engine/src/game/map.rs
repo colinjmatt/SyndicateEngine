@@ -329,8 +329,11 @@ impl TacticalMap {
                 let height_delta = cell.height_candidate.abs_diff(height_baseline).min(15);
                 let z = height_delta as f32 * 0.040;
                 let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
-                let size = vec2(30.0 * camera.zoom, 30.0 * camera.zoom);
-                let top_left = vec2(center.x - size.x * 0.5, center.y - size.y * 0.72);
+                let size = vec2(
+                    graphics.bank().record_width as f32 * camera.zoom * 0.42,
+                    graphics.bank().record_height as f32 * camera.zoom * 0.42,
+                );
+                let top_left = vec2(center.x - size.x * 0.5, center.y - size.y * 0.68);
                 if top_left.x > screen_width() + size.x
                     || top_left.y > screen_height() + size.y
                     || top_left.x + size.x < -size.x
