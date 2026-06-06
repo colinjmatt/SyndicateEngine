@@ -8,6 +8,7 @@ use crate::{
         map_catalog::MapDiagnosticSceneEntry,
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
+        map_tiles::{OriginalMapTiles, OriginalTileTypes},
     },
     game::{
         agent::Agent,
@@ -34,6 +35,8 @@ pub struct WorldState {
     render_mode: MapRenderMode,
     selected_map_scene: usize,
     original_graphics: Option<RuntimeOriginalGraphics>,
+    original_map_tiles: Option<OriginalMapTiles>,
+    original_tile_types: Option<OriginalTileTypes>,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -45,6 +48,7 @@ enum MapRenderMode {
     InferredLayer,
     CandidateField(MapCandidateField),
     BlockAddressability,
+    OriginalMapTiles,
     OriginalGraphicsMap,
     OriginalGraphicsAtlas,
 }
@@ -57,6 +61,7 @@ impl MapRenderMode {
             Self::InferredLayer => "MAP inferred layer".to_string(),
             Self::CandidateField(field) => format!("MAP {}", field.provisional_label()),
             Self::BlockAddressability => "MAP block addressability".to_string(),
+            Self::OriginalMapTiles => "original MAP01 tiles".to_string(),
             Self::OriginalGraphicsMap => "MAP original graphics candidate".to_string(),
             Self::OriginalGraphicsAtlas => "original graphics atlas".to_string(),
         }
@@ -69,7 +74,9 @@ impl MapRenderMode {
             Self::InferredLayer => Some(MapDiagnosticSceneLayer::Inferred),
             Self::CandidateField(field) => Some(MapDiagnosticSceneLayer::CandidateField(field)),
             Self::BlockAddressability => Some(MapDiagnosticSceneLayer::BlockAddressability),
-            Self::OriginalGraphicsMap | Self::OriginalGraphicsAtlas => None,
+            Self::OriginalMapTiles | Self::OriginalGraphicsMap | Self::OriginalGraphicsAtlas => {
+                None
+            }
         }
     }
 }
@@ -77,13 +84,20 @@ impl MapRenderMode {
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
         let original_graphics = RuntimeOriginalGraphics::from_root(assets.root_path());
+        let original_map_tiles = OriginalMapTiles::from_root(assets.root_path()).ok();
+        let original_tile_types = OriginalTileTypes::from_root(assets.root_path()).ok();
         let graphics_loaded = original_graphics.is_some();
-        let render_mode = if graphics_loaded {
+        let original_map_loaded = graphics_loaded && original_map_tiles.is_some();
+        let render_mode = if original_map_loaded {
+            MapRenderMode::OriginalMapTiles
+        } else if graphics_loaded {
             MapRenderMode::OriginalGraphicsAtlas
         } else {
             MapRenderMode::DemoCity
         };
-        let combat_log = if graphics_loaded {
+        let combat_log = if original_map_loaded {
+            "Runtime original MAP01 tile stacks loaded".to_string()
+        } else if graphics_loaded {
             "Runtime original graphics loaded".to_string()
         } else {
             "No contact".to_string()
@@ -104,6 +118,8 @@ impl WorldState {
             render_mode,
             selected_map_scene: 0,
             original_graphics,
+            original_map_tiles,
+            original_tile_types,
         }
     }
 
@@ -172,6 +188,8 @@ impl WorldState {
         if is_key_pressed(KeyCode::M) {
             if self.current_diagnostic_scene().is_none()
                 && self.assets.diagnostics().map_preview.is_none()
+                && self.original_map_tiles.is_none()
+                && self.original_graphics.is_none()
             {
                 self.combat_log = "MAP signature preview unavailable".to_string();
                 return;
@@ -209,14 +227,24 @@ impl WorldState {
             {
                 MapRenderMode::BlockAddressability
             }
+            MapRenderMode::CandidateField(_) if self.original_map_tiles_ready() => {
+                MapRenderMode::OriginalMapTiles
+            }
             MapRenderMode::CandidateField(_) if self.original_graphics.is_some() => {
                 MapRenderMode::OriginalGraphicsMap
             }
             MapRenderMode::CandidateField(_) => MapRenderMode::DemoCity,
+            MapRenderMode::BlockAddressability if self.original_map_tiles_ready() => {
+                MapRenderMode::OriginalMapTiles
+            }
             MapRenderMode::BlockAddressability if self.original_graphics.is_some() => {
                 MapRenderMode::OriginalGraphicsMap
             }
             MapRenderMode::BlockAddressability => MapRenderMode::DemoCity,
+            MapRenderMode::OriginalMapTiles if inferred_available => {
+                MapRenderMode::OriginalGraphicsMap
+            }
+            MapRenderMode::OriginalMapTiles => MapRenderMode::OriginalGraphicsAtlas,
             MapRenderMode::OriginalGraphicsMap => MapRenderMode::OriginalGraphicsAtlas,
             MapRenderMode::OriginalGraphicsAtlas => MapRenderMode::DemoCity,
         }
@@ -250,11 +278,21 @@ impl WorldState {
         }
         if matches!(
             self.render_mode,
-            MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas
+            MapRenderMode::OriginalMapTiles
+                | MapRenderMode::OriginalGraphicsMap
+                | MapRenderMode::OriginalGraphicsAtlas
         ) && self.original_graphics.is_none()
         {
             self.render_mode = MapRenderMode::InferredLayer;
         }
+        if self.render_mode == MapRenderMode::OriginalMapTiles && self.original_map_tiles.is_none()
+        {
+            self.render_mode = MapRenderMode::OriginalGraphicsAtlas;
+        }
+    }
+
+    fn original_map_tiles_ready(&self) -> bool {
+        self.original_graphics.is_some() && self.original_map_tiles.is_some()
     }
 
     fn current_map_entry_with_index(&self) -> Option<(usize, &MapDiagnosticSceneEntry)> {
@@ -493,6 +531,19 @@ impl WorldState {
                     self.map.draw(&self.camera);
                 }
             }
+            MapRenderMode::OriginalMapTiles => {
+                if let (Some(map_tiles), Some(graphics)) = (
+                    self.original_map_tiles.as_ref(),
+                    self.original_graphics.as_ref(),
+                ) {
+                    self.map.draw_original_map_tiles(
+                        &self.camera,
+                        map_tiles,
+                        self.original_tile_types.as_ref(),
+                        graphics,
+                    );
+                }
+            }
             MapRenderMode::OriginalGraphicsAtlas => {
                 if let Some(graphics) = self.original_graphics.as_ref() {
                     draw_original_graphics_atlas(graphics);
@@ -522,6 +573,8 @@ impl WorldState {
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
                 self.original_graphics.as_ref(),
+                self.original_map_tiles.as_ref(),
+                self.original_tile_types.as_ref(),
                 self.original_graphics_field(),
                 self.render_mode,
                 &map_label,
@@ -592,6 +645,8 @@ fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
     graphics: Option<&RuntimeOriginalGraphics>,
+    map_tiles: Option<&OriginalMapTiles>,
+    tile_types: Option<&OriginalTileTypes>,
     original_graphics_field: MapCandidateField,
     mode: MapRenderMode,
     map_label: &str,
@@ -606,6 +661,7 @@ fn draw_map_diagnostic_panel(
 
     if let Some(scene) = scene {
         let layer = match mode {
+            MapRenderMode::OriginalMapTiles => "runtime original MAP tile stacks",
             MapRenderMode::OriginalGraphicsMap => "runtime original graphics candidate",
             MapRenderMode::OriginalGraphicsAtlas => "runtime original graphics atlas",
             _ => mode
@@ -677,6 +733,52 @@ fn draw_map_diagnostic_panel(
             );
             draw_text(
                 "Not proof of layout, walkability, objects, or semantics",
+                x + 16.0,
+                y + 202.0,
+                12.0,
+                GRAY,
+            );
+        } else if mode == MapRenderMode::OriginalMapTiles {
+            if let (Some(map_tiles), Some(graphics)) = (map_tiles, graphics) {
+                draw_text(
+                    &format!(
+                        "{}x{}x{} stacks | {} unique",
+                        map_tiles.width, map_tiles.depth, map_tiles.height, map_tiles.unique_stacks
+                    ),
+                    x + 16.0,
+                    y + 120.0,
+                    13.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &format!(
+                        "max tile {} | HBLK {} {}x{}",
+                        map_tiles.max_tile_index,
+                        graphics.bank().record_count,
+                        graphics.bank().record_width,
+                        graphics.bank().record_height
+                    ),
+                    x + 16.0,
+                    y + 140.0,
+                    12.0,
+                    YELLOW,
+                );
+                let source_label = tile_types
+                    .map(|tile_types| {
+                        format!("{} | {}", map_tiles.source_label, tile_types.source_label)
+                    })
+                    .unwrap_or_else(|| map_tiles.source_label.clone());
+                draw_text(&source_label, x + 16.0, y + 160.0, 12.0, GRAY);
+            }
+            draw_text(
+                "Runtime MAP tile placement; local pixels only",
+                x + 16.0,
+                y + 184.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "No walkability, objects, mission, or entity semantics",
                 x + 16.0,
                 y + 202.0,
                 12.0,
@@ -806,7 +908,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::BlockAddressability => 212.0,
+        MapRenderMode::BlockAddressability | MapRenderMode::OriginalMapTiles => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,
         _ => 156.0,

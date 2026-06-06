@@ -1,9 +1,8 @@
-//! Conservative diagnostics for decompressed `MAP*.DAT` city files.
+//! Conservative aggregate diagnostics for decompressed `MAP*.DAT` city files.
 //!
-//! The original map format is not fully decoded yet. This module only claims the
-//! stable structure that is observable across local samples: an RNC-wrapped
-//! payload with a `64 * 64 * 12` primary cell section followed by a variable-size
-//! tail that is also aligned to 12-byte records.
+//! Runtime tile-stack parsing lives in `map_tiles`. This module retains the
+//! older aggregate byte-lane views used to compare map payloads without writing
+//! decoded chunks or previews to reports/tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -7,6 +7,7 @@ use crate::engine::{
         MapSignaturePreview,
     },
     map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
+    map_tiles::{OriginalMapTiles, OriginalTileTypes},
     palette,
 };
 use crate::game::original_graphics::RuntimeOriginalGraphics;
@@ -346,6 +347,88 @@ impl TacticalMap {
             }
         }
     }
+
+    pub fn draw_original_map_tiles(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        tile_types: Option<&OriginalTileTypes>,
+        graphics: &RuntimeOriginalGraphics,
+    ) {
+        let size = vec2(
+            graphics.bank().record_width as f32 * camera.zoom,
+            graphics.bank().record_height as f32 * camera.zoom,
+        );
+
+        for diagonal in 0..(map_tiles.width + map_tiles.depth).saturating_sub(1) {
+            let min_y = diagonal.saturating_sub(map_tiles.width.saturating_sub(1));
+            let max_y = diagonal.min(map_tiles.depth.saturating_sub(1));
+            for y in min_y..=max_y {
+                let x = diagonal - y;
+                let Some(stack) = map_tiles.stack_at(x, y) else {
+                    continue;
+                };
+
+                for visual_z in 0..stack.len() {
+                    let source_z = stack.len() - 1 - visual_z;
+                    let tile_index = stack[source_z];
+                    if tile_index as usize >= graphics.bank().record_count
+                        || !is_renderable_original_tile(tile_index, stack, tile_types)
+                    {
+                        continue;
+                    }
+
+                    let center = camera.world_to_screen(grid_to_iso(
+                        x as f32,
+                        y as f32,
+                        visual_z as f32 * 0.5,
+                    ));
+                    let top_left = vec2(
+                        center.x - size.x * 0.5,
+                        center.y - size.y + 16.0 * camera.zoom,
+                    );
+                    if top_left.x > screen_width() + size.x
+                        || top_left.y > screen_height() + size.y
+                        || top_left.x + size.x < -size.x
+                        || top_left.y + size.y < -size.y
+                    {
+                        continue;
+                    }
+
+                    graphics.draw_record(tile_index as usize, top_left, size, WHITE);
+                }
+            }
+        }
+    }
+}
+
+fn is_renderable_original_tile(
+    tile_index: u8,
+    stack: &[u8],
+    tile_types: Option<&OriginalTileTypes>,
+) -> bool {
+    if tile_index == 0 {
+        return false;
+    }
+
+    let visible_by_type = tile_types
+        .map(|tile_types| tile_types.is_renderable_tile(tile_index))
+        .unwrap_or(true);
+    if !visible_by_type {
+        return false;
+    }
+
+    if tile_index == 2 {
+        return !stack.iter().copied().any(|other| {
+            other != 2
+                && other != 0
+                && tile_types
+                    .map(|tile_types| tile_types.is_renderable_tile(other))
+                    .unwrap_or(true)
+        });
+    }
+
+    true
 }
 
 fn candidate_field_color(
@@ -453,5 +536,25 @@ fn signature_tile_color(class: u8) -> Color {
         13 => Color::from_rgba(190, 95, 120, 255),
         14 => Color::from_rgba(130, 150, 80, 255),
         _ => Color::from_rgba(205, 205, 205, 255),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_renderable_original_tile;
+    use crate::engine::map_tiles::OriginalTileTypes;
+
+    #[test]
+    fn hides_tile_two_only_when_it_is_stack_fill_above_other_tiles() {
+        let mut table = vec![0u8; 256];
+        table[2] = 5;
+        table[13] = 5;
+        let tile_types =
+            OriginalTileTypes::from_decoded_bytes("synthetic/COL01.DAT".to_string(), &table)
+                .unwrap();
+
+        assert!(is_renderable_original_tile(2, &[2, 2], Some(&tile_types)));
+        assert!(!is_renderable_original_tile(2, &[2, 13], Some(&tile_types)));
+        assert!(is_renderable_original_tile(13, &[2, 13], Some(&tile_types)));
     }
 }
