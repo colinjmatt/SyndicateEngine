@@ -5,6 +5,7 @@ use crate::engine::{
         MapCandidateField, MapInferredLayerPreview, MapPrimarySubstrateCandidate,
         MapSignaturePreview,
     },
+    map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     palette,
 };
 use crate::game::pathfinding::GridPos;
@@ -209,6 +210,55 @@ impl TacticalMap {
                     candidate_field_color(field, value, evidence.baseline, height_delta),
                     Color::new(0.01, 0.012, 0.016, 0.58),
                 );
+            }
+        }
+    }
+
+    pub fn draw_diagnostic_scene(
+        &self,
+        camera: &CameraRig,
+        scene: &MapDiagnosticScene,
+        layer: MapDiagnosticSceneLayer,
+    ) {
+        for y in 0..scene.height {
+            for x in 0..scene.width {
+                let Some(cell) = scene.cell(x, y) else {
+                    continue;
+                };
+                let height_delta = scene
+                    .field_evidence(MapCandidateField::Height)
+                    .map(|evidence| cell.height_candidate.abs_diff(evidence.baseline).min(15))
+                    .unwrap_or(cell.height_class.min(15));
+                let z = match layer {
+                    MapDiagnosticSceneLayer::Inferred | MapDiagnosticSceneLayer::Signature => {
+                        cell.height_class as f32 * 0.055
+                    }
+                    MapDiagnosticSceneLayer::CandidateField(MapCandidateField::Height) => {
+                        height_delta as f32 * 0.065
+                    }
+                    MapDiagnosticSceneLayer::CandidateField(_) => height_delta as f32 * 0.035,
+                };
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
+                let color = match layer {
+                    MapDiagnosticSceneLayer::Inferred => {
+                        inferred_tile_color(cell.visual_class, cell.height_class)
+                    }
+                    MapDiagnosticSceneLayer::Signature => {
+                        signature_tile_color(cell.signature_class.unwrap_or(0))
+                    }
+                    MapDiagnosticSceneLayer::CandidateField(field) => scene
+                        .field_evidence(field)
+                        .map(|evidence| {
+                            candidate_field_color(
+                                field,
+                                cell.field_value(field),
+                                evidence.baseline,
+                                height_delta,
+                            )
+                        })
+                        .unwrap_or_else(|| inferred_tile_color(cell.visual_class, height_delta)),
+                };
+                draw_iso_tile(center, color, Color::new(0.01, 0.012, 0.016, 0.58));
             }
         }
     }

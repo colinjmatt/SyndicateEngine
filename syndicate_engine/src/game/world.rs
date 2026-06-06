@@ -1,6 +1,10 @@
 use crate::{
     engine::{
-        assets::AssetIndex, camera::CameraRig, iso::iso_to_grid, map_decode::MapCandidateField,
+        assets::AssetIndex,
+        camera::CameraRig,
+        iso::iso_to_grid,
+        map_decode::MapCandidateField,
+        map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     },
     game::{
         agent::Agent,
@@ -43,6 +47,15 @@ impl MapRenderMode {
             Self::DecodedSignature => "MAP01 signatures".to_string(),
             Self::InferredLayer => "MAP01 inferred layer".to_string(),
             Self::CandidateField(field) => format!("MAP01 {}", field.provisional_label()),
+        }
+    }
+
+    fn diagnostic_layer(self) -> Option<MapDiagnosticSceneLayer> {
+        match self {
+            Self::DemoCity => None,
+            Self::DecodedSignature => Some(MapDiagnosticSceneLayer::Signature),
+            Self::InferredLayer => Some(MapDiagnosticSceneLayer::Inferred),
+            Self::CandidateField(field) => Some(MapDiagnosticSceneLayer::CandidateField(field)),
         }
     }
 }
@@ -286,21 +299,42 @@ impl WorldState {
         match self.render_mode {
             MapRenderMode::DemoCity => self.map.draw(&self.camera),
             MapRenderMode::DecodedSignature => {
-                if let Some(preview) = self.assets.diagnostics().map_preview.as_ref() {
+                if let Some(scene) = self.assets.map_scene() {
+                    self.map.draw_diagnostic_scene(
+                        &self.camera,
+                        scene,
+                        MapDiagnosticSceneLayer::Signature,
+                    );
+                } else if let Some(preview) = self.assets.diagnostics().map_preview.as_ref() {
                     self.map.draw_signature_preview(&self.camera, preview);
                 } else {
                     self.map.draw(&self.camera);
                 }
             }
             MapRenderMode::InferredLayer => {
-                if let Some(preview) = self.assets.diagnostics().map_inferred_preview.as_ref() {
+                if let Some(scene) = self.assets.map_scene() {
+                    self.map.draw_diagnostic_scene(
+                        &self.camera,
+                        scene,
+                        MapDiagnosticSceneLayer::Inferred,
+                    );
+                } else if let Some(preview) =
+                    self.assets.diagnostics().map_inferred_preview.as_ref()
+                {
                     self.map.draw_inferred_layer_preview(&self.camera, preview);
                 } else {
                     self.map.draw(&self.camera);
                 }
             }
             MapRenderMode::CandidateField(field) => {
-                if let Some(substrate) = self.assets.diagnostics().map_substrate_candidate.as_ref()
+                if let Some(scene) = self.assets.map_scene() {
+                    self.map.draw_diagnostic_scene(
+                        &self.camera,
+                        scene,
+                        MapDiagnosticSceneLayer::CandidateField(field),
+                    );
+                } else if let Some(substrate) =
+                    self.assets.diagnostics().map_substrate_candidate.as_ref()
                 {
                     self.map
                         .draw_candidate_field_preview(&self.camera, substrate, field);
@@ -309,20 +343,27 @@ impl WorldState {
                 }
             }
         }
-        for agent in &self.agents {
-            if agent.selected {
-                self.map.draw_path(&self.camera, &agent.path, agent.color);
-                if let Some(destination) = agent.destination() {
-                    self.map.draw_marker(&self.camera, destination, agent.color);
+
+        if self.render_mode == MapRenderMode::DemoCity {
+            for agent in &self.agents {
+                if agent.selected {
+                    self.map.draw_path(&self.camera, &agent.path, agent.color);
+                    if let Some(destination) = agent.destination() {
+                        self.map.draw_marker(&self.camera, destination, agent.color);
+                    }
                 }
             }
+            for agent in &self.agents {
+                agent.draw(&self.camera);
+            }
+            for hostile in &self.hostiles {
+                draw_hostile(&self.camera, hostile);
+            }
+            draw_minimap(&self.agents);
+        } else {
+            draw_map_diagnostic_panel(self.assets.map_scene(), self.render_mode);
         }
-        for agent in &self.agents {
-            agent.draw(&self.camera);
-        }
-        for hostile in &self.hostiles {
-            draw_hostile(&self.camera, hostile);
-        }
+
         ui::draw_hud(
             &self.assets,
             self.agents[self.selected].name,
@@ -334,7 +375,6 @@ impl WorldState {
                 self.render_mode.label()
             ),
         );
-        draw_minimap(&self.agents);
     }
 }
 
@@ -381,5 +421,60 @@ fn draw_minimap(agents: &[Agent]) {
         let px = x + 18.0 + agent.grid.x / 28.0 * 130.0;
         let py = y + 38.0 + agent.grid.y / 28.0 * 124.0;
         draw_circle(px, py, if agent.selected { 5.0 } else { 3.5 }, agent.color);
+    }
+}
+
+fn draw_map_diagnostic_panel(scene: Option<&MapDiagnosticScene>, mode: MapRenderMode) {
+    let x = screen_width() - 392.0;
+    let y = 22.0;
+    draw_rectangle(x, y, 370.0, 156.0, Color::new(0.0, 0.0, 0.0, 0.60));
+    draw_rectangle_lines(x, y, 370.0, 156.0, 2.0, SKYBLUE);
+    draw_text("DECODED MAP DIAGNOSTIC", x + 16.0, y + 26.0, 18.0, SKYBLUE);
+    draw_text(&mode.label(), x + 16.0, y + 50.0, 16.0, WHITE);
+
+    if let Some(scene) = scene {
+        let layer = mode
+            .diagnostic_layer()
+            .map(|layer| layer.label())
+            .unwrap_or("demo city");
+        draw_text(
+            &format!("Layer: {layer}"),
+            x + 16.0,
+            y + 74.0,
+            14.0,
+            LIGHTGRAY,
+        );
+        draw_text(
+            &format!(
+                "{}x{} cells | inferred {} | signatures {}",
+                scene.width, scene.height, scene.visual_classes, scene.unique_signatures
+            ),
+            x + 16.0,
+            y + 96.0,
+            14.0,
+            LIGHTGRAY,
+        );
+        draw_text(
+            "Runtime-local render; gameplay grid remains demo city",
+            x + 16.0,
+            y + 120.0,
+            13.0,
+            YELLOW,
+        );
+        draw_text(
+            "No decoded walkability/object semantics claimed",
+            x + 16.0,
+            y + 140.0,
+            13.0,
+            GRAY,
+        );
+    } else {
+        draw_text(
+            "MAP diagnostic scene unavailable",
+            x + 16.0,
+            y + 82.0,
+            14.0,
+            GRAY,
+        );
     }
 }

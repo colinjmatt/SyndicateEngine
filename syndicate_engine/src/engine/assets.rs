@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, path::PathBuf};
 use walkdir::WalkDir;
 
-use crate::engine::{formats::DecodeDiagnostics, runtime_probe::TabRuntimeProbeManifest};
+use crate::engine::{
+    formats::DecodeDiagnostics, map_scene::MapDiagnosticScene,
+    runtime_probe::TabRuntimeProbeManifest,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct AssetIndex {
@@ -13,6 +16,7 @@ pub struct AssetIndex {
     sprites: Vec<PathBuf>,
     sounds: Vec<PathBuf>,
     diagnostics: DecodeDiagnostics,
+    map_scene: Option<MapDiagnosticScene>,
     tab_probe_manifest: TabRuntimeProbeManifest,
     total_files: usize,
 }
@@ -61,6 +65,7 @@ impl AssetIndex {
         }
 
         index.diagnostics = DecodeDiagnostics::inspect(&root);
+        index.map_scene = build_map_scene(&index.diagnostics);
         index.tab_probe_manifest = TabRuntimeProbeManifest::from_root(&root);
         index.maps.sort();
         index.missions.sort();
@@ -94,6 +99,9 @@ impl AssetIndex {
     pub fn diagnostics(&self) -> &DecodeDiagnostics {
         &self.diagnostics
     }
+    pub fn map_scene(&self) -> Option<&MapDiagnosticScene> {
+        self.map_scene.as_ref()
+    }
     pub fn tab_probe_manifest(&self) -> &TabRuntimeProbeManifest {
         &self.tab_probe_manifest
     }
@@ -105,4 +113,12 @@ impl AssetIndex {
             .and_then(|s| s.to_str())
             .unwrap_or("no MAP*.DAT found")
     }
+}
+
+fn build_map_scene(diagnostics: &DecodeDiagnostics) -> Option<MapDiagnosticScene> {
+    MapDiagnosticScene::from_candidates(
+        diagnostics.map_preview.as_ref(),
+        diagnostics.map_inferred_preview.as_ref()?,
+        diagnostics.map_substrate_candidate.as_ref()?,
+    )
 }

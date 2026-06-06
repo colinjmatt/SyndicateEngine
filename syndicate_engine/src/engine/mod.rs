@@ -6,6 +6,7 @@ pub mod config;
 pub mod formats;
 pub mod iso;
 pub mod map_decode;
+pub mod map_scene;
 pub mod palette;
 pub mod palette_decode;
 pub mod report;
