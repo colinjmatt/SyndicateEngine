@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 use walkdir::WalkDir;
 
 use crate::engine::{
-    formats::DecodeDiagnostics, map_scene::MapDiagnosticScene,
-    runtime_probe::TabRuntimeProbeManifest,
+    formats::DecodeDiagnostics, map_block_correlation::MapBlockCorrelationScene,
+    map_scene::MapDiagnosticScene, runtime_probe::TabRuntimeProbeManifest,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -17,6 +17,7 @@ pub struct AssetIndex {
     sounds: Vec<PathBuf>,
     diagnostics: DecodeDiagnostics,
     map_scene: Option<MapDiagnosticScene>,
+    map_block_correlation: Option<MapBlockCorrelationScene>,
     tab_probe_manifest: TabRuntimeProbeManifest,
     total_files: usize,
 }
@@ -66,6 +67,10 @@ impl AssetIndex {
 
         index.diagnostics = DecodeDiagnostics::inspect(&root);
         index.map_scene = build_map_scene(&index.diagnostics);
+        index.map_block_correlation = index
+            .map_scene
+            .as_ref()
+            .and_then(|scene| MapBlockCorrelationScene::from_root(&root, scene));
         index.tab_probe_manifest = TabRuntimeProbeManifest::from_root(&root);
         index.maps.sort();
         index.missions.sort();
@@ -101,6 +106,9 @@ impl AssetIndex {
     }
     pub fn map_scene(&self) -> Option<&MapDiagnosticScene> {
         self.map_scene.as_ref()
+    }
+    pub fn map_block_correlation(&self) -> Option<&MapBlockCorrelationScene> {
+        self.map_block_correlation.as_ref()
     }
     pub fn tab_probe_manifest(&self) -> &TabRuntimeProbeManifest {
         &self.tab_probe_manifest

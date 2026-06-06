@@ -1,6 +1,7 @@
 use crate::engine::{
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
+    map_block_correlation::MapBlockCorrelationScene,
     map_decode::{
         MapCandidateField, MapInferredLayerPreview, MapPrimarySubstrateCandidate,
         MapSignaturePreview,
@@ -236,7 +237,8 @@ impl TacticalMap {
                     MapDiagnosticSceneLayer::CandidateField(MapCandidateField::Height) => {
                         height_delta as f32 * 0.065
                     }
-                    MapDiagnosticSceneLayer::CandidateField(_) => height_delta as f32 * 0.035,
+                    MapDiagnosticSceneLayer::CandidateField(_)
+                    | MapDiagnosticSceneLayer::BlockAddressability => height_delta as f32 * 0.035,
                 };
                 let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
                 let color = match layer {
@@ -257,8 +259,46 @@ impl TacticalMap {
                             )
                         })
                         .unwrap_or_else(|| inferred_tile_color(cell.visual_class, height_delta)),
+                    MapDiagnosticSceneLayer::BlockAddressability => {
+                        inferred_tile_color(cell.visual_class, height_delta)
+                    }
                 };
                 draw_iso_tile(center, color, Color::new(0.01, 0.012, 0.016, 0.58));
+            }
+        }
+    }
+
+    pub fn draw_block_addressability_scene(
+        &self,
+        camera: &CameraRig,
+        scene: &MapDiagnosticScene,
+        correlation: &MapBlockCorrelationScene,
+    ) {
+        let Some(candidate) = correlation.selected_candidate() else {
+            self.draw_diagnostic_scene(camera, scene, MapDiagnosticSceneLayer::Inferred);
+            return;
+        };
+        let field = candidate.field;
+
+        for y in 0..scene.height {
+            for x in 0..scene.width {
+                let Some(cell) = scene.cell(x, y) else {
+                    continue;
+                };
+                let height_delta = scene
+                    .field_evidence(MapCandidateField::Height)
+                    .map(|evidence| cell.height_candidate.abs_diff(evidence.baseline).min(15))
+                    .unwrap_or(cell.height_class.min(15));
+                let z = height_delta as f32 * 0.038;
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
+                let value = cell.field_value(field);
+                let color = block_addressability_color(
+                    value,
+                    candidate.baseline,
+                    height_delta,
+                    candidate.is_value_addressable(value),
+                );
+                draw_iso_tile(center, color, Color::new(0.01, 0.012, 0.016, 0.60));
             }
         }
     }
@@ -333,6 +373,22 @@ fn brighten(color: Color, amount: f32) -> Color {
         (color.b + amount).min(1.0),
         color.a,
     )
+}
+
+fn block_addressability_color(
+    value: u8,
+    baseline: u8,
+    height_delta: u8,
+    addressable: Option<bool>,
+) -> Color {
+    let intensity = value.abs_diff(baseline) as f32 / 255.0;
+    let base = match addressable {
+        Some(true) if value == baseline => Color::from_rgba(43, 54, 56, 255),
+        Some(true) => Color::new(0.16 + intensity * 0.22, 0.50, 0.42 + intensity * 0.22, 1.0),
+        Some(false) => Color::new(0.60, 0.18 + intensity * 0.16, 0.16, 1.0),
+        None => Color::from_rgba(82, 82, 88, 255),
+    };
+    brighten(base, height_delta as f32 * 0.025)
 }
 
 fn signature_tile_color(class: u8) -> Color {

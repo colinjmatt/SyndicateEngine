@@ -36,6 +36,7 @@ pub enum MapDiagnosticSceneLayer {
     Inferred,
     Signature,
     CandidateField(MapCandidateField),
+    BlockAddressability,
 }
 
 impl MapDiagnosticScene {
@@ -157,6 +158,7 @@ impl MapDiagnosticSceneLayer {
             Self::Inferred => "decoded MAP inferred scene",
             Self::Signature => "decoded MAP signature scene",
             Self::CandidateField(field) => field.provisional_label(),
+            Self::BlockAddressability => "aggregate block-addressability candidate",
         }
     }
 }
@@ -221,6 +223,10 @@ mod tests {
         assert_eq!(
             MapDiagnosticSceneLayer::CandidateField(MapCandidateField::SurfaceIndex).label(),
             "surface_index_candidate"
+        );
+        assert_eq!(
+            MapDiagnosticSceneLayer::BlockAddressability.label(),
+            "aggregate block-addressability candidate"
         );
         assert!(
             MapDiagnosticSceneLayer::Inferred

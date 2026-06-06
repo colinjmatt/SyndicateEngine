@@ -1,8 +1,10 @@
 use crate::{
     engine::{
         assets::AssetIndex,
+        block_decode::BlockIndexPlausibility,
         camera::CameraRig,
         iso::iso_to_grid,
+        map_block_correlation::MapBlockCorrelationScene,
         map_decode::MapCandidateField,
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     },
@@ -38,6 +40,7 @@ enum MapRenderMode {
     DecodedSignature,
     InferredLayer,
     CandidateField(MapCandidateField),
+    BlockAddressability,
 }
 
 impl MapRenderMode {
@@ -47,6 +50,7 @@ impl MapRenderMode {
             Self::DecodedSignature => "MAP01 signatures".to_string(),
             Self::InferredLayer => "MAP01 inferred layer".to_string(),
             Self::CandidateField(field) => format!("MAP01 {}", field.provisional_label()),
+            Self::BlockAddressability => "MAP01 block addressability".to_string(),
         }
     }
 
@@ -56,6 +60,7 @@ impl MapRenderMode {
             Self::DecodedSignature => Some(MapDiagnosticSceneLayer::Signature),
             Self::InferredLayer => Some(MapDiagnosticSceneLayer::Inferred),
             Self::CandidateField(field) => Some(MapDiagnosticSceneLayer::CandidateField(field)),
+            Self::BlockAddressability => Some(MapDiagnosticSceneLayer::BlockAddressability),
         }
     }
 }
@@ -167,7 +172,13 @@ impl WorldState {
             MapRenderMode::CandidateField(MapCandidateField::Reference) if inferred_available => {
                 MapRenderMode::CandidateField(MapCandidateField::Height)
             }
+            MapRenderMode::CandidateField(MapCandidateField::Height)
+                if self.assets.map_block_correlation().is_some() =>
+            {
+                MapRenderMode::BlockAddressability
+            }
             MapRenderMode::CandidateField(_) => MapRenderMode::DemoCity,
+            MapRenderMode::BlockAddressability => MapRenderMode::DemoCity,
         }
     }
 
@@ -342,6 +353,22 @@ impl WorldState {
                     self.map.draw(&self.camera);
                 }
             }
+            MapRenderMode::BlockAddressability => {
+                if let (Some(scene), Some(correlation)) =
+                    (self.assets.map_scene(), self.assets.map_block_correlation())
+                {
+                    self.map
+                        .draw_block_addressability_scene(&self.camera, scene, correlation);
+                } else if let Some(scene) = self.assets.map_scene() {
+                    self.map.draw_diagnostic_scene(
+                        &self.camera,
+                        scene,
+                        MapDiagnosticSceneLayer::Inferred,
+                    );
+                } else {
+                    self.map.draw(&self.camera);
+                }
+            }
         }
 
         if self.render_mode == MapRenderMode::DemoCity {
@@ -361,7 +388,11 @@ impl WorldState {
             }
             draw_minimap(&self.agents);
         } else {
-            draw_map_diagnostic_panel(self.assets.map_scene(), self.render_mode);
+            draw_map_diagnostic_panel(
+                self.assets.map_scene(),
+                self.assets.map_block_correlation(),
+                self.render_mode,
+            );
         }
 
         ui::draw_hud(
@@ -424,11 +455,20 @@ fn draw_minimap(agents: &[Agent]) {
     }
 }
 
-fn draw_map_diagnostic_panel(scene: Option<&MapDiagnosticScene>, mode: MapRenderMode) {
+fn draw_map_diagnostic_panel(
+    scene: Option<&MapDiagnosticScene>,
+    correlation: Option<&MapBlockCorrelationScene>,
+    mode: MapRenderMode,
+) {
     let x = screen_width() - 392.0;
     let y = 22.0;
-    draw_rectangle(x, y, 370.0, 156.0, Color::new(0.0, 0.0, 0.0, 0.60));
-    draw_rectangle_lines(x, y, 370.0, 156.0, 2.0, SKYBLUE);
+    let panel_height = if mode == MapRenderMode::BlockAddressability {
+        212.0
+    } else {
+        156.0
+    };
+    draw_rectangle(x, y, 370.0, panel_height, Color::new(0.0, 0.0, 0.0, 0.60));
+    draw_rectangle_lines(x, y, 370.0, panel_height, 2.0, SKYBLUE);
     draw_text("DECODED MAP DIAGNOSTIC", x + 16.0, y + 26.0, 18.0, SKYBLUE);
     draw_text(&mode.label(), x + 16.0, y + 50.0, 16.0, WHITE);
 
@@ -454,20 +494,74 @@ fn draw_map_diagnostic_panel(scene: Option<&MapDiagnosticScene>, mode: MapRender
             14.0,
             LIGHTGRAY,
         );
-        draw_text(
-            "Runtime-local render; gameplay grid remains demo city",
-            x + 16.0,
-            y + 120.0,
-            13.0,
-            YELLOW,
-        );
-        draw_text(
-            "No decoded walkability/object semantics claimed",
-            x + 16.0,
-            y + 140.0,
-            13.0,
-            GRAY,
-        );
+        if mode == MapRenderMode::BlockAddressability {
+            if let Some(candidate) =
+                correlation.and_then(|correlation| correlation.selected_candidate())
+            {
+                draw_text(
+                    &format!(
+                        "{} | {}",
+                        candidate.field.provisional_label(),
+                        block_plausibility_panel_label(candidate.plausibility)
+                    ),
+                    x + 16.0,
+                    y + 120.0,
+                    13.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &format!(
+                        "{}% addressable | {}/{} cells | {} out",
+                        candidate.addressable_percent(),
+                        candidate.addressable_cells,
+                        candidate.total_cells,
+                        candidate.out_of_range_cells
+                    ),
+                    x + 16.0,
+                    y + 140.0,
+                    13.0,
+                    YELLOW,
+                );
+                draw_text(&candidate.container, x + 16.0, y + 160.0, 12.0, GRAY);
+            } else {
+                draw_text(
+                    "Block addressability candidate unavailable",
+                    x + 16.0,
+                    y + 126.0,
+                    13.0,
+                    GRAY,
+                );
+            }
+            draw_text(
+                "Runtime-local aggregate; no decoded tile pixels",
+                x + 16.0,
+                y + 184.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "Not proof of layout, walkability, objects, or semantics",
+                x + 16.0,
+                y + 202.0,
+                12.0,
+                GRAY,
+            );
+        } else {
+            draw_text(
+                "Runtime-local render; gameplay grid remains demo city",
+                x + 16.0,
+                y + 120.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "No decoded walkability/object semantics claimed",
+                x + 16.0,
+                y + 140.0,
+                13.0,
+                GRAY,
+            );
+        }
     } else {
         draw_text(
             "MAP diagnostic scene unavailable",
@@ -476,5 +570,14 @@ fn draw_map_diagnostic_panel(scene: Option<&MapDiagnosticScene>, mode: MapRender
             14.0,
             GRAY,
         );
+    }
+}
+
+fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'static str {
+    match plausibility {
+        BlockIndexPlausibility::FitsRecordCount => "record-count fit",
+        BlockIndexPlausibility::FitsByteRangeOnly => "byte-range only",
+        BlockIndexPlausibility::OutOfRange => "out of range",
+        BlockIndexPlausibility::Unknown => "unknown",
     }
 }
