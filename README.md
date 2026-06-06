@@ -11,7 +11,7 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Four controllable agents with selection and right-click movement orders.
 - Asset indexer that scans `original_assets/` for maps, missions, palettes, sprites, and sounds.
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
-- Runtime-local decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlay; gameplay still uses the hand-authored demo grid.
+- Runtime-local decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views, aggregate block-addressability overlay, and runtime-only original block-graphics candidate rendering from local assets; gameplay still uses the hand-authored demo grid.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -27,7 +27,7 @@ Controls:
 - Mouse wheel: zoom
 - `1`-`4`: select agent
 - Right click: send selected agent to a tile
-- `M`: cycle between the playable demo city, decoded `MAP*.DAT` diagnostic scene layers, and the aggregate block-addressability overlay when local block candidates are available
+- `M`: cycle between the playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime graphics atlas when local block candidates are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
 

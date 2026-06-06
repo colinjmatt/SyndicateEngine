@@ -13,6 +13,7 @@ use crate::{
         agent::Agent,
         combat::{AttackResult, Combatant, resolve_attack},
         map::TacticalMap,
+        original_graphics::RuntimeOriginalGraphics,
         pathfinding::{GridPos, find_path},
         save::{AgentSave, HostileSave, SaveGame, read_save, write_save},
         sim::SimClock,
@@ -32,6 +33,7 @@ pub struct WorldState {
     sim_clock: SimClock,
     render_mode: MapRenderMode,
     selected_map_scene: usize,
+    original_graphics: Option<RuntimeOriginalGraphics>,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -43,6 +45,8 @@ enum MapRenderMode {
     InferredLayer,
     CandidateField(MapCandidateField),
     BlockAddressability,
+    OriginalGraphicsMap,
+    OriginalGraphicsAtlas,
 }
 
 impl MapRenderMode {
@@ -53,6 +57,8 @@ impl MapRenderMode {
             Self::InferredLayer => "MAP inferred layer".to_string(),
             Self::CandidateField(field) => format!("MAP {}", field.provisional_label()),
             Self::BlockAddressability => "MAP block addressability".to_string(),
+            Self::OriginalGraphicsMap => "MAP original graphics candidate".to_string(),
+            Self::OriginalGraphicsAtlas => "original graphics atlas".to_string(),
         }
     }
 
@@ -63,12 +69,14 @@ impl MapRenderMode {
             Self::InferredLayer => Some(MapDiagnosticSceneLayer::Inferred),
             Self::CandidateField(field) => Some(MapDiagnosticSceneLayer::CandidateField(field)),
             Self::BlockAddressability => Some(MapDiagnosticSceneLayer::BlockAddressability),
+            Self::OriginalGraphicsMap | Self::OriginalGraphicsAtlas => None,
         }
     }
 }
 
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
+        let original_graphics = RuntimeOriginalGraphics::from_root(assets.root_path());
         Self {
             assets,
             camera: CameraRig::default(),
@@ -84,6 +92,7 @@ impl WorldState {
             sim_clock: SimClock::default(),
             render_mode: MapRenderMode::DemoCity,
             selected_map_scene: 0,
+            original_graphics,
         }
     }
 
@@ -189,8 +198,16 @@ impl WorldState {
             {
                 MapRenderMode::BlockAddressability
             }
+            MapRenderMode::CandidateField(_) if self.original_graphics.is_some() => {
+                MapRenderMode::OriginalGraphicsMap
+            }
             MapRenderMode::CandidateField(_) => MapRenderMode::DemoCity,
+            MapRenderMode::BlockAddressability if self.original_graphics.is_some() => {
+                MapRenderMode::OriginalGraphicsMap
+            }
             MapRenderMode::BlockAddressability => MapRenderMode::DemoCity,
+            MapRenderMode::OriginalGraphicsMap => MapRenderMode::OriginalGraphicsAtlas,
+            MapRenderMode::OriginalGraphicsAtlas => MapRenderMode::DemoCity,
         }
     }
 
@@ -220,6 +237,13 @@ impl WorldState {
         {
             self.render_mode = MapRenderMode::InferredLayer;
         }
+        if matches!(
+            self.render_mode,
+            MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas
+        ) && self.original_graphics.is_none()
+        {
+            self.render_mode = MapRenderMode::InferredLayer;
+        }
     }
 
     fn current_map_entry_with_index(&self) -> Option<(usize, &MapDiagnosticSceneEntry)> {
@@ -241,6 +265,12 @@ impl WorldState {
         self.current_map_entry_with_index()
             .and_then(|(_, entry)| entry.block_correlation.as_ref())
             .or_else(|| self.assets.map_block_correlation())
+    }
+
+    fn original_graphics_field(&self) -> MapCandidateField {
+        self.current_block_correlation()
+            .and_then(|correlation| correlation.selected_field())
+            .unwrap_or(MapCandidateField::SurfaceIndex)
     }
 
     fn current_map_panel_label(&self) -> String {
@@ -437,6 +467,27 @@ impl WorldState {
                     self.map.draw(&self.camera);
                 }
             }
+            MapRenderMode::OriginalGraphicsMap => {
+                if let (Some(scene), Some(graphics)) = (
+                    self.current_diagnostic_scene(),
+                    self.original_graphics.as_ref(),
+                ) {
+                    self.map.draw_original_graphics_scene(
+                        &self.camera,
+                        scene,
+                        self.original_graphics_field(),
+                        graphics,
+                    );
+                } else {
+                    self.map.draw(&self.camera);
+                }
+            }
+            MapRenderMode::OriginalGraphicsAtlas => {
+                self.map.draw(&self.camera);
+                if let Some(graphics) = self.original_graphics.as_ref() {
+                    draw_original_graphics_atlas(graphics);
+                }
+            }
         }
 
         if self.render_mode == MapRenderMode::DemoCity {
@@ -460,6 +511,8 @@ impl WorldState {
             draw_map_diagnostic_panel(
                 self.current_diagnostic_scene(),
                 self.current_block_correlation(),
+                self.original_graphics.as_ref(),
+                self.original_graphics_field(),
                 self.render_mode,
                 &map_label,
             );
@@ -528,6 +581,8 @@ fn draw_minimap(agents: &[Agent]) {
 fn draw_map_diagnostic_panel(
     scene: Option<&MapDiagnosticScene>,
     correlation: Option<&MapBlockCorrelationScene>,
+    graphics: Option<&RuntimeOriginalGraphics>,
+    original_graphics_field: MapCandidateField,
     mode: MapRenderMode,
     map_label: &str,
 ) {
@@ -540,10 +595,14 @@ fn draw_map_diagnostic_panel(
     draw_text(map_label, x + 16.0, y + 50.0, 14.0, WHITE);
 
     if let Some(scene) = scene {
-        let layer = mode
-            .diagnostic_layer()
-            .map(|layer| layer.label())
-            .unwrap_or("demo city");
+        let layer = match mode {
+            MapRenderMode::OriginalGraphicsMap => "runtime original graphics candidate",
+            MapRenderMode::OriginalGraphicsAtlas => "runtime original graphics atlas",
+            _ => mode
+                .diagnostic_layer()
+                .map(|layer| layer.label())
+                .unwrap_or("demo city"),
+        };
         draw_text(
             &format!("{} | {layer}", mode.label()),
             x + 16.0,
@@ -613,6 +672,83 @@ fn draw_map_diagnostic_panel(
                 12.0,
                 GRAY,
             );
+        } else if mode == MapRenderMode::OriginalGraphicsMap {
+            if let Some(graphics) = graphics {
+                draw_text(
+                    &format!(
+                        "{} via {}",
+                        original_graphics_field.provisional_label(),
+                        graphics.bank().source_label
+                    ),
+                    x + 16.0,
+                    y + 120.0,
+                    12.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &format!(
+                        "{} {}x{} records | palette {}",
+                        graphics.bank().record_count,
+                        graphics.bank().record_width,
+                        graphics.bank().record_height,
+                        graphics.bank().palette_label
+                    ),
+                    x + 16.0,
+                    y + 140.0,
+                    12.0,
+                    YELLOW,
+                );
+            }
+            draw_text(
+                "Runtime original pixels; candidate indexing only",
+                x + 16.0,
+                y + 164.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "Not proof of terrain, objects, layout, or walkability",
+                x + 16.0,
+                y + 184.0,
+                12.0,
+                GRAY,
+            );
+        } else if mode == MapRenderMode::OriginalGraphicsAtlas {
+            if let Some(graphics) = graphics {
+                draw_text(
+                    &format!(
+                        "Atlas: {} {}x{} records",
+                        graphics.bank().record_count,
+                        graphics.bank().record_width,
+                        graphics.bank().record_height
+                    ),
+                    x + 16.0,
+                    y + 120.0,
+                    13.0,
+                    LIGHTGRAY,
+                );
+                draw_text(
+                    &graphics.bank().source_label,
+                    x + 16.0,
+                    y + 140.0,
+                    12.0,
+                    YELLOW,
+                );
+            }
+            draw_text(
+                "Runtime-local atlas; previews are not written",
+                x + 16.0,
+                y + 164.0,
+                13.0,
+                YELLOW,
+            );
+            draw_text(
+                "No decoded tile semantics claimed",
+                x + 16.0,
+                y + 184.0,
+                12.0,
+                GRAY,
+            );
         } else if let MapRenderMode::CandidateField(field) = mode {
             if let Some(evidence) = scene.field_evidence_panel_label(field) {
                 draw_text(&evidence, x + 16.0, y + 120.0, 13.0, LIGHTGRAY);
@@ -661,9 +797,58 @@ fn draw_map_diagnostic_panel(
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
         MapRenderMode::BlockAddressability => 212.0,
+        MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,
         _ => 156.0,
     }
+}
+
+fn draw_original_graphics_atlas(graphics: &RuntimeOriginalGraphics) {
+    let origin = vec2(908.0, 238.0);
+    let columns = 18;
+    let rows = 16;
+    let tile_size = 26.0;
+    draw_rectangle(
+        origin.x - 14.0,
+        origin.y - 54.0,
+        columns as f32 * tile_size + 28.0,
+        rows as f32 * tile_size + 92.0,
+        Color::new(0.0, 0.0, 0.0, 0.68),
+    );
+    draw_rectangle_lines(
+        origin.x - 14.0,
+        origin.y - 54.0,
+        columns as f32 * tile_size + 28.0,
+        rows as f32 * tile_size + 92.0,
+        2.0,
+        SKYBLUE,
+    );
+    draw_text(
+        "RUNTIME ORIGINAL GRAPHICS ATLAS",
+        origin.x,
+        origin.y - 30.0,
+        18.0,
+        SKYBLUE,
+    );
+    draw_text(
+        &format!(
+            "{} | palette {}",
+            graphics.bank().source_label,
+            graphics.bank().palette_label
+        ),
+        origin.x,
+        origin.y - 10.0,
+        13.0,
+        LIGHTGRAY,
+    );
+    graphics.draw_atlas_preview(origin, columns, rows, tile_size);
+    draw_text(
+        "Local asset pixels only; not saved to report/source/tests",
+        origin.x,
+        origin.y + rows as f32 * tile_size + 24.0,
+        13.0,
+        YELLOW,
+    );
 }
 
 fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'static str {

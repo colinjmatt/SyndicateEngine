@@ -9,6 +9,7 @@ use crate::engine::{
     map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     palette,
 };
+use crate::game::original_graphics::RuntimeOriginalGraphics;
 use crate::game::pathfinding::GridPos;
 use macroquad::prelude::*;
 
@@ -299,6 +300,46 @@ impl TacticalMap {
                     candidate.is_value_addressable(value),
                 );
                 draw_iso_tile(center, color, Color::new(0.01, 0.012, 0.016, 0.60));
+            }
+        }
+    }
+
+    pub fn draw_original_graphics_scene(
+        &self,
+        camera: &CameraRig,
+        scene: &MapDiagnosticScene,
+        field: MapCandidateField,
+        graphics: &RuntimeOriginalGraphics,
+    ) {
+        let height_baseline = scene
+            .field_evidence(MapCandidateField::Height)
+            .map(|evidence| evidence.baseline)
+            .unwrap_or_default();
+
+        for y in 0..scene.height {
+            for x in 0..scene.width {
+                let Some(cell) = scene.cell(x, y) else {
+                    continue;
+                };
+                let record_index = cell.field_value(field) as usize;
+                if record_index >= graphics.bank().record_count {
+                    continue;
+                }
+
+                let height_delta = cell.height_candidate.abs_diff(height_baseline).min(15);
+                let z = height_delta as f32 * 0.040;
+                let center = camera.world_to_screen(grid_to_iso(x as f32, y as f32, z));
+                let size = vec2(30.0 * camera.zoom, 30.0 * camera.zoom);
+                let top_left = vec2(center.x - size.x * 0.5, center.y - size.y * 0.72);
+                if top_left.x > screen_width() + size.x
+                    || top_left.y > screen_height() + size.y
+                    || top_left.x + size.x < -size.x
+                    || top_left.y + size.y < -size.y
+                {
+                    continue;
+                }
+
+                graphics.draw_record(record_index, top_left, size, WHITE);
             }
         }
     }

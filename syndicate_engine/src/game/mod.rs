@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod combat;
 pub mod map;
+pub mod original_graphics;
 pub mod pathfinding;
 pub mod save;
 pub mod sim;

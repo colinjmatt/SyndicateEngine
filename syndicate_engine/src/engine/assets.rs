@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 use walkdir::WalkDir;
 
 use crate::engine::{
@@ -86,6 +89,9 @@ impl AssetIndex {
 
     pub fn root_display(&self) -> String {
         self.root.display().to_string()
+    }
+    pub fn root_path(&self) -> &Path {
+        &self.root
     }
     pub fn total_files(&self) -> usize {
         self.total_files
