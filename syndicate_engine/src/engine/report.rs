@@ -15,7 +15,9 @@ use crate::engine::{
     },
     palette_decode::Palette,
     rnc::RncBlock,
-    runtime_probe::{TabRuntimeProbeArchiveInput, TabRuntimeProbeManifest},
+    runtime_probe::{
+        TabRuntimeProbeArchiveInput, TabRuntimeProbeExecution, TabRuntimeProbeManifest,
+    },
     sprite_decode::{SpriteBankAggregateSummary, SpriteChunkKind, SpriteDistributionSummary},
     tab_bank::{TabArchive, TabArchiveSummary, TabBank, TabBankSummary, TabVariantAnalysis},
 };
@@ -45,6 +47,8 @@ pub struct AssetReport {
     tab_family_runtime_probe_dry_run_rows: Vec<String>,
     tab_runtime_probe_manifest_rows: Vec<String>,
     tab_runtime_probe_manifest_phase_rows: Vec<String>,
+    tab_runtime_probe_execution_rows: Vec<String>,
+    tab_runtime_probe_execution_phase_rows: Vec<String>,
     tab_family_comparison_rows: Vec<String>,
     block_graphics_rows: Vec<String>,
     block_map_correlation_rows: Vec<String>,
@@ -237,8 +241,15 @@ impl AssetReport {
         block_graphics_rows.sort();
         block_analyses.sort_by(|left, right| left.0.cmp(&right.0));
         tab_analyses.sort_by(|left, right| left.path.cmp(&right.path));
+        let tab_runtime_probe_inputs =
+            tab_runtime_probe_archive_inputs_from_report_analyses(&tab_analyses);
         let tab_runtime_probe_manifest =
-            tab_runtime_probe_manifest_from_report_analyses(&tab_analyses);
+            TabRuntimeProbeManifest::from_archive_inputs(tab_runtime_probe_inputs.clone());
+        let tab_runtime_probe_execution =
+            TabRuntimeProbeExecution::from_manifest_and_archive_inputs(
+                tab_runtime_probe_manifest.clone(),
+                tab_runtime_probe_inputs,
+            );
 
         let (
             map_global_summary,
@@ -299,6 +310,12 @@ impl AssetReport {
             ),
             tab_runtime_probe_manifest_phase_rows: format_tab_runtime_probe_manifest_phase_rows(
                 &tab_runtime_probe_manifest,
+            ),
+            tab_runtime_probe_execution_rows: format_tab_runtime_probe_execution_rows(
+                &tab_runtime_probe_execution,
+            ),
+            tab_runtime_probe_execution_phase_rows: format_tab_runtime_probe_execution_phase_rows(
+                &tab_runtime_probe_execution,
             ),
             tab_family_comparison_rows: format_tab_family_comparison_rows(&tab_analyses),
             block_graphics_rows,
@@ -506,6 +523,26 @@ impl AssetReport {
             7,
         );
 
+        markdown.push_str("\n### TAB/sprite local runtime probe execution diagnostics\n\n");
+        markdown.push_str("These rows run the manifest selectors through a local-only aggregate dry-run execution model. Execution consumes only safe TAB/DAT summaries and emits selector IDs, family labels, phase names, readiness labels, group counts, support counts, and stop conditions. It does not decode or render sprites and does not expose bytes, raw headers/chunks, decoded dimensions, anchors, commands, previews, audio, UI, or gameplay semantics.\n\n");
+        markdown.push_str("| Selector ID | Phase | Family candidate | Readiness | Aggregate execution result | Strongest aggregate group | Runtime stop condition | Conservative limitation |\n|---|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_runtime_probe_execution_rows,
+            "no aggregate TAB/sprite runtime probe executions available",
+            8,
+        );
+
+        markdown.push_str("\n### TAB/sprite local runtime probe execution phases\n\n");
+        markdown.push_str("These rows summarize the aggregate execution results by dry-run phase. Phase rows are capped and non-reconstructable: they contain selector IDs, family/support/readiness labels, aggregate group counts, aggregate support counts, grouping rules, and stop conditions only.\n\n");
+        markdown.push_str("| Execution phase | Selector IDs | Families | Support/readiness | Aggregate execution totals | Aggregate grouping rule | Runtime stop condition | Conservative limitation |\n|---|---|---|---|---|---|---|---|\n");
+        append_rows_or_empty(
+            &mut markdown,
+            &self.tab_runtime_probe_execution_phase_rows,
+            "no aggregate TAB/sprite runtime probe execution phases available",
+            8,
+        );
+
         markdown.push_str("\n### TAB/sprite family aggregate comparison candidates\n\n");
         markdown.push_str("These rows compare the top-ranked sprite-like filename-family candidates using aggregate ratios and bucket sets only. Output is capped to the top three selected families to avoid noisy all-pairs listings. Ratio differences, progression differences, entropy ranges, and common-size bucket overlap are compatibility clues for prioritizing clean-room decoding; they do not decode metadata, commands, dimensions, anchors, pixels, audio, or UI semantics.\n\n");
         markdown.push_str("| Family pair | Candidate metadata-shape ratio differences | Classifier ratio differences | Progression support difference | Entropy comparison | Common bucket comparison | Strongest shared compatibility clues | Strongest distinguishing clues | Conservative note |\n|---|---|---|---|---|---|---|---|---|\n");
@@ -698,22 +735,74 @@ struct TabFamilyRatioDifference {
     delta_per_mille: i32,
 }
 
-fn tab_runtime_probe_manifest_from_report_analyses(
+fn tab_runtime_probe_archive_inputs_from_report_analyses(
     tab_analyses: &[TabBankReportAnalysis],
-) -> TabRuntimeProbeManifest {
-    let inputs =
-        tab_analyses
-            .iter()
-            .filter_map(|analysis| {
-                analysis.archive_summary.as_ref().cloned().map(|summary| {
-                    TabRuntimeProbeArchiveInput {
-                        path: analysis.path.clone(),
-                        summary,
-                    }
+) -> Vec<TabRuntimeProbeArchiveInput> {
+    tab_analyses
+        .iter()
+        .filter_map(|analysis| {
+            analysis
+                .archive_summary
+                .as_ref()
+                .cloned()
+                .map(|summary| TabRuntimeProbeArchiveInput {
+                    path: analysis.path.clone(),
+                    summary,
                 })
-            })
-            .collect::<Vec<_>>();
-    TabRuntimeProbeManifest::from_archive_inputs(inputs)
+        })
+        .collect()
+}
+
+fn format_tab_runtime_probe_execution_rows(execution: &TabRuntimeProbeExecution) -> Vec<String> {
+    const MAX_EXECUTION_ROWS: usize = 10;
+
+    execution
+        .selector_results
+        .iter()
+        .take(MAX_EXECUTION_ROWS)
+        .map(|result| {
+            format!(
+                "| `{}` | {}. {} | `{}` | {} | {}; scope {}; aggregate groups {}; aggregate support units {} | {} | {} | {} |",
+                result.selector_id,
+                result.phase.order(),
+                result.phase.label(),
+                result.family,
+                result.readiness.label(),
+                result.execution_summary,
+                result.archive_scope,
+                result.aggregate_group_count,
+                result.aggregate_unit_count,
+                result.strongest_group,
+                result.stop_condition,
+                result.conservative_limitation
+            )
+        })
+        .collect()
+}
+
+fn format_tab_runtime_probe_execution_phase_rows(
+    execution: &TabRuntimeProbeExecution,
+) -> Vec<String> {
+    execution
+        .phase_results
+        .iter()
+        .map(|phase| {
+            format!(
+                "| {}. {} | {} | {} | support tiers [{}]; readiness [{}] | {} selectors executed; {} aggregate groups; {} aggregate support units | {} | {} | runtime-only aggregate execution phase; not proof of decoded layout or semantics and does not emit bytes, raw chunks, previews, dimensions, anchors, commands, audio, UI, or gameplay semantics |",
+                phase.phase.order(),
+                phase.phase.label(),
+                phase.selector_ids_summary(),
+                phase.families_summary(),
+                phase.support_tiers_summary(),
+                phase.readiness_summary(),
+                phase.executed_selectors,
+                phase.aggregate_group_count,
+                phase.aggregate_unit_count,
+                phase.grouping_rule,
+                phase.stop_condition
+            )
+        })
+        .collect()
 }
 
 fn format_tab_runtime_probe_manifest_rows(manifest: &TabRuntimeProbeManifest) -> Vec<String> {
@@ -4391,7 +4480,8 @@ mod tests {
             ),
         ];
 
-        let manifest = super::tab_runtime_probe_manifest_from_report_analyses(&analyses);
+        let inputs = super::tab_runtime_probe_archive_inputs_from_report_analyses(&analyses);
+        let manifest = super::TabRuntimeProbeManifest::from_archive_inputs(inputs);
         let summary_rows = super::format_tab_runtime_probe_manifest_rows(&manifest);
         let phase_rows = super::format_tab_runtime_probe_manifest_phase_rows(&manifest);
         let joined = [summary_rows.join("\n"), phase_rows.join("\n")].join("\n");
@@ -4406,6 +4496,62 @@ mod tests {
         assert!(joined.contains("selector IDs are dry-run handles"));
         assert!(joined.contains("does not expose bytes"));
         assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(!joined.contains("`SOUND`"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn formats_runtime_probe_execution_diagnostics_without_bytes() {
+        let analyses = vec![
+            make_tab_report_analysis(
+                "SYNDICAT/DATA/HSPR-1.TAB",
+                vec![
+                    chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                ],
+            ),
+            make_tab_report_analysis(
+                "DATADISK/DATA/HSPR-1.TAB",
+                vec![
+                    chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                ],
+            ),
+            make_tab_report_analysis(
+                "DATADISK/DATA/MSPR-0-D.TAB",
+                vec![
+                    chunk_with_prefix([8, 12, 1, 1], 64),
+                    chunk_with_prefix([10, 12, 1, 1], 64),
+                    (1..=80).collect::<Vec<u8>>(),
+                    (2..=81).collect::<Vec<u8>>(),
+                ],
+            ),
+            make_tab_report_analysis(
+                "SYNDICAT/DATA/SOUND-0.TAB",
+                vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+            ),
+        ];
+        let inputs = super::tab_runtime_probe_archive_inputs_from_report_analyses(&analyses);
+        let manifest = super::TabRuntimeProbeManifest::from_archive_inputs(inputs.clone());
+        let execution =
+            super::TabRuntimeProbeExecution::from_manifest_and_archive_inputs(manifest, inputs);
+        let selector_rows = super::format_tab_runtime_probe_execution_rows(&execution);
+        let phase_rows = super::format_tab_runtime_probe_execution_phase_rows(&execution);
+        let joined = [selector_rows.join("\n"), phase_rows.join("\n")].join("\n");
+
+        assert_eq!(selector_rows.len(), 10);
+        assert!(phase_rows.len() >= 4);
+        assert!(joined.contains("aggregate execution"));
+        assert!(joined.contains("ready aggregate dry-run"));
+        assert!(joined.contains("aggregate groups"));
+        assert!(joined.contains("aggregate support units"));
+        assert!(joined.contains("runtime-only aggregate execution phase"));
+        assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(joined.contains("does not emit bytes"));
         assert!(!joined.contains("`SOUND`"));
         assert!(!joined.contains("f0 00"));
     }
@@ -4463,6 +4609,8 @@ mod tests {
         assert!(markdown.contains("TAB/sprite local runtime dry-run ordering"));
         assert!(markdown.contains("TAB/sprite runtime probe manifest summary"));
         assert!(markdown.contains("TAB/sprite runtime probe manifest phases"));
+        assert!(markdown.contains("TAB/sprite local runtime probe execution diagnostics"));
+        assert!(markdown.contains("TAB/sprite local runtime probe execution phases"));
         assert!(markdown.contains("TAB/sprite family aggregate comparison candidates"));
         assert!(markdown.contains("no safely parsed TAB/DAT family rankings available"));
         assert!(markdown.contains("no aggregate TAB/sprite investigation hints available"));
@@ -4477,6 +4625,10 @@ mod tests {
         assert!(markdown.contains("no aggregate TAB/sprite runtime probe manifest available"));
         assert!(
             markdown.contains("no aggregate TAB/sprite runtime probe manifest phases available")
+        );
+        assert!(markdown.contains("no aggregate TAB/sprite runtime probe executions available"));
+        assert!(
+            markdown.contains("no aggregate TAB/sprite runtime probe execution phases available")
         );
         assert!(markdown.contains("no aggregate TAB/sprite family comparisons available"));
     }

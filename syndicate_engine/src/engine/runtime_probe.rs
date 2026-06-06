@@ -86,6 +86,55 @@ pub enum TabRuntimeProbeSupportTier {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabRuntimeProbeExecution {
+    pub manifest: TabRuntimeProbeManifest,
+    pub selector_results: Vec<TabRuntimeProbeSelectorExecution>,
+    pub phase_results: Vec<TabRuntimeProbePhaseExecution>,
+    pub parsed_archives: usize,
+    pub executed_selectors: usize,
+    pub skipped_selectors: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabRuntimeProbeSelectorExecution {
+    pub selector_id: String,
+    pub rank: usize,
+    pub family: String,
+    pub phase: TabRuntimeProbePhase,
+    pub category: TabRuntimeProbeCategory,
+    pub support_tier: TabRuntimeProbeSupportTier,
+    pub readiness: TabRuntimeProbeExecutionReadiness,
+    pub archive_scope: String,
+    pub aggregate_group_count: usize,
+    pub aggregate_unit_count: usize,
+    pub strongest_group: String,
+    pub execution_summary: String,
+    pub stop_condition: String,
+    pub conservative_limitation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabRuntimeProbePhaseExecution {
+    pub phase: TabRuntimeProbePhase,
+    pub selector_ids: Vec<String>,
+    pub families: Vec<String>,
+    pub support_tiers: Vec<TabRuntimeProbeSupportTier>,
+    pub readiness: Vec<TabRuntimeProbeExecutionReadiness>,
+    pub executed_selectors: usize,
+    pub aggregate_group_count: usize,
+    pub aggregate_unit_count: usize,
+    pub grouping_rule: String,
+    pub stop_condition: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TabRuntimeProbeExecutionReadiness {
+    Ready,
+    Limited,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct TabRuntimeProbeFamilySummary {
     family: String,
     parsed_archives: usize,
@@ -239,6 +288,102 @@ impl TabRuntimeProbeManifest {
     }
 }
 
+impl TabRuntimeProbeExecution {
+    pub fn from_root(root: impl AsRef<Path>) -> Self {
+        Self::from_archive_inputs(tab_runtime_probe_archive_inputs(root))
+    }
+
+    pub fn from_archive_inputs(
+        inputs: impl IntoIterator<Item = TabRuntimeProbeArchiveInput>,
+    ) -> Self {
+        let inputs = inputs.into_iter().collect::<Vec<_>>();
+        let manifest = TabRuntimeProbeManifest::from_archive_inputs(inputs.clone());
+        Self::from_manifest_and_archive_inputs(manifest, inputs)
+    }
+
+    pub fn from_manifest_and_archive_inputs(
+        manifest: TabRuntimeProbeManifest,
+        inputs: impl IntoIterator<Item = TabRuntimeProbeArchiveInput>,
+    ) -> Self {
+        let inputs = inputs.into_iter().collect::<Vec<_>>();
+        let parsed_archives = inputs.len();
+        let family_summaries = tab_runtime_probe_family_summaries(&inputs);
+        let family_summaries = family_summaries
+            .iter()
+            .map(|summary| (summary.family.clone(), summary))
+            .collect::<BTreeMap<_, _>>();
+
+        let selector_results = manifest
+            .selectors
+            .iter()
+            .map(|selector| {
+                execute_runtime_probe_selector(selector, family_summaries.get(&selector.family))
+            })
+            .collect::<Vec<_>>();
+        let phase_results = runtime_probe_phase_execution_summaries(&selector_results);
+        let executed_selectors = selector_results
+            .iter()
+            .filter(|result| result.readiness != TabRuntimeProbeExecutionReadiness::Skipped)
+            .count();
+        let skipped_selectors = selector_results.len().saturating_sub(executed_selectors);
+
+        Self {
+            manifest,
+            selector_results,
+            phase_results,
+            parsed_archives,
+            executed_selectors,
+            skipped_selectors,
+        }
+    }
+
+    pub fn compact_status(&self) -> String {
+        if self.selector_results.is_empty() {
+            return "TAB probe execution: no aggregate selector executions available".to_string();
+        }
+        format!(
+            "TAB probe execution: {} selector dry-runs across {} phases; {} executed, {} skipped",
+            self.selector_results.len(),
+            self.phase_results.len(),
+            self.executed_selectors,
+            self.skipped_selectors
+        )
+    }
+
+    pub fn readiness_summary(&self) -> String {
+        let mut counts: BTreeMap<TabRuntimeProbeExecutionReadiness, usize> = BTreeMap::new();
+        for result in &self.selector_results {
+            *counts.entry(result.readiness).or_default() += 1;
+        }
+        if counts.is_empty() {
+            return "no execution readiness results".to_string();
+        }
+        counts
+            .into_iter()
+            .map(|(readiness, count)| format!("{} {}", readiness.label(), count))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    pub fn phase_summary(&self) -> String {
+        if self.phase_results.is_empty() {
+            return "no execution phases".to_string();
+        }
+        self.phase_results
+            .iter()
+            .map(|phase| {
+                format!(
+                    "{}:{} selectors/{} groups",
+                    phase.phase.label(),
+                    phase.executed_selectors,
+                    phase.aggregate_group_count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
 impl TabRuntimeProbeSelector {
     pub fn conservative_limitation(&self) -> &'static str {
         "runtime-only manifest selector; not proof of decoded layout or semantics and not an asset identifier"
@@ -247,19 +392,7 @@ impl TabRuntimeProbeSelector {
 
 impl TabRuntimeProbePhaseSummary {
     pub fn selector_ids_summary(&self) -> String {
-        let mut ids = self
-            .selector_ids
-            .iter()
-            .take(MAX_PHASE_SELECTOR_IDS)
-            .map(|id| format!("`{id}`"))
-            .collect::<Vec<_>>();
-        if self.selector_ids.len() > MAX_PHASE_SELECTOR_IDS {
-            ids.push(format!(
-                "{} more capped selectors",
-                self.selector_ids.len() - MAX_PHASE_SELECTOR_IDS
-            ));
-        }
-        ids.join("; ")
+        format_capped_id_list(&self.selector_ids)
     }
 
     pub fn families_summary(&self) -> String {
@@ -279,6 +412,52 @@ impl TabRuntimeProbePhaseSummary {
             .map(|tier| tier.label())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+}
+
+impl TabRuntimeProbePhaseExecution {
+    pub fn selector_ids_summary(&self) -> String {
+        format_capped_id_list(&self.selector_ids)
+    }
+
+    pub fn families_summary(&self) -> String {
+        if self.families.is_empty() {
+            "none".to_string()
+        } else {
+            self.families.join(", ")
+        }
+    }
+
+    pub fn support_tiers_summary(&self) -> String {
+        if self.support_tiers.is_empty() {
+            return "none".to_string();
+        }
+        self.support_tiers
+            .iter()
+            .map(|tier| tier.label())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub fn readiness_summary(&self) -> String {
+        if self.readiness.is_empty() {
+            return "none".to_string();
+        }
+        self.readiness
+            .iter()
+            .map(|readiness| readiness.label())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl TabRuntimeProbeExecutionReadiness {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "ready aggregate dry-run",
+            Self::Limited => "limited aggregate dry-run",
+            Self::Skipped => "skipped aggregate dry-run",
+        }
     }
 }
 
@@ -763,6 +942,309 @@ fn runtime_probe_phase_summaries(
         .collect()
 }
 
+fn execute_runtime_probe_selector(
+    selector: &TabRuntimeProbeSelector,
+    summary: Option<&&TabRuntimeProbeFamilySummary>,
+) -> TabRuntimeProbeSelectorExecution {
+    let Some(summary) = summary.copied() else {
+        return TabRuntimeProbeSelectorExecution {
+            selector_id: selector.id.clone(),
+            rank: selector.rank,
+            family: selector.family.clone(),
+            phase: selector.phase,
+            category: selector.category,
+            support_tier: selector.support_tier,
+            readiness: TabRuntimeProbeExecutionReadiness::Skipped,
+            archive_scope: "no aggregate family summary available for selector".to_string(),
+            aggregate_group_count: 0,
+            aggregate_unit_count: 0,
+            strongest_group: "no aggregate group selected".to_string(),
+            execution_summary:
+                "aggregate execution skipped; selector has no matching family summary".to_string(),
+            stop_condition: selector.stop_conditions.clone(),
+            conservative_limitation: execution_limitation().to_string(),
+        };
+    };
+
+    let (group_count, unit_count, strongest_group, execution_summary) = match selector.category {
+        TabRuntimeProbeCategory::MetadataShape => execute_metadata_shape_probe(summary),
+        TabRuntimeProbeCategory::ClassifierGrouping => execute_classifier_grouping_probe(summary),
+        TabRuntimeProbeCategory::FixedLengthBuckets => execute_fixed_length_bucket_probe(summary),
+        TabRuntimeProbeCategory::SiblingCommonBuckets => {
+            execute_sibling_common_bucket_probe(summary)
+        }
+        TabRuntimeProbeCategory::MixedUnknownAudit => execute_mixed_unknown_audit_probe(summary),
+    };
+    let readiness = execution_readiness(selector.support_tier, group_count, unit_count);
+
+    TabRuntimeProbeSelectorExecution {
+        selector_id: selector.id.clone(),
+        rank: selector.rank,
+        family: selector.family.clone(),
+        phase: selector.phase,
+        category: selector.category,
+        support_tier: selector.support_tier,
+        readiness,
+        archive_scope: format_runtime_probe_archive_inclusion(summary),
+        aggregate_group_count: group_count,
+        aggregate_unit_count: unit_count,
+        strongest_group,
+        execution_summary,
+        stop_condition: selector.stop_conditions.clone(),
+        conservative_limitation: execution_limitation().to_string(),
+    }
+}
+
+fn runtime_probe_phase_execution_summaries(
+    selector_results: &[TabRuntimeProbeSelectorExecution],
+) -> Vec<TabRuntimeProbePhaseExecution> {
+    let mut grouped: BTreeMap<TabRuntimeProbePhase, Vec<&TabRuntimeProbeSelectorExecution>> =
+        BTreeMap::new();
+    for result in selector_results {
+        grouped.entry(result.phase).or_default().push(result);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(phase, mut results)| {
+            results.sort_by(|left, right| {
+                left.rank
+                    .cmp(&right.rank)
+                    .then_with(|| left.family.cmp(&right.family))
+            });
+            let mut families = results
+                .iter()
+                .map(|result| result.family.clone())
+                .collect::<Vec<_>>();
+            families.sort();
+            families.dedup();
+            let mut support_tiers = results
+                .iter()
+                .map(|result| result.support_tier)
+                .collect::<Vec<_>>();
+            support_tiers.sort_unstable();
+            support_tiers.dedup();
+            let mut readiness = results
+                .iter()
+                .map(|result| result.readiness)
+                .collect::<Vec<_>>();
+            readiness.sort_unstable();
+            readiness.dedup();
+            TabRuntimeProbePhaseExecution {
+                phase,
+                selector_ids: results
+                    .iter()
+                    .map(|result| result.selector_id.clone())
+                    .collect(),
+                families,
+                support_tiers,
+                readiness,
+                executed_selectors: results
+                    .iter()
+                    .filter(|result| result.readiness != TabRuntimeProbeExecutionReadiness::Skipped)
+                    .count(),
+                aggregate_group_count: results
+                    .iter()
+                    .map(|result| result.aggregate_group_count)
+                    .sum(),
+                aggregate_unit_count: results
+                    .iter()
+                    .map(|result| result.aggregate_unit_count)
+                    .sum(),
+                grouping_rule: phase.grouping_rule().to_string(),
+                stop_condition: phase.stop_condition().to_string(),
+            }
+        })
+        .collect()
+}
+
+fn execute_metadata_shape_probe(
+    summary: &TabRuntimeProbeFamilySummary,
+) -> (usize, usize, String, String) {
+    let group_count = summary.metadata_shape_supports.len();
+    let unit_count = summary
+        .metadata_shape_supports
+        .iter()
+        .map(|support| support.support_count)
+        .sum::<usize>();
+    let strongest = summary
+        .metadata_shape_supports
+        .first()
+        .map(|support| {
+            format!(
+                "{}:{} support-count observations ({} per mille)",
+                support.label, support.support_count, support.per_mille
+            )
+        })
+        .unwrap_or_else(|| "no bounded candidate metadata-shape support group".to_string());
+    let summary_text = format!(
+        "aggregate execution grouped {group_count} candidate metadata-shape labels covering {unit_count} support-count observations across {} parsed archives; strongest {strongest}; {}",
+        summary.parsed_archives,
+        format_runtime_probe_entropy_progression(summary)
+    );
+    (group_count, unit_count, strongest, summary_text)
+}
+
+fn execute_classifier_grouping_probe(
+    summary: &TabRuntimeProbeFamilySummary,
+) -> (usize, usize, String, String) {
+    let groups = [
+        (
+            "command-stream-heavy candidate group",
+            summary.command_stream_chunks,
+        ),
+        ("likely raw indexed candidate group", summary.raw_chunks),
+        ("unknown candidate group", summary.unknown_chunks),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .collect::<Vec<_>>();
+    let group_count = groups.len();
+    let unit_count = groups.iter().map(|(_, count)| *count).sum::<usize>();
+    let strongest = groups
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(label, count)| {
+            format!(
+                "{label}:{count} chunks ({} per mille)",
+                ratio_per_mille(*count, summary.total_chunks)
+            )
+        })
+        .unwrap_or_else(|| "no classifier group selected".to_string());
+    let summary_text = format!(
+        "aggregate execution separated {group_count} classifier groups covering {unit_count} chunks; command/raw/unknown per mille {}/{}/{}; size bands small/medium/large {}/{}/{}; strongest {strongest}",
+        ratio_per_mille(summary.command_stream_chunks, summary.total_chunks),
+        ratio_per_mille(summary.raw_chunks, summary.total_chunks),
+        ratio_per_mille(summary.unknown_chunks, summary.total_chunks),
+        summary.small_chunks,
+        summary.medium_chunks,
+        summary.large_chunks
+    );
+    (group_count, unit_count, strongest, summary_text)
+}
+
+fn execute_fixed_length_bucket_probe(
+    summary: &TabRuntimeProbeFamilySummary,
+) -> (usize, usize, String, String) {
+    let buckets = runtime_length_bucket_counts(summary);
+    let group_count = buckets.len();
+    let unit_count = buckets.iter().map(|(_, count)| *count).sum::<usize>();
+    let strongest = buckets
+        .first()
+        .map(|(len, count)| format!("{len} byte chunk-length bucket:{count} chunks"))
+        .unwrap_or_else(|| "no repeated chunk-length bucket selected".to_string());
+    let summary_text = format!(
+        "aggregate execution grouped {group_count} repeated chunk-length bucket labels covering {unit_count} chunk observations; {}; strongest {strongest}",
+        format_runtime_progression_probe_support(summary)
+    );
+    (group_count, unit_count, strongest, summary_text)
+}
+
+fn execute_sibling_common_bucket_probe(
+    summary: &TabRuntimeProbeFamilySummary,
+) -> (usize, usize, String, String) {
+    let group_count = summary.common_bucket_overlap.len();
+    let unit_count = summary
+        .common_bucket_overlap
+        .iter()
+        .map(|overlap| overlap.archive_count)
+        .sum::<usize>();
+    let strongest = summary
+        .common_bucket_overlap
+        .first()
+        .map(|overlap| {
+            format!(
+                "{} byte common-size bucket:{} archive-support observations",
+                overlap.len, overlap.archive_count
+            )
+        })
+        .unwrap_or_else(|| "no common-size bucket overlap selected".to_string());
+    let summary_text = format!(
+        "aggregate execution compared {group_count} common-size bucket labels with {unit_count} archive-support observations; common bucket support [{}]; strongest {strongest}",
+        format_runtime_family_common_bucket_overlap(summary)
+    );
+    (group_count, unit_count, strongest, summary_text)
+}
+
+fn execute_mixed_unknown_audit_probe(
+    summary: &TabRuntimeProbeFamilySummary,
+) -> (usize, usize, String, String) {
+    let groups = [
+        ("likely raw indexed candidate group", summary.raw_chunks),
+        ("unknown candidate group", summary.unknown_chunks),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .collect::<Vec<_>>();
+    let group_count = groups.len();
+    let unit_count = groups.iter().map(|(_, count)| *count).sum::<usize>();
+    let strongest = groups
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(label, count)| {
+            format!(
+                "{label}:{count} chunks ({} per mille of all family chunks)",
+                ratio_per_mille(*count, summary.total_chunks)
+            )
+        })
+        .unwrap_or_else(|| "no mixed/raw/unknown group selected".to_string());
+    let summary_text = format!(
+        "aggregate execution audited {group_count} mixed/raw/unknown groups covering {unit_count} chunks; raw+unknown {} per mille; command-stream baseline {} per mille; strongest {strongest}",
+        ratio_per_mille(
+            summary.raw_chunks.saturating_add(summary.unknown_chunks),
+            summary.total_chunks
+        ),
+        ratio_per_mille(summary.command_stream_chunks, summary.total_chunks)
+    );
+    (group_count, unit_count, strongest, summary_text)
+}
+
+fn runtime_length_bucket_counts(summary: &TabRuntimeProbeFamilySummary) -> Vec<(u32, usize)> {
+    let mut buckets = BTreeMap::new();
+    for archive in &summary.included_archive_summaries {
+        for bucket in &archive.bank.common_chunk_len_buckets {
+            *buckets.entry(bucket.len).or_insert(0usize) += bucket.count;
+        }
+    }
+    let mut buckets = buckets.into_iter().collect::<Vec<_>>();
+    buckets.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    buckets.truncate(5);
+    buckets
+}
+
+fn execution_readiness(
+    tier: TabRuntimeProbeSupportTier,
+    group_count: usize,
+    unit_count: usize,
+) -> TabRuntimeProbeExecutionReadiness {
+    if group_count == 0 || unit_count == 0 {
+        TabRuntimeProbeExecutionReadiness::Skipped
+    } else if tier == TabRuntimeProbeSupportTier::Limited {
+        TabRuntimeProbeExecutionReadiness::Limited
+    } else {
+        TabRuntimeProbeExecutionReadiness::Ready
+    }
+}
+
+fn execution_limitation() -> &'static str {
+    "runtime-only aggregate dry-run; not proof of decoded layout or semantics; no bytes, raw headers/chunks, previews, dimensions, anchors, commands, audio, UI, or gameplay semantics emitted"
+}
+
+fn format_capped_id_list(ids: &[String]) -> String {
+    let mut formatted = ids
+        .iter()
+        .take(MAX_PHASE_SELECTOR_IDS)
+        .map(|id| format!("`{id}`"))
+        .collect::<Vec<_>>();
+    if ids.len() > MAX_PHASE_SELECTOR_IDS {
+        formatted.push(format!(
+            "{} more capped selectors",
+            ids.len() - MAX_PHASE_SELECTOR_IDS
+        ));
+    }
+    formatted.join("; ")
+}
+
 fn sort_runtime_probe_selectors(selectors: &mut [TabRuntimeProbeSelector]) {
     selectors.sort_by(|left, right| {
         right
@@ -1089,8 +1571,9 @@ fn ratio_per_mille(numerator: usize, denominator: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        TabRuntimeProbeArchiveInput, TabRuntimeProbeCategory, TabRuntimeProbeManifest,
-        TabRuntimeProbeSupportTier, format_runtime_probe_selector_id,
+        TabRuntimeProbeArchiveInput, TabRuntimeProbeCategory, TabRuntimeProbeExecution,
+        TabRuntimeProbeExecutionReadiness, TabRuntimeProbeManifest, TabRuntimeProbeSupportTier,
+        format_runtime_probe_selector_id,
     };
     use crate::engine::tab_bank::{TabArchive, TabVariantAnalysis};
 
@@ -1231,6 +1714,166 @@ mod tests {
         );
         assert_eq!(manifest.family_summary(), "none");
         assert_eq!(manifest.phase_summary(), "no dry-run phases");
+    }
+
+    #[test]
+    fn executes_manifest_selectors_as_aggregate_dry_runs_without_bytes() {
+        let inputs = vec![
+            make_archive_input(
+                "SYNDICAT/DATA/HSPR-1.TAB",
+                vec![
+                    chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                ],
+            ),
+            make_archive_input(
+                "DATADISK/DATA/HSPR-1.TAB",
+                vec![
+                    chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([24, 16, 0xf0, 0], 128),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                    chunk_with_prefix([0, 0, 12, 0], 20),
+                ],
+            ),
+            make_archive_input(
+                "DATADISK/DATA/MSPR-0-D.TAB",
+                vec![
+                    chunk_with_prefix([8, 12, 1, 1], 64),
+                    chunk_with_prefix([10, 12, 1, 1], 64),
+                    (1..=80).collect::<Vec<u8>>(),
+                    (2..=81).collect::<Vec<u8>>(),
+                ],
+            ),
+            make_archive_input(
+                "SYNDICAT/DATA/SOUND-0.TAB",
+                vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+            ),
+        ];
+        let execution = TabRuntimeProbeExecution::from_archive_inputs(inputs);
+        let joined = execution
+            .selector_results
+            .iter()
+            .map(|result| {
+                format!(
+                    "{} {} {} {} {}",
+                    result.selector_id,
+                    result.family,
+                    result.readiness.label(),
+                    result.execution_summary,
+                    result.conservative_limitation
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!execution.selector_results.is_empty());
+        assert!(execution.selector_results.len() <= 15);
+        assert!(execution.phase_results.len() >= 4);
+        assert!(execution.compact_status().contains("TAB probe execution"));
+        assert!(execution.readiness_summary().contains("aggregate dry-run"));
+        assert!(joined.contains("aggregate execution"));
+        assert!(joined.contains("tab-sprite-"));
+        assert!(joined.contains("not proof of decoded layout or semantics"));
+        assert!(!joined.contains("SOUND"));
+        assert!(!joined.contains("f0 00"));
+    }
+
+    #[test]
+    fn caps_execution_and_preserves_phase_order() {
+        let mut inputs = (0..6)
+            .map(|index| {
+                make_archive_input(
+                    &format!("SYNDICAT/DATA/HSPR-{index}.TAB"),
+                    vec![
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                        chunk_with_prefix([16, 16, 0xf0, 0], 128),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        inputs.push(make_archive_input(
+            "DATA/FONT.TAB",
+            vec![chunk_with_prefix([8, 12, 0, 0], 64)],
+        ));
+        inputs.push(make_archive_input(
+            "DATADISK/DATA/MSPR-0-D.TAB",
+            vec![chunk_with_prefix([8, 12, 1, 1], 64)],
+        ));
+        inputs.push(make_archive_input(
+            "SYNDICAT/DATA/SOUND-0.TAB",
+            vec![chunk_with_prefix([97, 116, 0, 0], 64)],
+        ));
+
+        let execution = TabRuntimeProbeExecution::from_archive_inputs(inputs);
+        let phase_labels = execution
+            .phase_results
+            .iter()
+            .map(|phase| phase.phase.label())
+            .collect::<Vec<_>>();
+
+        assert!(execution.selector_results.len() <= 15);
+        assert_eq!(phase_labels.first(), Some(&"metadata-shape grouping"));
+        assert!(phase_labels.contains(&"fallback mixed/unknown audit"));
+        assert!(
+            execution
+                .selector_results
+                .iter()
+                .any(|result| result.archive_scope.contains("capped at 4/6"))
+        );
+        assert!(
+            execution
+                .selector_results
+                .iter()
+                .all(|result| result.family != "SOUND")
+        );
+        assert!(execution.phase_results.iter().all(|phase| {
+            phase.executed_selectors > 0
+                && phase.aggregate_group_count > 0
+                && phase.aggregate_unit_count > 0
+        }));
+    }
+
+    #[test]
+    fn empty_execution_has_conservative_status() {
+        let execution = TabRuntimeProbeExecution::from_archive_inputs([]);
+        assert!(execution.selector_results.is_empty());
+        assert!(execution.phase_results.is_empty());
+        assert_eq!(execution.executed_selectors, 0);
+        assert_eq!(execution.skipped_selectors, 0);
+        assert!(
+            execution
+                .compact_status()
+                .contains("no aggregate selector executions available")
+        );
+        assert_eq!(
+            execution.readiness_summary(),
+            "no execution readiness results"
+        );
+        assert_eq!(execution.phase_summary(), "no execution phases");
+    }
+
+    #[test]
+    fn marks_missing_family_selector_execution_as_skipped() {
+        let manifest = TabRuntimeProbeManifest::from_archive_inputs([make_archive_input(
+            "SYNDICAT/DATA/HSPR-1.TAB",
+            vec![chunk_with_prefix([16, 16, 0xf0, 0], 128)],
+        )]);
+        let execution = TabRuntimeProbeExecution::from_manifest_and_archive_inputs(manifest, []);
+
+        assert!(
+            execution
+                .selector_results
+                .iter()
+                .any(|result| result.readiness == TabRuntimeProbeExecutionReadiness::Skipped)
+        );
+        assert!(
+            execution
+                .selector_results
+                .iter()
+                .any(|result| result.execution_summary.contains("skipped"))
+        );
     }
 
     fn make_archive_input(path: &str, chunks: Vec<Vec<u8>>) -> TabRuntimeProbeArchiveInput {

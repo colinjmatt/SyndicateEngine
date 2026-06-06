@@ -1,12 +1,22 @@
 use std::{env, path::PathBuf};
 
-use syndicate_engine::engine::runtime_probe::TabRuntimeProbeManifest;
+use syndicate_engine::engine::runtime_probe::{
+    TabRuntimeProbeExecution, TabRuntimeProbeManifest, tab_runtime_probe_archive_inputs,
+};
 
 fn main() {
-    let root = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "../original_assets".to_string());
-    let manifest = TabRuntimeProbeManifest::from_root(PathBuf::from(&root));
+    let mut execute = false;
+    let mut root = "../original_assets".to_string();
+    for arg in env::args().skip(1) {
+        if arg == "--execute" {
+            execute = true;
+        } else {
+            root = arg;
+        }
+    }
+
+    let inputs = tab_runtime_probe_archive_inputs(PathBuf::from(&root));
+    let manifest = TabRuntimeProbeManifest::from_archive_inputs(inputs.clone());
 
     println!("{}", manifest.compact_status());
     println!("source root: {root}");
@@ -49,6 +59,41 @@ fn main() {
                 selector.support_tier.label(),
                 selector.focus,
                 selector.conservative_limitation()
+            );
+        }
+    }
+
+    if execute {
+        let execution =
+            TabRuntimeProbeExecution::from_manifest_and_archive_inputs(manifest, inputs);
+        println!("execution:");
+        println!("{}", execution.compact_status());
+        println!("readiness: {}", execution.readiness_summary());
+        println!("execution phases: {}", execution.phase_summary());
+        for phase in &execution.phase_results {
+            println!(
+                "- {}. {} | selectors {} | readiness [{}] | groups {} | units {} | stop: {}",
+                phase.phase.order(),
+                phase.phase.label(),
+                phase.selector_ids_summary(),
+                phase.readiness_summary(),
+                phase.aggregate_group_count,
+                phase.aggregate_unit_count,
+                phase.stop_condition
+            );
+        }
+        println!("execution selectors:");
+        for result in &execution.selector_results {
+            println!(
+                "- #{:02} {} | {} | {} | groups {} | units {} | strongest {} | {}",
+                result.rank,
+                result.selector_id,
+                result.family,
+                result.readiness.label(),
+                result.aggregate_group_count,
+                result.aggregate_unit_count,
+                result.strongest_group,
+                result.conservative_limitation
             );
         }
     }

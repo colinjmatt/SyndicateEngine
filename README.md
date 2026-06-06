@@ -63,7 +63,14 @@ cd syndicate_engine
 cargo run --bin probe_manifest -- ../original_assets
 ```
 
-This prints capped aggregate selector IDs, dry-run phases, support tiers, and stop conditions for local clean-room decoder probes. It does not print asset bytes, chunk data, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics.
+Run the aggregate-only dry-run execution layer for the same local selectors:
+
+```bash
+cd syndicate_engine
+cargo run --bin probe_manifest -- --execute ../original_assets
+```
+
+These commands print capped aggregate selector IDs, dry-run phases, support tiers, execution readiness, group/support counts, and stop conditions for local clean-room decoder probes. They do not print asset bytes, chunk data, previews, decoded dimensions, anchors, commands, audio, UI, or gameplay semantics.
 
 ## Roadmap
 
