@@ -9,8 +9,8 @@ use crate::engine::{
 use macroquad::prelude::*;
 
 pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &str, sim: &str) {
-    draw_rectangle(16.0, 16.0, 840.0, 346.0, Color::new(0.0, 0.0, 0.0, 0.62));
-    draw_rectangle_lines(16.0, 16.0, 840.0, 346.0, 2.0, GREEN);
+    draw_rectangle(16.0, 16.0, 860.0, 346.0, Color::new(0.0, 0.0, 0.0, 0.62));
+    draw_rectangle_lines(16.0, 16.0, 860.0, 346.0, 2.0, GREEN);
     draw_text(
         "SYNDICATEENGINE // CLEAN-ROOM PROTOTYPE",
         28.0,
@@ -44,7 +44,7 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         WHITE,
     );
     draw_text(
-        &format!("Map: {}", asset_index.diagnostics().map_status),
+        &hud_line("Map", asset_index.diagnostics().map_status.as_str(), 96),
         28.0,
         110.0,
         16.0,
@@ -61,30 +61,39 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
     draw_text(&format!("Combat: {combat}"), 28.0, 176.0, 16.0, ORANGE);
     draw_text(&format!("Sim: {sim}"), 28.0, 196.0, 16.0, MAGENTA);
     draw_text(
-        &format!("Decode: {}", asset_index.diagnostics().palette_status),
+        &hud_line(
+            "Decode",
+            asset_index.diagnostics().palette_status.as_str(),
+            96,
+        ),
         28.0,
         220.0,
         15.0,
         SKYBLUE,
     );
     draw_text(
-        &format!("Decode: {}", asset_index.diagnostics().tab_status),
+        &hud_line("Decode", asset_index.diagnostics().tab_status.as_str(), 96),
         28.0,
         240.0,
         15.0,
         SKYBLUE,
     );
     draw_text(
-        &format!("Sprite: {}", asset_index.diagnostics().sprite_status),
+        &hud_line(
+            "Sprite",
+            asset_index.diagnostics().sprite_status.as_str(),
+            96,
+        ),
         28.0,
         264.0,
         15.0,
         SKYBLUE,
     );
     draw_text(
-        &format!(
-            "Blocks: {}",
-            asset_index.diagnostics().block_graphics_status
+        &hud_line(
+            "Blocks",
+            asset_index.diagnostics().block_graphics_status.as_str(),
+            96,
         ),
         28.0,
         284.0,
@@ -92,14 +101,18 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         SKYBLUE,
     );
     draw_text(
-        &format!("Variant: {}", asset_index.diagnostics().tab_variant_status),
+        &hud_line(
+            "Variant",
+            asset_index.diagnostics().tab_variant_status.as_str(),
+            96,
+        ),
         28.0,
         306.0,
         15.0,
         SKYBLUE,
     );
     draw_text(
-        "WASD pan | Wheel zoom | 1-4 select | RMB move | LMB attack | M MAP/graphics layers | N/P MAP | Space pause | . step | +/- speed | F5/F9 | Esc",
+        "WASD/Arrows pan | Wheel zoom | M views | N/P MAP | Space pause | F5/F9 | Esc",
         28.0,
         352.0,
         15.0,
@@ -112,6 +125,22 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         asset_index.diagnostics().map_inferred_preview.as_ref(),
         asset_index.diagnostics().map_substrate_candidate.as_ref(),
     );
+}
+
+fn hud_line(label: &str, value: &str, max_value_chars: usize) -> String {
+    format!("{label}: {}", ellipsize(value, max_value_chars))
+}
+
+fn ellipsize(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+
+    let keep = max_chars.saturating_sub(3);
+    let mut truncated = value.chars().take(keep).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn draw_map_previews(
@@ -322,4 +351,18 @@ fn draw_palette_preview(colors: &[Rgb8]) {
         1.0,
         GRAY,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ellipsize, hud_line};
+
+    #[test]
+    fn truncates_long_hud_values_with_ascii_ellipsis() {
+        let text = "abcdefghijklmnopqrstuvwxyz";
+
+        assert_eq!(ellipsize(text, 10), "abcdefg...");
+        assert_eq!(hud_line("Map", text, 10), "Map: abcdefg...");
+        assert_eq!(ellipsize("short", 10), "short");
+    }
 }

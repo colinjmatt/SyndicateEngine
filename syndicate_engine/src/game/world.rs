@@ -77,6 +77,17 @@ impl MapRenderMode {
 impl WorldState {
     pub fn new(assets: AssetIndex) -> Self {
         let original_graphics = RuntimeOriginalGraphics::from_root(assets.root_path());
+        let graphics_loaded = original_graphics.is_some();
+        let render_mode = if graphics_loaded {
+            MapRenderMode::OriginalGraphicsAtlas
+        } else {
+            MapRenderMode::DemoCity
+        };
+        let combat_log = if graphics_loaded {
+            "Runtime original graphics loaded".to_string()
+        } else {
+            "No contact".to_string()
+        };
         Self {
             assets,
             camera: CameraRig::default(),
@@ -88,9 +99,9 @@ impl WorldState {
                 Combatant::guard("POLICE", GridPos::new(8, 16)),
             ],
             selected: 0,
-            combat_log: "No contact".to_string(),
+            combat_log,
             sim_clock: SimClock::default(),
-            render_mode: MapRenderMode::DemoCity,
+            render_mode,
             selected_map_scene: 0,
             original_graphics,
         }

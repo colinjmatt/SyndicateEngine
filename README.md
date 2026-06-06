@@ -11,7 +11,7 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Four controllable agents with selection and right-click movement orders.
 - Asset indexer that scans `original_assets/` for maps, missions, palettes, sprites, and sounds.
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
-- Runtime-local decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views, aggregate block-addressability overlay, and runtime-only original block-graphics candidate rendering from local assets; gameplay still uses the hand-authored demo grid.
+- Runtime-local decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views, aggregate block-addressability overlay, and runtime-only original block-graphics candidate rendering from local assets. When local graphics are available, the app starts on the runtime graphics atlas; gameplay still uses the hand-authored demo grid.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
