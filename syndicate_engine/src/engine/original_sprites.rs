@@ -1250,6 +1250,35 @@ mod tests {
     }
 
     #[test]
+    fn animation_frame_selector_wraps_timed_object_frames() {
+        let mut hele = vec![0u8; HELE_RECORD_BYTES];
+        write_element(&mut hele, 0, 0, 0, false, 0);
+        let mut hfra = vec![0u8; HFRA_RECORD_BYTES * 3];
+        write_frame(&mut hfra[0..HFRA_RECORD_BYTES], 0, 0x0100, 1);
+        write_frame(
+            &mut hfra[HFRA_RECORD_BYTES..HFRA_RECORD_BYTES * 2],
+            0,
+            0x0100,
+            2,
+        );
+        write_frame(
+            &mut hfra[HFRA_RECORD_BYTES * 2..HFRA_RECORD_BYTES * 3],
+            0,
+            0x0100,
+            0,
+        );
+        let hsta = 0u16.to_le_bytes();
+        let bank =
+            OriginalAnimationBank::from_bytes(vec!["synthetic".to_string()], &hele, &hfra, &hsta)
+                .unwrap();
+
+        assert_eq!(bank.animation_frame_count(0), Some(3));
+        assert_eq!(super::animation_frame_for_candidate(&bank, 0, 0), 0);
+        assert_eq!(super::animation_frame_for_candidate(&bank, 0, 4), 1);
+        assert_eq!(super::animation_frame_for_candidate(&bank, 0, 8), 2);
+    }
+
+    #[test]
     fn sprite_decoder_exposes_no_reconstructable_text() {
         let palette = synthetic_palette();
         let decoded = decode_game_sprite(8, 1, &[0, 0, 0, 0, 0], &palette).unwrap();

@@ -13,9 +13,9 @@ This project does **not** distribute copyrighted game data. Put your legally own
 - Early binary decoding modules for little-endian reads, RNC method-1 containers, VGA palettes, and `.TAB`/`.DAT` banks.
 - Runtime-local selected-mission `MAP##.DAT` tile-stack renderer using local `HBLK01.DAT` map tiles, the mission `HPAL##.DAT` palette, and `COL01.DAT` tile typing, plus a decoded `MAP*.DAT` diagnostic scene catalog with inferred/candidate field views and aggregate block-addressability overlays. When local map graphics are available, the app starts framed on the original mission compound render; gameplay still uses the hand-authored demo grid.
 - Metadata-selected mission loading reads local `GAME##.DAT` map info for the selected campaign block, then chooses the corresponding `MAP##.DAT` and `HPAL##.DAT` at runtime.
-- A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, candidate occupied/blocking buckets, and a conservative object draw queue.
-- First-mission statics and any peds, vehicles, or ground weapons whose runtime proof gates pass can render from local original `HSPR-0`/`HELE`/`HFRA`/`HSTA` assets. The scene probe distinguishes original map tiles, rendered original statics, rendered/proven object candidates, candidate-only categories, and blocked navigation/gameplay semantics. Gameplay/pathfinding remain on the hand-authored demo grid.
-- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, static/object render readiness, spawn candidates, and navigation-probe counts without exposing local asset bytes or per-object dumps.
+- A runtime-local first-mission scene model now parses typed guarded candidates for people, vehicles, statics, weapons, sfx, animation/frame references, sprite-bank support, spawn probes, navigation bridge inputs, candidate occupied/blocking buckets, a conservative object draw queue, and an aggregate original-map spatial/route probe.
+- First-mission statics and any peds, vehicles, or ground weapons whose runtime proof gates pass can render from local original `HSPR-0`/`HELE`/`HFRA`/`HSTA` assets. The scene probe distinguishes original map tiles, rendered original statics, rendered/proven object candidates, candidate-only categories, candidate same-level route probes, and blocked navigation/gameplay semantics. Gameplay/pathfinding remain on the hand-authored demo grid.
+- Original-map camera startup and pan/zoom are constrained by the selected mission's scroll-tile bounds. The HUD can show first-mission scene queue health, viewport-visible candidate totals, animation/sprite support, static/object render readiness, spawn candidates, cursor tile candidates, same-level route probe status, and navigation-probe counts without exposing local asset bytes or per-object dumps.
 - HUD diagnostics showing original asset discovery and decode status.
 
 ## Run
@@ -30,7 +30,7 @@ Controls:
 - `WASD` / arrow keys: pan camera
 - Mouse wheel: zoom
 - `1`-`4`: select agent
-- Right click: send selected agent to a tile
+- Right click: send selected agent to a tile in the demo city; in first-mission scene probe mode, run a local original-map candidate route probe instead
 - `M`: cycle between the runtime original mission-map tile render, first-mission scene probe, playable demo city, decoded `MAP*.DAT` diagnostic scene layers, aggregate block-addressability, runtime original-graphics candidate map, and runtime HBLK graphics atlas when local assets are available
 - `N` / `P`: select the next or previous decoded MAP diagnostic scene
 - `Esc`: quit
@@ -93,7 +93,7 @@ Screenshots are written under `visual_diagnostics/`, which is ignored by git. Do
 1. Decode Bullfrog `.TAB`/`.DAT` sprite banks into runtime textures.
 2. Remap indexed art through decoded palettes into RGBA textures.
 3. Prove the original sprite/frame renderer for statics, peds, weapons, vehicles, and sfx using runtime-local assets only.
-4. Decode original map walkability, navigation graph inputs, object occupancy, and entity/vehicle spawn layers.
+4. Prove original map walkability, height transitions, door/window behavior, object occupancy, and spawn layers enough to switch a gated debug navigation mode from route probe to movement.
 5. Decode `MISS*.DAT` mission scripts, objectives, spawns, and trigger data.
 6. Add tactical systems: weapons, civilians, vehicles, persuasion, destructibility, and AI.
 7. Add modern UX: scalable UI, remappable controls, saves, accessibility, and mod packs.

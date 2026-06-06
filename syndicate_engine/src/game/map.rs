@@ -9,6 +9,7 @@ use crate::engine::{
     },
     map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     map_tiles::{OriginalMapTiles, OriginalTileTypes},
+    mission_scene::{OriginalRuntimeRouteProbe, OriginalTilePoint},
     palette,
 };
 use crate::game::original_graphics::RuntimeOriginalGraphics;
@@ -456,6 +457,92 @@ impl TacticalMap {
             }
         }
     }
+
+    pub fn pick_original_tile_at_screen(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        screen: Vec2,
+    ) -> Option<OriginalTilePoint> {
+        let world = camera.screen_to_world(screen);
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        for z in (0..map_tiles.height).rev() {
+            let (tile_x, tile_y) =
+                original_screen_to_tile_at_z(map_tiles, world, z, tile_width, tile_height);
+            let x = tile_x.floor() as i32;
+            let y = tile_y.floor() as i32;
+            if x < 0
+                || y < 0
+                || (x as usize) >= map_tiles.width
+                || (y as usize) >= map_tiles.depth
+                || map_tiles.tile_at(x as usize, y as usize, z).unwrap_or(0) == 0
+            {
+                continue;
+            }
+            return Some(OriginalTilePoint {
+                tile_x: x as u16,
+                tile_y: y as u16,
+                tile_z: z as u16,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            });
+        }
+        None
+    }
+
+    pub fn draw_original_route_probe_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        cursor_tile: Option<OriginalTilePoint>,
+        route_probe: Option<&OriginalRuntimeRouteProbe>,
+        cursor_screen: Option<Vec2>,
+    ) {
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+
+        if let Some(route_probe) = route_probe {
+            for pair in route_probe.path.windows(2) {
+                let a = original_tile_marker_screen(
+                    camera,
+                    map_tiles,
+                    pair[0],
+                    tile_width,
+                    tile_height,
+                );
+                let b = original_tile_marker_screen(
+                    camera,
+                    map_tiles,
+                    pair[1],
+                    tile_width,
+                    tile_height,
+                );
+                draw_line(a.x, a.y, b.x, b.y, 2.0, Color::new(0.0, 0.9, 0.95, 0.82));
+            }
+            if let Some(start) = route_probe.start_tile {
+                let p =
+                    original_tile_marker_screen(camera, map_tiles, start, tile_width, tile_height);
+                draw_circle_lines(p.x, p.y, 7.0, 2.0, GREEN);
+            }
+            if let Some(goal) = route_probe.goal_tile {
+                let p =
+                    original_tile_marker_screen(camera, map_tiles, goal, tile_width, tile_height);
+                draw_circle_lines(p.x, p.y, 7.0, 2.0, YELLOW);
+            }
+        }
+
+        if let Some(cursor_tile) = cursor_tile {
+            let p = cursor_screen.unwrap_or_else(|| {
+                original_tile_marker_screen(camera, map_tiles, cursor_tile, tile_width, tile_height)
+            });
+            draw_circle_lines(p.x, p.y, 9.0, 2.0, ORANGE);
+            draw_circle(p.x, p.y, 2.5, ORANGE);
+        }
+    }
 }
 
 fn original_candidates_for_tile(
@@ -634,6 +721,37 @@ fn original_screen_to_tile(
     ((dx + dy) * 0.5, (dy - dx) * 0.5)
 }
 
+fn original_screen_to_tile_at_z(
+    map_tiles: &OriginalMapTiles,
+    screen: Vec2,
+    tile_z: usize,
+    tile_width: f32,
+    tile_height: f32,
+) -> (f32, f32) {
+    let dx = screen.x / (tile_width * 0.5) - (map_tiles.width as f32 + 1.0);
+    let dy = screen.y / (tile_height / 3.0) - (map_tiles.height as f32 + 3.0) + tile_z as f32;
+    ((dx + dy) * 0.5, (dy - dx) * 0.5)
+}
+
+fn original_tile_marker_screen(
+    camera: &CameraRig,
+    map_tiles: &OriginalMapTiles,
+    tile: OriginalTilePoint,
+    tile_width: f32,
+    tile_height: f32,
+) -> Vec2 {
+    let draw_z = tile.tile_z.saturating_add(1) as f32;
+    let top_left = original_map_tile_world_top_left(
+        map_tiles,
+        tile.tile_x as f32,
+        tile.tile_y as f32,
+        draw_z,
+        tile_width,
+        tile_height,
+    );
+    camera.world_to_screen(top_left) + vec2(tile_width * 0.5, tile_height * 2.0 / 3.0) * camera.zoom
+}
+
 fn world_tile_intersects_viewport(
     top_left: Vec2,
     size: Vec2,
@@ -765,7 +883,8 @@ fn signature_tile_color(class: u8) -> Color {
 mod tests {
     use super::{
         OriginalMapDrawPlan, OriginalMapViewport, is_renderable_original_tile,
-        original_map_tile_index, original_map_tile_world_top_left,
+        original_map_tile_index, original_map_tile_world_top_left, original_screen_to_tile,
+        original_screen_to_tile_at_z,
     };
     use crate::engine::{
         block_texture::IndexedBlockGraphics, map_tiles::OriginalMapTiles, palette_decode::Palette,
@@ -790,6 +909,37 @@ mod tests {
 
         assert_eq!(ground.x, 96.0);
         assert_eq!(ground.y - upper.y, 16.0);
+    }
+
+    #[test]
+    fn original_screen_to_tile_inverse_matches_renderer_basis() {
+        let map = synthetic_map_tiles(8, 8, 3);
+        let tile_width = 64.0;
+        let tile_height = 48.0;
+        let step_y = tile_height / 3.0;
+        let screen = vec2(
+            (map.width as f32 + 1.0 + 3.0 - 5.0) * tile_width * 0.5,
+            (map.height as f32 + 2.0 + 3.0 + 5.0) * step_y,
+        );
+
+        let (x, y) = original_screen_to_tile(&map, screen, tile_width, tile_height);
+
+        assert!((x - 3.0).abs() < 0.001);
+        assert!((y - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn original_z_aware_cursor_pick_inverse_matches_route_marker_basis() {
+        let map = synthetic_map_tiles(8, 8, 4);
+        let tile_width = 64.0;
+        let tile_height = 48.0;
+        let marker = original_map_tile_world_top_left(&map, 3.0, 5.0, 3.0, tile_width, tile_height)
+            + vec2(tile_width * 0.5, tile_height * 2.0 / 3.0);
+
+        let (x, y) = original_screen_to_tile_at_z(&map, marker, 2, tile_width, tile_height);
+
+        assert!((x - 3.0).abs() < 0.001);
+        assert!((y - 5.0).abs() < 0.001);
     }
 
     #[test]

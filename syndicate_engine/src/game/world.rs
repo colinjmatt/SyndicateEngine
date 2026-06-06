@@ -10,7 +10,8 @@ use crate::{
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
-            OriginalMissionScene, OriginalObjectRenderDecision, OriginalStaticRenderDecision,
+            OriginalMissionScene, OriginalObjectRenderDecision, OriginalRuntimeRouteProbe,
+            OriginalStaticRenderDecision, OriginalTilePoint,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -48,6 +49,9 @@ pub struct WorldState {
     original_map_tiles: Option<OriginalMapTiles>,
     original_tile_types: Option<OriginalTileTypes>,
     original_map_view: Option<OriginalMapViewState>,
+    original_cursor_tile: Option<OriginalTilePoint>,
+    original_cursor_screen: Option<Vec2>,
+    original_route_probe: Option<OriginalRuntimeRouteProbe>,
 }
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
@@ -187,6 +191,9 @@ impl WorldState {
             original_map_tiles,
             original_tile_types,
             original_map_view,
+            original_cursor_tile: None,
+            original_cursor_screen: None,
+            original_route_probe: None,
         }
     }
 
@@ -200,6 +207,7 @@ impl WorldState {
         self.clamp_original_map_camera();
         self.update_render_controls();
         self.update_sim_controls();
+        self.update_original_scene_cursor_probe();
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
@@ -212,17 +220,19 @@ impl WorldState {
             }
         }
         if is_mouse_button_pressed(MouseButton::Right) {
-            let mouse = vec2(mouse_position().0, mouse_position().1);
-            let grid = iso_to_grid(self.camera.screen_to_world(mouse));
-            let goal = GridPos::new(
-                grid.x.round().clamp(0.0, self.map.width as f32 - 1.0) as i32,
-                grid.y.round().clamp(0.0, self.map.height as f32 - 1.0) as i32,
-            );
-            let start = self.agents[self.selected].grid_pos();
-            if let Some(path) = find_path(&self.map, start, goal) {
-                self.agents[self.selected].set_path(path);
-            } else {
-                self.agents[self.selected].reject_order(goal);
+            if !self.try_original_route_probe_order() {
+                let mouse = vec2(mouse_position().0, mouse_position().1);
+                let grid = iso_to_grid(self.camera.screen_to_world(mouse));
+                let goal = GridPos::new(
+                    grid.x.round().clamp(0.0, self.map.width as f32 - 1.0) as i32,
+                    grid.y.round().clamp(0.0, self.map.height as f32 - 1.0) as i32,
+                );
+                let start = self.agents[self.selected].grid_pos();
+                if let Some(path) = find_path(&self.map, start, goal) {
+                    self.agents[self.selected].set_path(path);
+                } else {
+                    self.agents[self.selected].reject_order(goal);
+                }
             }
         }
         if is_mouse_button_pressed(MouseButton::Left) {
@@ -387,6 +397,53 @@ impl WorldState {
                 == OriginalObjectRenderDecision::RuntimeRenderReady
             || scene_model.weapon_render_proof.decision
                 == OriginalObjectRenderDecision::RuntimeRenderReady
+    }
+
+    fn update_original_scene_cursor_probe(&mut self) {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            self.original_cursor_tile = None;
+            self.original_cursor_screen = None;
+            return;
+        }
+
+        let (Some(map_tiles), Some(graphics)) = (
+            self.original_map_tiles.as_ref(),
+            self.original_graphics.as_ref(),
+        ) else {
+            self.original_cursor_tile = None;
+            self.original_cursor_screen = None;
+            return;
+        };
+
+        let mouse = vec2(mouse_position().0, mouse_position().1);
+        self.original_cursor_tile =
+            self.map
+                .pick_original_tile_at_screen(&self.camera, map_tiles, graphics, mouse);
+        self.original_cursor_screen = self.original_cursor_tile.map(|_| mouse);
+    }
+
+    fn try_original_route_probe_order(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            return false;
+        }
+
+        let Some(goal) = self.original_cursor_tile else {
+            self.combat_log =
+                "Original route probe blocked: cursor is outside the candidate map".to_string();
+            self.original_route_probe = None;
+            return true;
+        };
+        let Some(scene_model) = self.original_mission_scene.as_ref() else {
+            self.combat_log =
+                "Original route probe blocked: first-mission scene model unavailable".to_string();
+            self.original_route_probe = None;
+            return true;
+        };
+
+        let route_probe = scene_model.original_route_probe_to_tile(goal);
+        self.combat_log = route_probe.panel_label();
+        self.original_route_probe = Some(route_probe);
+        true
     }
 
     fn clamp_original_map_camera(&mut self) {
@@ -669,6 +726,14 @@ impl WorldState {
                         object_graphics,
                         self.original_object_animation_frame(),
                     );
+                    self.map.draw_original_route_probe_overlay(
+                        &self.camera,
+                        map_tiles,
+                        graphics,
+                        self.original_cursor_tile,
+                        self.original_route_probe.as_ref(),
+                        self.original_cursor_screen,
+                    );
                 }
             }
             MapRenderMode::OriginalGraphicsAtlas => {
@@ -720,6 +785,8 @@ impl WorldState {
                 self.render_mode,
                 &map_label,
                 &self.camera,
+                self.original_cursor_tile,
+                self.original_route_probe.as_ref(),
             );
         }
 
@@ -739,6 +806,16 @@ impl WorldState {
 
 fn compact_asset_label(label: &str) -> &str {
     label.rsplit('/').next().unwrap_or(label)
+}
+
+fn original_cursor_tile_panel_label(tile: Option<OriginalTilePoint>) -> String {
+    tile.map(|tile| {
+        format!(
+            "cursor tile candidate {},{},{}; local route probe only",
+            tile.tile_x, tile.tile_y, tile.tile_z
+        )
+    })
+    .unwrap_or_else(|| "cursor tile candidate unavailable".to_string())
 }
 
 fn hostile_name(name: &str) -> &'static str {
@@ -801,6 +878,8 @@ fn draw_map_diagnostic_panel(
     mode: MapRenderMode,
     map_label: &str,
     camera: &CameraRig,
+    original_cursor_tile: Option<OriginalTilePoint>,
+    original_route_probe: Option<&OriginalRuntimeRouteProbe>,
 ) {
     let panel_width = map_panel_width(mode);
     let x = screen_width() - panel_width - 22.0;
@@ -1118,34 +1197,42 @@ fn draw_map_diagnostic_panel(
                     GRAY,
                 );
                 draw_text(
-                    &format!(
-                        "nav links {}, occupied {}, blockers {}",
-                        scene_model.navigation_probe.map_object_link_cells,
-                        scene_model.navigation_probe.candidate_occupied_tiles,
-                        scene_model.navigation_probe.static_blocking_candidates
-                    ),
+                    &scene_model.spatial_probe.panel_label(),
                     x + 16.0,
                     y + 364.0,
                     11.0,
-                    GRAY,
+                    YELLOW,
                 );
                 draw_text(
-                    &format!(
-                        "doors {}, windows {}, vehicles {}; demo grid active",
-                        scene_model.navigation_probe.door_candidates,
-                        scene_model.navigation_probe.window_candidates,
-                        scene_model.navigation_probe.vehicle_footprint_candidates
-                    ),
+                    &original_cursor_tile_panel_label(original_cursor_tile),
                     x + 16.0,
                     y + 382.0,
                     11.0,
                     GRAY,
                 );
+                let route_label = original_route_probe
+                    .map(OriginalRuntimeRouteProbe::panel_label)
+                    .unwrap_or_else(|| "route probe: right-click original map to test".to_string());
+                draw_text(&route_label, x + 16.0, y + 404.0, 11.0, GRAY);
                 draw_text(
-                    "gameplay navigation/occupancy remains candidate-only",
+                    &format!(
+                        "nav links {}, occupied {}, blockers {}; doors {} windows {}",
+                        scene_model.navigation_probe.map_object_link_cells,
+                        scene_model.navigation_probe.candidate_occupied_tiles,
+                        scene_model.navigation_probe.static_blocking_candidates,
+                        scene_model.navigation_probe.door_candidates,
+                        scene_model.navigation_probe.window_candidates
+                    ),
                     x + 16.0,
-                    y + 404.0,
-                    11.0,
+                    y + 424.0,
+                    10.5,
+                    GRAY,
+                );
+                draw_text(
+                    "original navigation/occupancy remains candidate-only; demo grid active",
+                    x + 16.0,
+                    y + 444.0,
+                    10.5,
                     GRAY,
                 );
             } else {
@@ -1160,14 +1247,14 @@ fn draw_map_diagnostic_panel(
             draw_text(
                 "Map is rendered; objects are candidate-only unless proof passes",
                 x + 16.0,
-                y + 432.0,
+                y + 490.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 450.0,
+                y + 508.0,
                 12.0,
                 GRAY,
             );
@@ -1295,7 +1382,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 472.0,
+        MapRenderMode::OriginalMissionSceneProbe => 532.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
@@ -1306,7 +1393,7 @@ fn map_panel_height(mode: MapRenderMode) -> f32 {
 
 fn map_panel_width(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 520.0,
+        MapRenderMode::OriginalMissionSceneProbe => 600.0,
         _ => 370.0,
     }
 }
