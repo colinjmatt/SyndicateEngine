@@ -1,4 +1,5 @@
 use crate::engine::{
+    block_texture::IndexedBlockGraphics,
     camera::CameraRig,
     iso::{draw_iso_tile, grid_to_iso},
     map_block_correlation::MapBlockCorrelationScene,
@@ -352,7 +353,7 @@ impl TacticalMap {
         &self,
         camera: &CameraRig,
         map_tiles: &OriginalMapTiles,
-        tile_types: Option<&OriginalTileTypes>,
+        _tile_types: Option<&OriginalTileTypes>,
         graphics: &RuntimeOriginalGraphics,
     ) {
         let size = vec2(
@@ -370,10 +371,9 @@ impl TacticalMap {
                 };
 
                 for visual_z in 0..stack.len() {
-                    let source_z = stack.len() - 1 - visual_z;
-                    let tile_index = stack[source_z];
+                    let tile_index = stack[visual_z];
                     if tile_index as usize >= graphics.bank().record_count
-                        || !is_renderable_original_tile(tile_index, stack, tile_types)
+                        || !is_renderable_original_tile(tile_index, graphics.bank())
                     {
                         continue;
                     }
@@ -402,33 +402,12 @@ impl TacticalMap {
     }
 }
 
-fn is_renderable_original_tile(
-    tile_index: u8,
-    stack: &[u8],
-    tile_types: Option<&OriginalTileTypes>,
-) -> bool {
+fn is_renderable_original_tile(tile_index: u8, graphics: &IndexedBlockGraphics) -> bool {
     if tile_index == 0 {
         return false;
     }
 
-    let visible_by_type = tile_types
-        .map(|tile_types| tile_types.is_renderable_tile(tile_index))
-        .unwrap_or(true);
-    if !visible_by_type {
-        return false;
-    }
-
-    if tile_index == 2 {
-        return !stack.iter().copied().any(|other| {
-            other != 2
-                && other != 0
-                && tile_types
-                    .map(|tile_types| tile_types.is_renderable_tile(other))
-                    .unwrap_or(true)
-        });
-    }
-
-    true
+    graphics.record_has_visible_pixels(tile_index as usize)
 }
 
 fn candidate_field_color(
@@ -542,19 +521,29 @@ fn signature_tile_color(class: u8) -> Color {
 #[cfg(test)]
 mod tests {
     use super::is_renderable_original_tile;
-    use crate::engine::map_tiles::OriginalTileTypes;
+    use crate::engine::{block_texture::IndexedBlockGraphics, palette_decode::Palette};
 
     #[test]
-    fn hides_tile_two_only_when_it_is_stack_fill_above_other_tiles() {
-        let mut table = vec![0u8; 256];
-        table[2] = 5;
-        table[13] = 5;
-        let tile_types =
-            OriginalTileTypes::from_decoded_bytes("synthetic/COL01.DAT".to_string(), &table)
-                .unwrap();
+    fn renders_tiles_by_runtime_pixel_visibility_not_col_type() {
+        let graphics = synthetic_graphics_bank();
 
-        assert!(is_renderable_original_tile(2, &[2, 2], Some(&tile_types)));
-        assert!(!is_renderable_original_tile(2, &[2, 13], Some(&tile_types)));
-        assert!(is_renderable_original_tile(13, &[2, 13], Some(&tile_types)));
+        assert!(!is_renderable_original_tile(0, &graphics));
+        assert!(is_renderable_original_tile(1, &graphics));
+        assert!(!is_renderable_original_tile(2, &graphics));
+    }
+
+    fn synthetic_graphics_bank() -> IndexedBlockGraphics {
+        let palette = Palette::decode_vga_6bit(&vec![0u8; 768]).unwrap();
+        let decoded = vec![0u8, 1, 0];
+        IndexedBlockGraphics::from_fixed_records(
+            "synthetic/HBLK01.DAT".to_string(),
+            "synthetic/HPAL02.DAT".to_string(),
+            1,
+            1,
+            0,
+            &decoded,
+            &palette,
+        )
+        .unwrap()
     }
 }

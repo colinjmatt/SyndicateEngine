@@ -169,6 +169,10 @@ fn inspect_palette(root: &Path, palette_preview: &mut Vec<Rgb8>) -> String {
     let candidates = [
         root.join("SYNDICAT/DATA/COL01.DAT"),
         root.join("DATADISK/DATA/COL01.DAT"),
+        root.join("SYNDICAT/DATA/HPAL02.DAT"),
+        root.join("DATADISK/DATA/HPAL02.DAT"),
+        root.join("SYNDICAT/DATA/HPAL01.DAT"),
+        root.join("DATADISK/DATA/HPAL01.DAT"),
         root.join("SYNDICAT/DATA/HPALETTE.DAT"),
         root.join("DATADISK/DATA/HPALETTE.DAT"),
     ];

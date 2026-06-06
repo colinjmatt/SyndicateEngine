@@ -4,7 +4,7 @@
 //! can be rendered with the runtime HBLK tile atlas. It must not write decoded
 //! map bytes, tile previews, or reconstructable asset-derived output.
 
-use std::{fs, path::Path};
+use std::{collections::VecDeque, fs, path::Path};
 
 use crate::engine::map_decode::{MapDecodeError, decode_map_payload_bytes};
 
@@ -30,6 +30,15 @@ pub struct OriginalMapTiles {
 pub struct OriginalTileTypes {
     pub source_label: String,
     tile_types: [u8; 256],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalMapRegion {
+    pub min_x: usize,
+    pub max_x: usize,
+    pub min_y: usize,
+    pub max_y: usize,
+    pub columns: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +164,52 @@ impl OriginalMapTiles {
         self.stack_at(x, y).and_then(|stack| stack.get(z)).copied()
     }
 
+    pub fn primary_runtime_region(
+        &self,
+        tile_types: Option<&OriginalTileTypes>,
+    ) -> Option<OriginalMapRegion> {
+        let mut prominent_columns = vec![false; self.width * self.depth];
+        for y in 0..self.depth {
+            for x in 0..self.width {
+                let index = y * self.width + x;
+                prominent_columns[index] = self.stack_at(x, y).is_some_and(|stack| {
+                    stack
+                        .iter()
+                        .copied()
+                        .any(|tile| is_runtime_prominent_tile(tile, tile_types))
+                });
+            }
+        }
+
+        let mut visited = vec![false; self.width * self.depth];
+        let mut largest_region = None;
+        for y in 0..self.depth {
+            for x in 0..self.width {
+                let index = y * self.width + x;
+                if visited[index] || !prominent_columns[index] {
+                    continue;
+                }
+
+                let region = flood_runtime_region(
+                    x,
+                    y,
+                    self.width,
+                    self.depth,
+                    &prominent_columns,
+                    &mut visited,
+                );
+                if largest_region.is_none_or(|current: OriginalMapRegion| {
+                    region.columns > current.columns
+                        || (region.columns == current.columns && region.area() < current.area())
+                }) {
+                    largest_region = Some(region);
+                }
+            }
+        }
+
+        largest_region
+    }
+
     pub fn status_label(&self) -> String {
         format!(
             "{}: {}x{}x{} tile stacks, {} unique stacks, max tile {}, runtime-only",
@@ -212,6 +267,83 @@ impl OriginalTileTypes {
     pub fn is_renderable_tile(&self, tile_index: u8) -> bool {
         self.tile_type(tile_index) != 0
     }
+}
+
+impl OriginalMapRegion {
+    pub fn center(self) -> (f32, f32) {
+        (
+            (self.min_x + self.max_x) as f32 * 0.5,
+            (self.min_y + self.max_y) as f32 * 0.5,
+        )
+    }
+
+    fn area(self) -> usize {
+        (self.max_x - self.min_x + 1) * (self.max_y - self.min_y + 1)
+    }
+}
+
+fn flood_runtime_region(
+    start_x: usize,
+    start_y: usize,
+    width: usize,
+    depth: usize,
+    prominent_columns: &[bool],
+    visited: &mut [bool],
+) -> OriginalMapRegion {
+    let mut region = OriginalMapRegion {
+        min_x: start_x,
+        max_x: start_x,
+        min_y: start_y,
+        max_y: start_y,
+        columns: 0,
+    };
+    let mut queue = VecDeque::from([(start_x, start_y)]);
+    visited[start_y * width + start_x] = true;
+
+    while let Some((x, y)) = queue.pop_front() {
+        region.min_x = region.min_x.min(x);
+        region.max_x = region.max_x.max(x);
+        region.min_y = region.min_y.min(y);
+        region.max_y = region.max_y.max(y);
+        region.columns += 1;
+
+        for (nx, ny) in runtime_region_neighbors(x, y, width, depth) {
+            let index = ny * width + nx;
+            if visited[index] || !prominent_columns[index] {
+                continue;
+            }
+            visited[index] = true;
+            queue.push_back((nx, ny));
+        }
+    }
+
+    region
+}
+
+fn runtime_region_neighbors(
+    x: usize,
+    y: usize,
+    width: usize,
+    depth: usize,
+) -> impl Iterator<Item = (usize, usize)> {
+    [
+        x.checked_sub(1).map(|nx| (nx, y)),
+        (x + 1 < width).then_some((x + 1, y)),
+        y.checked_sub(1).map(|ny| (x, ny)),
+        (y + 1 < depth).then_some((x, y + 1)),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+fn is_runtime_prominent_tile(tile_index: u8, tile_types: Option<&OriginalTileTypes>) -> bool {
+    if matches!(tile_index, 0 | 2 | 3) {
+        return false;
+    }
+
+    tile_types
+        .map(|tile_types| tile_types.is_renderable_tile(tile_index))
+        .unwrap_or(true)
 }
 
 fn read_le_u32(data: &[u8], offset: usize) -> Result<u32, OriginalMapTilesError> {
@@ -281,6 +413,50 @@ mod tests {
 
         assert!(tile_types.is_renderable_tile(2));
         assert!(!tile_types.is_renderable_tile(3));
+    }
+
+    #[test]
+    fn finds_largest_runtime_region_without_using_asset_bytes() {
+        let decoded = synthetic_map_bytes(
+            4,
+            3,
+            2,
+            &[
+                [2, 0],
+                [2, 0],
+                [2, 0],
+                [2, 0],
+                [2, 0],
+                [9, 0],
+                [10, 0],
+                [2, 0],
+                [2, 0],
+                [11, 0],
+                [12, 0],
+                [2, 0],
+            ],
+        );
+        let map = OriginalMapTiles::from_decoded_bytes("synthetic/MAP01.DAT".to_string(), &decoded)
+            .unwrap();
+        let mut tile_type_bytes = vec![0u8; 256];
+        tile_type_bytes[9] = 0;
+        tile_type_bytes[10] = 0x0a;
+        tile_type_bytes[11] = 0x0d;
+        tile_type_bytes[12] = 0x0d;
+        let tile_types = OriginalTileTypes::from_decoded_bytes(
+            "synthetic/COL01.DAT".to_string(),
+            &tile_type_bytes,
+        )
+        .unwrap();
+
+        let region = map.primary_runtime_region(Some(&tile_types)).unwrap();
+
+        assert_eq!(region.min_x, 1);
+        assert_eq!(region.max_x, 2);
+        assert_eq!(region.min_y, 1);
+        assert_eq!(region.max_y, 2);
+        assert_eq!(region.columns, 3);
+        assert_eq!(region.center(), (1.5, 1.5));
     }
 
     fn synthetic_map_bytes<const H: usize>(

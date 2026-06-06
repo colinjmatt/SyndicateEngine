@@ -3,7 +3,7 @@ use crate::{
         assets::AssetIndex,
         block_decode::BlockIndexPlausibility,
         camera::CameraRig,
-        iso::iso_to_grid,
+        iso::{grid_to_iso, iso_to_grid},
         map_block_correlation::MapBlockCorrelationScene,
         map_catalog::MapDiagnosticSceneEntry,
         map_decode::MapCandidateField,
@@ -95,6 +95,11 @@ impl WorldState {
         } else {
             MapRenderMode::DemoCity
         };
+        let camera = if original_map_loaded {
+            original_map_start_camera(original_map_tiles.as_ref(), original_tile_types.as_ref())
+        } else {
+            CameraRig::default()
+        };
         let combat_log = if original_map_loaded {
             "Runtime original MAP01 tile stacks loaded".to_string()
         } else if graphics_loaded {
@@ -104,7 +109,7 @@ impl WorldState {
         };
         Self {
             assets,
-            camera: CameraRig::default(),
+            camera,
             map: TacticalMap::demo_city(),
             agents: Agent::squad(),
             hostiles: vec![
@@ -595,6 +600,28 @@ impl WorldState {
     }
 }
 
+fn original_map_start_camera(
+    map_tiles: Option<&OriginalMapTiles>,
+    tile_types: Option<&OriginalTileTypes>,
+) -> CameraRig {
+    let mut camera = CameraRig::default();
+    camera.zoom = 0.82;
+
+    if let Some(region) =
+        map_tiles.and_then(|map_tiles| map_tiles.primary_runtime_region(tile_types))
+    {
+        let (center_x, center_y) = region.center();
+        let focus = grid_to_iso(center_x, center_y, 1.0);
+        camera.offset = vec2(720.0, 430.0) - focus * camera.zoom;
+    }
+
+    camera
+}
+
+fn compact_asset_label(label: &str) -> &str {
+    label.rsplit('/').next().unwrap_or(label)
+}
+
 fn hostile_name(name: &str) -> &'static str {
     match name {
         "EUROCORP-1" => "EUROCORP-1",
@@ -752,11 +779,12 @@ fn draw_map_diagnostic_panel(
                 );
                 draw_text(
                     &format!(
-                        "max tile {} | HBLK {} {}x{}",
+                        "max tile {} | HBLK {} {}x{} | palette {}",
                         map_tiles.max_tile_index,
                         graphics.bank().record_count,
                         graphics.bank().record_width,
-                        graphics.bank().record_height
+                        graphics.bank().record_height,
+                        compact_asset_label(&graphics.bank().palette_label)
                     ),
                     x + 16.0,
                     y + 140.0,
@@ -908,7 +936,8 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::BlockAddressability | MapRenderMode::OriginalMapTiles => 212.0,
+        MapRenderMode::OriginalMapTiles => 220.0,
+        MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
         MapRenderMode::CandidateField(_) => 180.0,
         _ => 156.0,

@@ -23,6 +23,7 @@ pub struct IndexedBlockGraphics {
     pub atlas_rows: usize,
     pub atlas_width: usize,
     pub atlas_height: usize,
+    record_visible: Vec<bool>,
     rgba: Vec<u8>,
 }
 
@@ -109,9 +110,11 @@ impl IndexedBlockGraphics {
         }
 
         let mut rgba = vec![0u8; atlas_width * atlas_height * 4];
+        let mut record_visible = vec![false; record_count];
         for record_index in 0..record_count {
             let record_start = record_index * bytes_per_record;
             let record = &payload[record_start..record_start + bytes_per_record];
+            record_visible[record_index] = record.iter().any(|&index| index != 0);
             let atlas_x = (record_index % atlas_columns) * record_width;
             let atlas_y = (record_index / atlas_columns) * record_height;
             copy_record_to_atlas(
@@ -137,6 +140,7 @@ impl IndexedBlockGraphics {
             atlas_rows,
             atlas_width,
             atlas_height,
+            record_visible,
             rgba,
         })
     }
@@ -157,11 +161,12 @@ impl IndexedBlockGraphics {
         let atlas_width = atlas_columns * HBLK_TILE_WIDTH;
         let atlas_height = atlas_rows * HBLK_TILE_HEIGHT;
         let mut rgba = vec![0u8; atlas_width * atlas_height * 4];
+        let mut record_visible = vec![false; record_count];
 
         for tile_index in 0..record_count {
             let tile_x = (tile_index % atlas_columns) * HBLK_TILE_WIDTH;
             let tile_y = (tile_index / atlas_columns) * HBLK_TILE_HEIGHT;
-            draw_hblk_tile(
+            record_visible[tile_index] = draw_hblk_tile(
                 tile_index,
                 decoded,
                 palette,
@@ -183,6 +188,7 @@ impl IndexedBlockGraphics {
             atlas_rows,
             atlas_width,
             atlas_height,
+            record_visible,
             rgba,
         })
     }
@@ -207,6 +213,13 @@ impl IndexedBlockGraphics {
             self.record_width as f32,
             self.record_height as f32,
         ))
+    }
+
+    pub fn record_has_visible_pixels(&self, record_index: usize) -> bool {
+        self.record_visible
+            .get(record_index)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub fn status_label(&self) -> String {
@@ -252,7 +265,8 @@ fn draw_hblk_tile(
     tile_y: usize,
     atlas_width: usize,
     rgba: &mut [u8],
-) {
+) -> bool {
+    let mut tile_rgba = vec![0u8; HBLK_TILE_WIDTH * HBLK_TILE_HEIGHT * 4];
     for subtile_index in 0..HBLK_SUBTILES_PER_TILE {
         let Some(offset) = hblk_subtile_offset(decoded, tile_index, subtile_index) else {
             continue;
@@ -265,12 +279,35 @@ fn draw_hblk_tile(
         draw_hblk_subtile(
             &decoded[offset..offset + HBLK_SUBTILE_BYTES],
             palette,
-            tile_x + subtile_x,
-            tile_y + subtile_y,
-            atlas_width,
-            rgba,
+            subtile_x,
+            subtile_y,
+            HBLK_TILE_WIDTH,
+            &mut tile_rgba,
         );
     }
+
+    copy_hblk_tile_to_atlas(&tile_rgba, tile_x, tile_y, atlas_width, rgba)
+}
+
+fn copy_hblk_tile_to_atlas(
+    tile_rgba: &[u8],
+    tile_x: usize,
+    tile_y: usize,
+    atlas_width: usize,
+    rgba: &mut [u8],
+) -> bool {
+    let mut visible = false;
+    for atlas_row in 0..HBLK_TILE_HEIGHT {
+        let source_row = HBLK_TILE_HEIGHT - 1 - atlas_row;
+        for x in 0..HBLK_TILE_WIDTH {
+            let source_index = (source_row * HBLK_TILE_WIDTH + x) * 4;
+            let output_index = ((tile_y + atlas_row) * atlas_width + tile_x + x) * 4;
+            rgba[output_index..output_index + 4]
+                .copy_from_slice(&tile_rgba[source_index..source_index + 4]);
+            visible |= tile_rgba[source_index + 3] != 0;
+        }
+    }
+    visible
 }
 
 fn hblk_subtile_offset(decoded: &[u8], tile_index: usize, subtile_index: usize) -> Option<usize> {
@@ -409,10 +446,12 @@ fn decode_maybe_rnc(data: &[u8]) -> Result<Vec<u8>, RncError> {
 }
 
 const PALETTE_CANDIDATES: &[&str] = &[
-    "SYNDICAT/DATA/HPALETTE.DAT",
-    "DATADISK/DATA/HPALETTE.DAT",
+    "SYNDICAT/DATA/HPAL02.DAT",
+    "DATADISK/DATA/HPAL02.DAT",
     "SYNDICAT/DATA/HPAL01.DAT",
     "DATADISK/DATA/HPAL01.DAT",
+    "SYNDICAT/DATA/HPALETTE.DAT",
+    "DATADISK/DATA/HPALETTE.DAT",
     "SYNDICAT/DATA/MSELECT.PAL",
     "DATADISK/DATA/MSELECT.PAL",
 ];
@@ -543,10 +582,12 @@ mod tests {
         assert_eq!(atlas.record_height, 48);
         assert_eq!(atlas.data_offset, 6144);
 
-        let bottom_left = ((47 * atlas.atlas_width) + 28) * 4;
-        let transparent_pixel = ((47 * atlas.atlas_width) + 0) * 4;
-        assert_eq!(atlas.rgba()[bottom_left + 3], 255);
+        let top_left_after_tile_flip = 28 * 4;
+        let transparent_pixel = 0;
+        assert_eq!(atlas.rgba()[top_left_after_tile_flip + 3], 255);
         assert_eq!(atlas.rgba()[transparent_pixel + 3], 0);
+        assert!(atlas.record_has_visible_pixels(0));
+        assert!(!atlas.record_has_visible_pixels(1));
     }
 
     fn write_visible_hblk_line(line: &mut [u8], alpha: u32, bit0: u32) {

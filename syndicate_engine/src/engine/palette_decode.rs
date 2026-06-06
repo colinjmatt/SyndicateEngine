@@ -46,8 +46,8 @@ impl Palette {
 }
 
 fn expand_6bit(value: u8) -> u8 {
-    let value = value.min(63) as u16;
-    ((value * 255 + 31) / 63) as u8
+    let value = value.min(63);
+    (value << 2) | (value >> 4)
 }
 
 #[cfg(test)]
