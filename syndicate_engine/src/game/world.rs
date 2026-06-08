@@ -12,13 +12,13 @@ use crate::{
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
-            OriginalDebugAgentSpawn, OriginalDebugAgentWeaponHint, OriginalDebugAgentWeaponSource,
-            OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
-            OriginalDebugInteractionIntentStatus, OriginalDebugInteractionProbe,
-            OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalMissionScene,
-            OriginalObjectRenderDecision, OriginalObjectiveRuntimeTarget,
-            OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus, OriginalStaticRenderDecision,
-            OriginalTilePoint, OriginalWeaponKind,
+            OriginalCombatLineProbe, OriginalDebugAgentSpawn, OriginalDebugAgentWeaponHint,
+            OriginalDebugAgentWeaponSource, OriginalDebugInteractionFocus,
+            OriginalDebugInteractionIntent, OriginalDebugInteractionIntentStatus,
+            OriginalDebugInteractionProbe, OriginalMissionObjectCandidate,
+            OriginalMissionObjectKind, OriginalMissionScene, OriginalObjectRenderDecision,
+            OriginalObjectiveRuntimeTarget, OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus,
+            OriginalStaticRenderDecision, OriginalTilePoint, OriginalWeaponKind,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -74,6 +74,7 @@ const ORIGINAL_DEBUG_AGENT_MAX_STEP_DT: f32 = 0.05;
 const ORIGINAL_CONTROL_SHOOT_REACTION_SECS: f32 = 0.20;
 const ORIGINAL_CONTROL_TARGET_HP: i32 = 50;
 const ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS: f32 = 0.58;
+const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapRenderMode {
@@ -100,7 +101,8 @@ struct OriginalDebugAgent {
     route_status: OriginalDebugAgentRouteStatus,
     direction: OriginalDebugAgentDirection,
     weapon_cooldown: f32,
-    weapon: Option<OriginalCombatWeaponProfile>,
+    weapons: Vec<OriginalCombatWeaponProfile>,
+    selected_weapon_index: usize,
     interaction_intent: Option<OriginalDebugInteractionIntent>,
     action_state: Option<OriginalDebugActionState>,
 }
@@ -148,7 +150,9 @@ struct OriginalMissionCombatRuntime {
     defeated: usize,
     out_of_range: usize,
     blocked: usize,
+    npc_reactions: usize,
     objective_completed: bool,
+    last_target: Option<OriginalCombatTargetCandidate>,
     last_result: Option<String>,
 }
 
@@ -167,6 +171,59 @@ struct OriginalCombatTargetCandidate {
     record_index: u16,
     tile: OriginalTilePoint,
     objective_target: bool,
+    role: OriginalCombatTargetRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginalCombatTargetRole {
+    Objective,
+    Civilian,
+    NpcAgent,
+    Police,
+    Guard,
+    Criminal,
+    Unknown,
+}
+
+impl OriginalCombatTargetRole {
+    fn from_ped_object(object: &OriginalMissionObjectCandidate, objective_target: bool) -> Self {
+        if objective_target {
+            return Self::Objective;
+        }
+        let role_value = object
+            .type_value
+            .filter(|value| *value != 0)
+            .or_else(|| object.subtype_value.filter(|value| *value != 0));
+        match role_value {
+            Some(0x01) => Self::Civilian,
+            Some(0x02) => Self::NpcAgent,
+            Some(0x04) => Self::Police,
+            Some(0x08) => Self::Guard,
+            Some(0x10) => Self::Criminal,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Objective => "objective target",
+            Self::Civilian => "civilian",
+            Self::NpcAgent => "agent candidate",
+            Self::Police => "police",
+            Self::Guard => "guard",
+            Self::Criminal => "criminal",
+            Self::Unknown => "ped candidate",
+        }
+    }
+
+    fn reaction_label(self) -> Option<&'static str> {
+        match self {
+            Self::NpcAgent | Self::Police | Self::Guard | Self::Criminal | Self::Objective => {
+                Some(self.label())
+            }
+            Self::Civilian | Self::Unknown => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +249,7 @@ struct OriginalCombatShotCheck {
     status: OriginalCombatShotStatus,
     distance: u16,
     range: u16,
+    blocker_label: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -457,6 +515,30 @@ impl OriginalMissionCombatRuntime {
         ))
     }
 
+    fn combat_target_overlay(&self) -> Option<(OriginalTilePoint, String, bool, bool)> {
+        if let Some(overlay) = self.objective_target_overlay() {
+            return Some(overlay);
+        }
+        let target = self.last_target?;
+        let state = self.peds.get(&target.record_index)?;
+        let hp_label = if state.defeated {
+            format!("{} down", target.role.label())
+        } else {
+            format!("{} HP {}/{}", target.role.label(), state.hp, state.max_hp)
+        };
+        Some((state.tile, hp_label, false, state.defeated))
+    }
+
+    fn mark_target_candidate(&mut self, target: OriginalCombatTargetCandidate) {
+        self.last_target = Some(target);
+        self.ensure_ped_state(target.record_index, target.tile, target.objective_target);
+        self.last_result = Some(format!(
+            "target {} ped candidate {}; local combat only",
+            target.role.label(),
+            target.record_index
+        ));
+    }
+
     fn apply_hit(
         &mut self,
         target: OriginalCombatTargetCandidate,
@@ -502,8 +584,10 @@ impl OriginalMissionCombatRuntime {
         self.ensure_ped_state(target.record_index, target.tile, target.objective_target);
         self.out_of_range += 1;
         self.last_result = Some(format!(
-            "ped candidate {} out of range {distance}/{}; local combat state unchanged",
-            target.record_index, range
+            "{} ped candidate {} out of range {distance}/{}; local combat state unchanged",
+            target.role.label(),
+            target.record_index,
+            range
         ));
     }
 
@@ -511,7 +595,8 @@ impl OriginalMissionCombatRuntime {
         self.ensure_ped_state(target.record_index, target.tile, target.objective_target);
         self.blocked += 1;
         self.last_result = Some(format!(
-            "ped candidate {} blocked: {reason}; local combat state unchanged",
+            "{} ped candidate {} blocked: {reason}; local combat state unchanged",
+            target.role.label(),
             target.record_index
         ));
     }
@@ -523,7 +608,8 @@ impl OriginalMissionCombatRuntime {
     ) -> String {
         let label = match result {
             OriginalCombatAttackResult::Hit { remaining_hp } => format!(
-                "original combat: ped candidate {} hit; {remaining_hp} HP remaining; local combat only",
+                "original combat: {} ped candidate {} hit; {remaining_hp} HP remaining; local combat only",
+                target.role.label(),
                 target.record_index
             ),
             OriginalCombatAttackResult::Defeated {
@@ -535,16 +621,36 @@ impl OriginalMissionCombatRuntime {
             OriginalCombatAttackResult::Defeated {
                 objective_completed: false,
             } => format!(
-                "original combat: ped candidate {} defeated; local combat only",
+                "original combat: {} ped candidate {} defeated; local combat only",
+                target.role.label(),
                 target.record_index
             ),
             OriginalCombatAttackResult::AlreadyDown => format!(
-                "original combat: ped candidate {} already down; local state unchanged",
+                "original combat: {} ped candidate {} already down; local state unchanged",
+                target.role.label(),
                 target.record_index
             ),
         };
         self.last_result = Some(label.clone());
         label
+    }
+
+    fn record_npc_reaction(&mut self, target: OriginalCombatTargetCandidate) -> Option<String> {
+        let role = target.role.reaction_label()?;
+        if self
+            .peds
+            .get(&target.record_index)
+            .is_some_and(|state| state.defeated)
+        {
+            return None;
+        }
+        self.npc_reactions += 1;
+        let label = format!(
+            "{} ped candidate {} reaction candidate; facing/AI remains gated",
+            role, target.record_index
+        );
+        self.last_result = Some(label.clone());
+        Some(label)
     }
 
     fn panel_label(&self) -> String {
@@ -582,8 +688,13 @@ impl OriginalMissionCombatRuntime {
             .as_deref()
             .unwrap_or("no local combat result yet");
         format!(
-            "combat local {objective} hp {hp}; shots {} hits {} down {} oor {} blocked {}; {progress}; {last}",
-            self.shots_fired, self.hits, self.defeated, self.out_of_range, self.blocked
+            "combat local {objective} hp {hp}; shots {} hits {} down {} oor {} blocked {} react {}; {progress}; {last}",
+            self.shots_fired,
+            self.hits,
+            self.defeated,
+            self.out_of_range,
+            self.blocked,
+            self.npc_reactions
         )
     }
 }
@@ -1029,6 +1140,9 @@ impl WorldState {
         }
         if is_key_pressed(KeyCode::T) {
             self.toggle_original_control_trace();
+        }
+        if is_key_pressed(KeyCode::Q) {
+            self.try_cycle_original_debug_agent_weapons();
         }
         if is_mouse_button_pressed(MouseButton::Right) {
             if !self.try_original_route_probe_order() {
@@ -1526,6 +1640,59 @@ impl WorldState {
         self.combat_log = format!("Original control console trace {state}; local diagnostics only");
     }
 
+    fn try_cycle_original_debug_agent_weapons(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return false;
+        }
+        self.ensure_original_debug_agents();
+        let selected_agents = self.selected_original_debug_agent_indices();
+        if selected_agents.is_empty() {
+            self.combat_log =
+                "Original weapon cycle blocked: no selected original agent".to_string();
+            return true;
+        }
+
+        let mut cycled = 0;
+        let mut blocked = 0;
+        let mut primary_label = None;
+        for idx in selected_agents {
+            let Some(agent) = self.original_debug_agents.get_mut(idx) else {
+                continue;
+            };
+            match agent.cycle_weapon() {
+                Some(weapon) => {
+                    cycled += 1;
+                    if primary_label.is_none() || idx == self.selected_original_debug_agent {
+                        primary_label = Some(format!(
+                            "agent {} selected {} via {}",
+                            agent.slot + 1,
+                            weapon.label,
+                            weapon.source.label()
+                        ));
+                    }
+                }
+                None => {
+                    blocked += 1;
+                    if primary_label.is_none() || idx == self.selected_original_debug_agent {
+                        primary_label = Some(format!(
+                            "agent {} has no supported weapon; inventory semantics blocked",
+                            agent.slot + 1
+                        ));
+                    }
+                }
+            }
+        }
+        self.combat_log = format!(
+            "Original weapon selection: cycled {} blocked {}; {}; local control only",
+            cycled,
+            blocked,
+            primary_label.unwrap_or_else(|| "no selected weapon changed".to_string())
+        );
+        true
+    }
+
     fn try_original_control_smoke_route(&mut self, trigger: &str) -> bool {
         if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
             self.combat_log =
@@ -1596,12 +1763,17 @@ impl WorldState {
             .map(|agent| {
                 let tile = agent.current_tile();
                 let selected = if agent.selected { "*" } else { "" };
+                let weapon = agent
+                    .selected_weapon()
+                    .map(|weapon| weapon.label)
+                    .unwrap_or("unarmed");
                 format!(
-                    "a{}{} rec{} {} tile={},{},{} route={}/{}",
+                    "a{}{} rec{} {} {} tile={},{},{} route={}/{}",
                     agent.slot + 1,
                     selected,
                     agent.record_index,
                     agent.route_status.label(),
+                    weapon,
                     tile.tile_x,
                     tile.tile_y,
                     tile.tile_z,
@@ -1917,6 +2089,7 @@ impl WorldState {
                 "Original combat probe: no candidate non-squad ped at cursor".to_string();
             return true;
         };
+        self.original_combat_runtime.mark_target_candidate(target);
 
         let mut fired = 0;
         let mut out_of_range = 0;
@@ -1933,13 +2106,16 @@ impl WorldState {
             let agent_tile = agent.current_tile();
             let agent_slot = agent.slot;
             let agent_can_fire = agent.can_fire();
-            let weapon = agent.weapon;
+            let weapon = agent.selected_weapon();
+            let line_probe =
+                scene_model.original_combat_line_probe_between(agent_tile, target.tile);
             let check = original_combat_shot_check(
                 agent_tile,
                 target.tile,
                 self.original_combat_runtime.ped_state(target.record_index),
                 agent_can_fire,
                 weapon,
+                &line_probe,
             );
             self.original_control_runtime.record_combat_probe(
                 target.record_index,
@@ -1962,12 +2138,14 @@ impl WorldState {
                         .original_combat_runtime
                         .apply_hit(target, weapon.local_damage);
                     let label = self.original_combat_runtime.record_result(target, result);
+                    let reaction = self.original_combat_runtime.record_npc_reaction(target);
                     self.original_control_runtime
                         .record_combat_hit(label.clone());
                     primary_label = Some(format!(
-                        "agent {} fired {}; {label}; range {}/{}",
+                        "agent {} fired {}; {label}; {}; range {}/{}",
                         agent_slot + 1,
                         weapon.label,
+                        reaction.unwrap_or_else(|| "no local NPC reaction".to_string()),
                         check.distance,
                         check.range
                     ));
@@ -1997,11 +2175,13 @@ impl WorldState {
                 }
                 OriginalCombatShotStatus::Blocked => {
                     self.original_combat_runtime
-                        .record_blocked(target, "height/surface line candidate is not proven");
+                        .record_blocked(target, check.blocker_label);
                     primary_label.get_or_insert_with(|| {
                         format!(
-                            "agent {} blocked by unproven height/surface line candidate",
-                            agent_slot + 1
+                            "agent {} blocked by {}; {}",
+                            agent_slot + 1,
+                            check.blocker_label,
+                            line_probe.panel_label()
                         )
                     });
                     blocked += 1;
@@ -2054,12 +2234,13 @@ impl WorldState {
             if target.target_kind == Some(OriginalMissionObjectKind::Ped)
                 && let (Some(record_index), Some(tile)) =
                     (target.target_record_index, target.target_tile)
-                && original_tile_near(tile, cursor, 1, 1)
+                && original_tile_near(tile, cursor, ORIGINAL_COMBAT_TARGET_PICK_RADIUS, 1)
             {
                 return Some(OriginalCombatTargetCandidate {
                     record_index,
                     tile,
                     objective_target: true,
+                    role: OriginalCombatTargetRole::Objective,
                 });
             }
         }
@@ -2077,23 +2258,35 @@ impl WorldState {
                     && object.candidate_draw
                     && !squad_records.contains(&object.record_index)
             })
-            .filter_map(|object| object.tile.map(|tile| (object.record_index, tile)))
-            .filter(|(record_index, tile)| {
-                original_tile_near(*tile, cursor, 1, 1)
+            .filter_map(|object| {
+                let tile = object.tile?;
+                let objective_target = objective_target.is_some_and(|target| {
+                    target.target_kind == Some(OriginalMissionObjectKind::Ped)
+                        && target.target_record_index == Some(object.record_index)
+                });
+                Some((
+                    object.record_index,
+                    tile,
+                    OriginalCombatTargetRole::from_ped_object(object, objective_target),
+                    objective_target,
+                ))
+            })
+            .filter(|(record_index, tile, _, _)| {
+                original_tile_near(*tile, cursor, ORIGINAL_COMBAT_TARGET_PICK_RADIUS, 1)
                     && !self
                         .original_combat_runtime
                         .ped_state(*record_index)
                         .is_some_and(|state| state.defeated)
             })
-            .min_by_key(|(_, tile)| original_tile_distance(cursor, *tile))
-            .map(|(record_index, tile)| OriginalCombatTargetCandidate {
-                record_index,
-                tile,
-                objective_target: objective_target.is_some_and(|target| {
-                    target.target_kind == Some(OriginalMissionObjectKind::Ped)
-                        && target.target_record_index == Some(record_index)
-                }),
-            })
+            .min_by_key(|(_, tile, _, _)| original_tile_distance(cursor, *tile))
+            .map(
+                |(record_index, tile, role, objective_target)| OriginalCombatTargetCandidate {
+                    record_index,
+                    tile,
+                    objective_target,
+                    role,
+                },
+            )
     }
 
     fn primary_original_debug_interaction_intent(&self) -> Option<&OriginalDebugInteractionIntent> {
@@ -2419,7 +2612,7 @@ impl WorldState {
                         &controlled_ped_record_indices,
                     );
                     if let Some((target_tile, hp_label, objective_complete, defeated)) =
-                        self.original_combat_runtime.objective_target_overlay()
+                        self.original_combat_runtime.combat_target_overlay()
                     {
                         self.map.draw_original_combat_target_overlay(
                             &self.camera,
@@ -2563,18 +2756,22 @@ impl WorldState {
 impl OriginalDebugAgent {
     #[cfg(test)]
     fn from_spawn(spawn: OriginalDebugAgentSpawn, selected: bool) -> Self {
-        Self::from_spawn_with_weapon(
+        Self::from_spawn_with_weapons(
             spawn,
             selected,
-            OriginalDebugAgentWeaponHint::player_fallback_pistol(),
+            vec![OriginalDebugAgentWeaponHint::player_fallback_pistol()],
         )
     }
 
-    fn from_spawn_with_weapon(
+    fn from_spawn_with_weapons(
         spawn: OriginalDebugAgentSpawn,
         selected: bool,
-        weapon_hint: OriginalDebugAgentWeaponHint,
+        weapon_hints: Vec<OriginalDebugAgentWeaponHint>,
     ) -> Self {
+        let weapons = weapon_hints
+            .into_iter()
+            .filter_map(OriginalCombatWeaponProfile::from_hint)
+            .collect::<Vec<_>>();
         Self {
             slot: spawn.slot,
             record_index: spawn.record_index,
@@ -2586,7 +2783,8 @@ impl OriginalDebugAgent {
             route_status: OriginalDebugAgentRouteStatus::Idle,
             direction: OriginalDebugAgentDirection::South,
             weapon_cooldown: 0.0,
-            weapon: OriginalCombatWeaponProfile::from_hint(weapon_hint),
+            weapons,
+            selected_weapon_index: 0,
             interaction_intent: None,
             action_state: None,
         }
@@ -2723,6 +2921,21 @@ impl OriginalDebugAgent {
         self.weapon_cooldown = cooldown_secs.max(0.05);
     }
 
+    fn selected_weapon(&self) -> Option<OriginalCombatWeaponProfile> {
+        self.weapons
+            .get(self.selected_weapon_index)
+            .copied()
+            .or_else(|| self.weapons.first().copied())
+    }
+
+    fn cycle_weapon(&mut self) -> Option<OriginalCombatWeaponProfile> {
+        if self.weapons.is_empty() {
+            return None;
+        }
+        self.selected_weapon_index = (self.selected_weapon_index + 1) % self.weapons.len();
+        self.selected_weapon()
+    }
+
     fn current_tile(&self) -> OriginalTilePoint {
         if self.route.is_empty() {
             return self.tile;
@@ -2762,14 +2975,28 @@ impl OriginalDebugAgent {
     }
 
     fn weapon_label(&self) -> String {
-        self.weapon
+        self.selected_weapon()
             .map(OriginalCombatWeaponProfile::panel_label)
-            .unwrap_or_else(|| "no supported weapon".to_string())
+            .map(|label| {
+                if self.weapons.len() > 1 {
+                    format!(
+                        "{label} [{}/{}]",
+                        self.selected_weapon_index + 1,
+                        self.weapons.len()
+                    )
+                } else {
+                    label
+                }
+            })
+            .unwrap_or_else(|| "no supported weapon; inventory semantics blocked".to_string())
     }
 
     fn map_label(&self) -> String {
         let selected = if self.selected { "selected" } else { "debug" };
-        let weapon = self.weapon.map(|weapon| weapon.label).unwrap_or("unarmed");
+        let weapon = self
+            .selected_weapon()
+            .map(|weapon| weapon.label)
+            .unwrap_or("unarmed");
         format!(
             "{selected} agent {} {} {}{}",
             self.slot + 1,
@@ -2867,8 +3094,8 @@ fn original_debug_agents_from_scene(scene_model: &OriginalMissionScene) -> Vec<O
         .into_iter()
         .enumerate()
         .map(|(idx, spawn)| {
-            let weapon_hint = scene_model.debug_agent_weapon_hint(spawn.record_index);
-            OriginalDebugAgent::from_spawn_with_weapon(spawn, idx == 0, weapon_hint)
+            let weapon_hints = scene_model.debug_agent_weapon_hints(spawn.record_index);
+            OriginalDebugAgent::from_spawn_with_weapons(spawn, idx == 0, weapon_hints)
         })
         .collect()
 }
@@ -2997,26 +3224,33 @@ fn original_combat_shot_check(
     target_state: Option<&OriginalCombatPedState>,
     agent_can_fire: bool,
     weapon: Option<OriginalCombatWeaponProfile>,
+    line_probe: &OriginalCombatLineProbe,
 ) -> OriginalCombatShotCheck {
     let distance = original_tile_distance(agent_tile, target_tile);
     let range = weapon.map(|weapon| weapon.range_tiles).unwrap_or_default();
-    let status = if target_state.is_some_and(|state| state.defeated) {
-        OriginalCombatShotStatus::AlreadyDown
+    let (status, blocker_label) = if target_state.is_some_and(|state| state.defeated) {
+        (OriginalCombatShotStatus::AlreadyDown, "target already down")
     } else if weapon.is_none() {
-        OriginalCombatShotStatus::NoWeapon
+        (OriginalCombatShotStatus::NoWeapon, "no supported weapon")
     } else if !agent_can_fire {
-        OriginalCombatShotStatus::Cooling
+        (OriginalCombatShotStatus::Cooling, "weapon cooling")
     } else if distance > range {
-        OriginalCombatShotStatus::OutOfRange
+        (OriginalCombatShotStatus::OutOfRange, "out of range")
     } else if agent_tile.tile_z.abs_diff(target_tile.tile_z) > 1 {
-        OriginalCombatShotStatus::Blocked
+        (
+            OriginalCombatShotStatus::Blocked,
+            "unproven height transition",
+        )
+    } else if !line_probe.is_clear() {
+        (OriginalCombatShotStatus::Blocked, line_probe.blocker_label)
     } else {
-        OriginalCombatShotStatus::Ready
+        (OriginalCombatShotStatus::Ready, "candidate line clear")
     };
     OriginalCombatShotCheck {
         status,
         distance,
         range,
+        blocker_label,
     }
 }
 
@@ -3821,10 +4055,10 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 mod tests {
     use super::{
         MapRenderMode, OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
-        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatWeaponProfile,
-        OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
-        OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalMissionCombatRuntime,
-        OriginalMissionControlRuntime, initial_render_mode,
+        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatTargetRole,
+        OriginalCombatWeaponProfile, OriginalDebugActionStatus, OriginalDebugAgent,
+        OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn,
+        OriginalMissionCombatRuntime, OriginalMissionControlRuntime, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
         original_ped_candidate_role_style, range_tiles_from_freesynd_world_range,
@@ -3832,7 +4066,9 @@ mod tests {
     use crate::engine::{
         map_tiles::OriginalMapTiles,
         mission_scene::{
-            OriginalAnimationRefs, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
+            OriginalAnimationRefs, OriginalCombatLineProbe, OriginalCombatLineStatus,
+            OriginalDebugAgentWeaponHint, OriginalDebugAgentWeaponSource,
+            OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
             OriginalDebugInteractionIntentStatus, OriginalDrawStage,
             OriginalMissionObjectCandidate, OriginalMissionObjectKind,
             OriginalObjectiveRuntimeTarget, OriginalRouteTransitionKind, OriginalRuntimeRouteProbe,
@@ -3849,6 +4085,15 @@ mod tests {
             off_x: 128,
             off_y: 128,
             off_z: 0,
+        }
+    }
+
+    fn clear_line() -> OriginalCombatLineProbe {
+        OriginalCombatLineProbe {
+            status: OriginalCombatLineStatus::CandidateClear,
+            checked_tiles: 0,
+            blocker_tile: None,
+            blocker_label: "candidate line clear",
         }
     }
 
@@ -4216,6 +4461,7 @@ mod tests {
             record_index: 12,
             tile: target_tile,
             objective_target: true,
+            role: OriginalCombatTargetRole::Objective,
         };
 
         assert_eq!(
@@ -4240,30 +4486,68 @@ mod tests {
     }
 
     #[test]
+    fn original_combat_runtime_tracks_target_overlay_and_npc_reaction_candidate() {
+        let target_tile = tile(6, 7, 0);
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        let candidate = OriginalCombatTargetCandidate {
+            record_index: 9,
+            tile: target_tile,
+            objective_target: false,
+            role: OriginalCombatTargetRole::Guard,
+        };
+
+        runtime.mark_target_candidate(candidate);
+        let overlay = runtime.combat_target_overlay().expect("target overlay");
+        assert_eq!(overlay.0, target_tile);
+        assert!(overlay.1.contains("guard"));
+        let reaction = runtime
+            .record_npc_reaction(candidate)
+            .expect("hostile reaction");
+
+        assert!(reaction.contains("reaction candidate"));
+        assert!(runtime.panel_label().contains("react 1"));
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
+    }
+
+    #[test]
     fn original_combat_shot_check_gates_cooldown_range_height_and_down_state() {
         let start = tile(4, 4, 0);
         let target = tile(8, 4, 0);
         let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
+        let clear = clear_line();
         assert_eq!(
-            original_combat_shot_check(start, target, None, true, Some(pistol)).status,
+            original_combat_shot_check(start, target, None, true, Some(pistol), &clear).status,
             OriginalCombatShotStatus::Ready
         );
         assert_eq!(
-            original_combat_shot_check(start, target, None, false, Some(pistol)).status,
+            original_combat_shot_check(start, target, None, false, Some(pistol), &clear).status,
             OriginalCombatShotStatus::Cooling
         );
         assert_eq!(
-            original_combat_shot_check(start, tile(20, 4, 0), None, true, Some(pistol)).status,
+            original_combat_shot_check(start, tile(20, 4, 0), None, true, Some(pistol), &clear)
+                .status,
             OriginalCombatShotStatus::OutOfRange
         );
         assert_eq!(
-            original_combat_shot_check(start, tile(5, 4, 3), None, true, Some(pistol)).status,
+            original_combat_shot_check(start, tile(5, 4, 3), None, true, Some(pistol), &clear)
+                .status,
             OriginalCombatShotStatus::Blocked
         );
         assert_eq!(
-            original_combat_shot_check(start, target, None, true, None).status,
+            original_combat_shot_check(start, target, None, true, None, &clear).status,
             OriginalCombatShotStatus::NoWeapon
         );
+        let blocked_line = OriginalCombatLineProbe {
+            status: OriginalCombatLineStatus::BlockedByStaticFootprint,
+            checked_tiles: 1,
+            blocker_tile: Some(tile(6, 4, 0)),
+            blocker_label: "static footprint candidate",
+        };
+        let blocked =
+            original_combat_shot_check(start, target, None, true, Some(pistol), &blocked_line);
+        assert_eq!(blocked.status, OriginalCombatShotStatus::Blocked);
+        assert_eq!(blocked.blocker_label, "static footprint candidate");
         let defeated = OriginalCombatPedState {
             record_index: 9,
             tile: target,
@@ -4273,7 +4557,7 @@ mod tests {
             defeated: true,
         };
         assert_eq!(
-            original_combat_shot_check(start, target, Some(&defeated), true, None).status,
+            original_combat_shot_check(start, target, Some(&defeated), true, None, &clear).status,
             OriginalCombatShotStatus::AlreadyDown
         );
     }
@@ -4361,6 +4645,40 @@ mod tests {
         assert!(!agent.can_fire());
         agent.update(pistol.cooldown_secs + 0.01);
         assert!(agent.can_fire());
+    }
+
+    #[test]
+    fn original_debug_agent_cycles_local_weapon_hints() {
+        let mut agent = OriginalDebugAgent::from_spawn_with_weapons(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: true,
+            },
+            true,
+            vec![
+                OriginalDebugAgentWeaponHint {
+                    kind: Some(OriginalWeaponKind::Uzi),
+                    source: OriginalDebugAgentWeaponSource::EquipmentOffset,
+                    weapon_record_index: Some(3),
+                },
+                OriginalDebugAgentWeaponHint::player_fallback_pistol(),
+            ],
+        );
+
+        assert_eq!(
+            agent.selected_weapon().unwrap().kind,
+            OriginalWeaponKind::Uzi
+        );
+        assert!(agent.weapon_label().contains("GAME equipment"));
+        assert!(agent.weapon_label().contains("[1/2]"));
+        assert_eq!(
+            agent.cycle_weapon().unwrap().kind,
+            OriginalWeaponKind::Pistol
+        );
+        assert!(agent.weapon_label().contains("starter pistol fallback"));
+        assert_eq!(agent.cycle_weapon().unwrap().kind, OriginalWeaponKind::Uzi);
     }
 
     #[test]

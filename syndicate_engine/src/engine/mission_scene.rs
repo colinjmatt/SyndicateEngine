@@ -582,9 +582,67 @@ impl OriginalDebugAgentWeaponHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalCombatLineStatus {
+    CandidateClear,
+    BlockedByStaticFootprint,
+    BlockedByVehicleFootprint,
+    HeightTransitionUnproven,
+    SpatialModelUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalCombatLineProbe {
+    pub status: OriginalCombatLineStatus,
+    pub checked_tiles: usize,
+    pub blocker_tile: Option<OriginalTilePoint>,
+    pub blocker_label: &'static str,
+}
+
+impl OriginalCombatLineProbe {
+    fn clear(checked_tiles: usize) -> Self {
+        Self {
+            status: OriginalCombatLineStatus::CandidateClear,
+            checked_tiles,
+            blocker_tile: None,
+            blocker_label: "candidate line clear",
+        }
+    }
+
+    fn blocked(
+        status: OriginalCombatLineStatus,
+        checked_tiles: usize,
+        blocker_tile: Option<OriginalTilePoint>,
+        blocker_label: &'static str,
+    ) -> Self {
+        Self {
+            status,
+            checked_tiles,
+            blocker_tile,
+            blocker_label,
+        }
+    }
+
+    pub fn is_clear(&self) -> bool {
+        self.status == OriginalCombatLineStatus::CandidateClear
+    }
+
+    pub fn panel_label(&self) -> String {
+        match self.status {
+            OriginalCombatLineStatus::CandidateClear => {
+                format!("line clear over {} candidate tiles", self.checked_tiles)
+            }
+            _ => format!(
+                "line blocked by {}; checked {} candidate tiles",
+                self.blocker_label, self.checked_tiles
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct OriginalMissionWeaponLoadoutProbe {
-    explicit_ped_hints: BTreeMap<u16, OriginalDebugAgentWeaponHint>,
+    ped_weapon_hints: BTreeMap<u16, Vec<OriginalDebugAgentWeaponHint>>,
     inventory_weapon_records: usize,
     shooting_inventory_weapon_records: usize,
     current_weapon_hints: usize,
@@ -639,9 +697,12 @@ impl OriginalMissionWeaponLoadoutProbe {
                 &weapon_kinds,
                 OriginalDebugAgentWeaponSource::CurrentWeaponOffset,
             ) {
-                probe.current_weapon_hints += 1;
-                probe.explicit_ped_hints.insert(ped_index, hint);
-                continue;
+                if append_unique_weapon_hint(
+                    probe.ped_weapon_hints.entry(ped_index).or_default(),
+                    hint,
+                ) {
+                    probe.current_weapon_hints += 1;
+                }
             }
             if let Some(hint) = weapon_hint_from_record_offset(
                 record,
@@ -649,23 +710,27 @@ impl OriginalMissionWeaponLoadoutProbe {
                 &weapon_kinds,
                 OriginalDebugAgentWeaponSource::EquipmentOffset,
             ) {
-                probe.equipment_hints += 1;
-                probe.explicit_ped_hints.insert(ped_index, hint);
-                continue;
+                if append_unique_weapon_hint(
+                    probe.ped_weapon_hints.entry(ped_index).or_default(),
+                    hint,
+                ) {
+                    probe.equipment_hints += 1;
+                }
             }
-            if let Some(weapon_record_index) =
-                best_shooting_weapon_for_ped(ped_index, &inventory_by_ped, &weapon_kinds)
+            for weapon_record_index in
+                shooting_weapons_for_ped_by_rank(ped_index, &inventory_by_ped, &weapon_kinds)
             {
                 let kind = weapon_kinds[&weapon_record_index];
-                probe.owned_inventory_hints += 1;
-                probe.explicit_ped_hints.insert(
-                    ped_index,
+                if append_unique_weapon_hint(
+                    probe.ped_weapon_hints.entry(ped_index).or_default(),
                     OriginalDebugAgentWeaponHint {
                         kind: Some(kind),
                         source: OriginalDebugAgentWeaponSource::OwnedInventory,
                         weapon_record_index: Some(weapon_record_index),
                     },
-                );
+                ) {
+                    probe.owned_inventory_hints += 1;
+                }
             }
         }
 
@@ -673,16 +738,28 @@ impl OriginalMissionWeaponLoadoutProbe {
     }
 
     fn hint_for_debug_agent(&self, ped_record_index: u16) -> OriginalDebugAgentWeaponHint {
-        self.explicit_ped_hints
+        self.hints_for_debug_agent(ped_record_index)
+            .into_iter()
+            .next()
+            .unwrap_or_else(OriginalDebugAgentWeaponHint::no_supported_weapon)
+    }
+
+    fn hints_for_debug_agent(&self, ped_record_index: u16) -> Vec<OriginalDebugAgentWeaponHint> {
+        let mut hints = self
+            .ped_weapon_hints
             .get(&ped_record_index)
-            .copied()
-            .unwrap_or_else(|| {
-                if ped_record_index < MAX_ORIGINAL_DEBUG_AGENT_SPAWNS as u16 {
-                    OriginalDebugAgentWeaponHint::player_fallback_pistol()
-                } else {
-                    OriginalDebugAgentWeaponHint::no_supported_weapon()
-                }
-            })
+            .cloned()
+            .unwrap_or_default();
+        if ped_record_index < MAX_ORIGINAL_DEBUG_AGENT_SPAWNS as u16 {
+            append_unique_weapon_hint(
+                &mut hints,
+                OriginalDebugAgentWeaponHint::player_fallback_pistol(),
+            );
+        }
+        if hints.is_empty() {
+            hints.push(OriginalDebugAgentWeaponHint::no_supported_weapon());
+        }
+        hints
     }
 
     fn report_label(&self) -> String {
@@ -1175,11 +1252,27 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
+            "{}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label(),
-            self.weapon_loadout_probe.report_label()
+            self.weapon_loadout_probe.report_label(),
+            self.combat_line_probe_report_label()
         )
+    }
+
+    fn combat_line_probe_report_label(&self) -> String {
+        self.spatial_model
+            .as_ref()
+            .map(|model| {
+                format!(
+                    "combat line probe candidate blockers static {} vehicle {}; runtime-only aggregate, not proof of final line-of-fire semantics",
+                    model.static_blocked_tiles.len(),
+                    model.vehicle_blocked_tiles.len()
+                )
+            })
+            .unwrap_or_else(|| {
+                "combat line probe disabled: spatial model unavailable; runtime-only aggregate, not proof of final line-of-fire semantics".to_string()
+            })
     }
 
     pub fn visible_candidate_count_in_bounds(
@@ -1282,6 +1375,32 @@ impl OriginalMissionScene {
     pub fn debug_agent_weapon_hint(&self, ped_record_index: u16) -> OriginalDebugAgentWeaponHint {
         self.weapon_loadout_probe
             .hint_for_debug_agent(ped_record_index)
+    }
+
+    pub fn debug_agent_weapon_hints(
+        &self,
+        ped_record_index: u16,
+    ) -> Vec<OriginalDebugAgentWeaponHint> {
+        self.weapon_loadout_probe
+            .hints_for_debug_agent(ped_record_index)
+    }
+
+    pub fn original_combat_line_probe_between(
+        &self,
+        origin: OriginalTilePoint,
+        target: OriginalTilePoint,
+    ) -> OriginalCombatLineProbe {
+        self.spatial_model
+            .as_ref()
+            .map(|model| model.combat_line_probe_between(origin, target))
+            .unwrap_or_else(|| {
+                OriginalCombatLineProbe::blocked(
+                    OriginalCombatLineStatus::SpatialModelUnavailable,
+                    0,
+                    None,
+                    "spatial model unavailable",
+                )
+            })
     }
 
     pub fn original_control_suppressed_ped_record_indices(&self) -> Vec<u16> {
@@ -3378,6 +3497,45 @@ impl OriginalSpatialModel {
         )
     }
 
+    fn combat_line_probe_between(
+        &self,
+        origin: OriginalTilePoint,
+        target: OriginalTilePoint,
+    ) -> OriginalCombatLineProbe {
+        if origin.tile_z.abs_diff(target.tile_z) > 1 {
+            return OriginalCombatLineProbe::blocked(
+                OriginalCombatLineStatus::HeightTransitionUnproven,
+                0,
+                Some(target),
+                "unproven height transition",
+            );
+        }
+
+        let samples = combat_line_tile_keys(origin.key(), target.key());
+        let mut checked_tiles = 0;
+        for key in samples.iter().skip(1).take(samples.len().saturating_sub(2)) {
+            checked_tiles += 1;
+            if self.static_blocked_tiles.contains(key) {
+                return OriginalCombatLineProbe::blocked(
+                    OriginalCombatLineStatus::BlockedByStaticFootprint,
+                    checked_tiles,
+                    Some(key.to_tile_point()),
+                    "static footprint candidate",
+                );
+            }
+            if self.vehicle_blocked_tiles.contains(key) {
+                return OriginalCombatLineProbe::blocked(
+                    OriginalCombatLineStatus::BlockedByVehicleFootprint,
+                    checked_tiles,
+                    Some(key.to_tile_point()),
+                    "vehicle footprint candidate",
+                );
+            }
+        }
+
+        OriginalCombatLineProbe::clear(checked_tiles)
+    }
+
     fn route_probe_from_start(
         &self,
         start: OriginalTileKey,
@@ -4515,6 +4673,26 @@ fn ordered_edge(a: OriginalTileKey, b: OriginalTileKey) -> (OriginalTileKey, Ori
     if a <= b { (a, b) } else { (b, a) }
 }
 
+fn combat_line_tile_keys(origin: OriginalTileKey, target: OriginalTileKey) -> Vec<OriginalTileKey> {
+    let dx = target.x as i32 - origin.x as i32;
+    let dy = target.y as i32 - origin.y as i32;
+    let dz = target.z as i32 - origin.z as i32;
+    let steps = dx.abs().max(dy.abs()).max(dz.abs()).max(1);
+    let mut samples = Vec::new();
+    for step in 0..=steps {
+        let t = step as f32 / steps as f32;
+        let key = OriginalTileKey {
+            x: (origin.x as f32 + dx as f32 * t).round().max(0.0) as u16,
+            y: (origin.y as f32 + dy as f32 * t).round().max(0.0) as u16,
+            z: (origin.z as f32 + dz as f32 * t).round().max(0.0) as u16,
+        };
+        if samples.last().copied() != Some(key) {
+            samples.push(key);
+        }
+    }
+    samples
+}
+
 fn object_footprint_tiles(
     origin: OriginalTileKey,
     radius: u16,
@@ -5216,26 +5394,42 @@ fn weapon_hint_from_record_offset(
         })
 }
 
-fn best_shooting_weapon_for_ped(
+fn append_unique_weapon_hint(
+    hints: &mut Vec<OriginalDebugAgentWeaponHint>,
+    hint: OriginalDebugAgentWeaponHint,
+) -> bool {
+    if hints.iter().any(|existing| {
+        existing.kind == hint.kind && existing.weapon_record_index == hint.weapon_record_index
+    }) {
+        return false;
+    }
+    hints.push(hint);
+    true
+}
+
+fn shooting_weapons_for_ped_by_rank(
     ped_record_index: u16,
     inventory_by_ped: &BTreeMap<u16, Vec<u16>>,
     weapon_kinds: &BTreeMap<u16, OriginalWeaponKind>,
-) -> Option<u16> {
-    inventory_by_ped
-        .get(&ped_record_index)?
-        .iter()
-        .copied()
-        .filter(|record_index| {
-            weapon_kinds
-                .get(record_index)
-                .is_some_and(|kind| kind.is_shooting_candidate())
-        })
-        .max_by_key(|record_index| {
+) -> Vec<u16> {
+    let mut weapons = inventory_by_ped
+        .get(&ped_record_index)
+        .cloned()
+        .unwrap_or_default();
+    weapons.retain(|record_index| {
+        weapon_kinds
+            .get(record_index)
+            .is_some_and(|kind| kind.is_shooting_candidate())
+    });
+    weapons.sort_by_key(|record_index| {
+        std::cmp::Reverse(
             weapon_kinds
                 .get(record_index)
                 .map(|kind| kind.loadout_rank())
-                .unwrap_or_default()
-        })
+                .unwrap_or_default(),
+        )
+    });
+    weapons
 }
 
 fn strided_object_index(offset: u16, base: u16, end: u16, stride: usize) -> Option<u16> {
@@ -5360,7 +5554,7 @@ mod tests {
     use super::{
         AnimationCatalog, CARS_OFFSET, OBJECT_OFFSET_PEOPLE_BASE, OBJECT_OFFSET_VEHICLES_BASE,
         OBJECT_OFFSET_WEAPONS_BASE, OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport,
-        OriginalDebugAgentWeaponSource, OriginalDebugInteractionFocus,
+        OriginalCombatLineStatus, OriginalDebugAgentWeaponSource, OriginalDebugInteractionFocus,
         OriginalDebugInteractionIntentStatus, OriginalDebugInteractionStatus, OriginalDrawStage,
         OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
         OriginalMissionSelection, OriginalSpriteBankSupport, OriginalWeaponKind, PEOPLE_OFFSET,
@@ -6026,6 +6220,12 @@ mod tests {
             OriginalDebugAgentWeaponSource::CurrentWeaponOffset
         );
         assert_eq!(hint.weapon_record_index, Some(weapon_index));
+        let hints = scene.debug_agent_weapon_hints(0);
+        assert_eq!(hints.first().copied(), Some(hint));
+        assert!(hints.iter().any(|hint| {
+            hint.kind == Some(OriginalWeaponKind::Pistol)
+                && hint.source == OriginalDebugAgentWeaponSource::PlayerFallbackPistol
+        }));
         assert!(scene.report_row().contains("weapon loadout hints"));
         assert!(!scene.report_row().contains("0x"));
         assert!(!scene.report_row().contains("00 00"));
@@ -6078,6 +6278,13 @@ mod tests {
 
         assert_eq!(owned.kind, Some(OriginalWeaponKind::Laser));
         assert_eq!(owned.source, OriginalDebugAgentWeaponSource::OwnedInventory);
+        let owned_hints = scene.debug_agent_weapon_hints(0);
+        assert_eq!(owned_hints.first().copied(), Some(owned));
+        assert!(
+            owned_hints
+                .iter()
+                .any(|hint| hint.kind == Some(OriginalWeaponKind::Pistol))
+        );
         assert_eq!(fallback.kind, Some(OriginalWeaponKind::Pistol));
         assert_eq!(
             fallback.source,
@@ -6348,6 +6555,77 @@ mod tests {
             super::OriginalRuntimeRouteStatus::HeightTransitionsUnproven
         );
         assert!(route.message.contains("height/slope"));
+    }
+
+    #[test]
+    fn combat_line_probe_blocks_static_footprints_without_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        write_record(
+            &mut decoded[STATICS_OFFSET..STATICS_OFFSET + 30],
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[STATICS_OFFSET + 25] = 0x16;
+        let map_tiles = synthetic_map_tiles(5, 1, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+        let start = super::OriginalTilePoint {
+            tile_x: 0,
+            tile_y: 0,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let blocked = scene.original_combat_line_probe_between(
+            start,
+            super::OriginalTilePoint {
+                tile_x: 4,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+        );
+        let clear = scene.original_combat_line_probe_between(
+            start,
+            super::OriginalTilePoint {
+                tile_x: 1,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+        );
+
+        assert_eq!(
+            blocked.status,
+            OriginalCombatLineStatus::BlockedByStaticFootprint
+        );
+        assert_eq!(blocked.blocker_label, "static footprint candidate");
+        assert_eq!(blocked.blocker_tile.unwrap().tile_x, 2);
+        assert_eq!(clear.status, OriginalCombatLineStatus::CandidateClear);
+        assert!(scene.report_row().contains("combat line probe"));
+        assert!(!scene.report_row().contains("00 00"));
+        assert!(!scene.report_row().contains("0x"));
     }
 
     #[test]
