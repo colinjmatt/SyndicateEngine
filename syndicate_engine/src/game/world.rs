@@ -1301,6 +1301,18 @@ impl WorldState {
         self.select_original_debug_agent(idx, extend_original_debug_selection())
     }
 
+    fn controlled_original_ped_record_indices(&self) -> Vec<u16> {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return Vec::new();
+        }
+        self.original_debug_agents
+            .iter()
+            .map(|agent| agent.record_index)
+            .collect()
+    }
+
     fn original_debug_agent_panel_label(&self) -> String {
         if !self.original_navigation_debug_enabled {
             return "original control gated by G; demo gameplay remains active".to_string();
@@ -1770,6 +1782,8 @@ impl WorldState {
                     } else {
                         None
                     };
+                    let controlled_ped_record_indices =
+                        self.controlled_original_ped_record_indices();
                     self.map.draw_original_mission_scene(
                         &self.camera,
                         map_tiles,
@@ -1778,6 +1792,7 @@ impl WorldState {
                         scene_model,
                         object_graphics,
                         self.original_object_animation_frame(),
+                        &controlled_ped_record_indices,
                     );
                     self.map.draw_original_route_probe_overlay(
                         &self.camera,

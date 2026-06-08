@@ -9,7 +9,10 @@ use crate::engine::{
     },
     map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
     map_tiles::{OriginalMapTiles, OriginalTileTypes},
-    mission_scene::{OriginalMissionObjectCandidate, OriginalRuntimeRouteProbe, OriginalTilePoint},
+    mission_scene::{
+        OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalRuntimeRouteProbe,
+        OriginalTilePoint,
+    },
     palette,
 };
 use crate::game::original_graphics::RuntimeOriginalGraphics;
@@ -406,6 +409,7 @@ impl TacticalMap {
         scene_model: &crate::engine::mission_scene::OriginalMissionScene,
         object_graphics: Option<&RuntimeOriginalObjectGraphics>,
         object_animation_frame: u16,
+        controlled_ped_record_indices: &[u16],
     ) {
         let tile_size = vec2(
             graphics.bank().record_width as f32 * camera.zoom,
@@ -445,6 +449,12 @@ impl TacticalMap {
                         item.y as u16,
                         object_z as u16,
                     ) {
+                        if original_object_hidden_by_controlled_agent(
+                            object,
+                            controlled_ped_record_indices,
+                        ) {
+                            continue;
+                        }
                         object_graphics.draw_mission_object(
                             object,
                             top_left,
@@ -774,6 +784,14 @@ fn original_candidates_for_tile(
             })
         })
         .collect()
+}
+
+fn original_object_hidden_by_controlled_agent(
+    object: &OriginalMissionObjectCandidate,
+    controlled_ped_record_indices: &[u16],
+) -> bool {
+    object.kind == OriginalMissionObjectKind::Ped
+        && controlled_ped_record_indices.contains(&object.record_index)
 }
 
 fn original_route_progress_sample(
@@ -1173,10 +1191,14 @@ fn signature_tile_color(class: u8) -> Color {
 mod tests {
     use super::{
         OriginalMapDrawPlan, OriginalMapViewport, TacticalMap, is_renderable_original_tile,
-        original_map_tile_index, original_map_tile_world_top_left, original_screen_to_tile,
+        original_map_tile_index, original_map_tile_world_top_left,
+        original_object_hidden_by_controlled_agent, original_screen_to_tile,
         original_screen_to_tile_at_z, original_tile_local_marker_world,
     };
-    use crate::engine::mission_scene::OriginalTilePoint;
+    use crate::engine::mission_scene::{
+        OriginalAnimationRefs, OriginalDrawStage, OriginalMissionObjectCandidate,
+        OriginalMissionObjectKind, OriginalTilePoint,
+    };
     use crate::engine::{
         block_texture::IndexedBlockGraphics, map_tiles::OriginalMapTiles, palette_decode::Palette,
     };
@@ -1189,6 +1211,27 @@ mod tests {
         assert!(!is_renderable_original_tile(0, &graphics));
         assert!(is_renderable_original_tile(1, &graphics));
         assert!(!is_renderable_original_tile(2, &graphics));
+    }
+
+    #[test]
+    fn hides_base_scene_peds_that_are_controlled_debug_agents() {
+        let controlled = [0, 3];
+        let controlled_ped = synthetic_object(OriginalMissionObjectKind::Ped, 0);
+        let other_ped = synthetic_object(OriginalMissionObjectKind::Ped, 4);
+        let static_object = synthetic_object(OriginalMissionObjectKind::Static, 0);
+
+        assert!(original_object_hidden_by_controlled_agent(
+            &controlled_ped,
+            &controlled
+        ));
+        assert!(!original_object_hidden_by_controlled_agent(
+            &other_ped,
+            &controlled
+        ));
+        assert!(!original_object_hidden_by_controlled_agent(
+            &static_object,
+            &controlled
+        ));
     }
 
     #[test]
@@ -1344,6 +1387,40 @@ mod tests {
             &palette,
         )
         .unwrap()
+    }
+
+    fn synthetic_object(
+        kind: OriginalMissionObjectKind,
+        record_index: u16,
+    ) -> OriginalMissionObjectCandidate {
+        OriginalMissionObjectCandidate {
+            kind,
+            record_index,
+            desc: Some(0x04),
+            state: Some(0),
+            type_value: Some(0),
+            subtype_value: Some(0),
+            orientation: Some(0),
+            tile: Some(OriginalTilePoint {
+                tile_x: 1,
+                tile_y: 1,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            }),
+            queue_tile: None,
+            animation: OriginalAnimationRefs::default(),
+            candidate_record: true,
+            candidate_draw: true,
+            draw_stage: Some(match kind {
+                OriginalMissionObjectKind::Ped => OriginalDrawStage::People,
+                OriginalMissionObjectKind::Vehicle => OriginalDrawStage::Vehicles,
+                OriginalMissionObjectKind::Static => OriginalDrawStage::Statics,
+                OriginalMissionObjectKind::Weapon => OriginalDrawStage::Weapons,
+                OriginalMissionObjectKind::Sfx => OriginalDrawStage::Sfx,
+            }),
+        }
     }
 
     fn synthetic_map_tiles(width: u32, depth: u32, height: u32) -> OriginalMapTiles {
