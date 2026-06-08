@@ -2964,9 +2964,13 @@ impl OriginalSpatialModel {
         goal: OriginalTilePoint,
         debug_enabled: bool,
     ) -> OriginalRuntimeRouteProbe {
-        let Some(start) =
-            self.nearest_route_node_same_z(start.key(), start.tile_z, ROUTE_PROBE_SEARCH_RADIUS)
-        else {
+        let start_key = start.key();
+        let mut start =
+            self.nearest_route_node_same_z(start_key, start.tile_z, ROUTE_PROBE_SEARCH_RADIUS);
+        if start.is_none() && debug_enabled {
+            start = self.nearest_route_node_any_z(start_key, ROUTE_PROBE_DEBUG_SEARCH_RADIUS)
+        }
+        let Some(start) = start else {
             return OriginalRuntimeRouteProbe::missing_start(goal);
         };
         self.route_probe_from_start(start, goal, debug_enabled)
@@ -5508,6 +5512,53 @@ mod tests {
         );
         assert!(route.path.len() > 1);
         assert!(route.panel_label().contains("demo gameplay"));
+        assert!(!route.panel_label().contains("00 00"));
+        assert!(!route.panel_label().contains("0x"));
+    }
+
+    #[test]
+    fn manual_debug_route_snaps_start_from_agent_z_to_nearby_route_surface() {
+        let decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        let map_tiles = synthetic_map_tiles(5, 5, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+
+        let route = scene.original_route_debug_probe_between(
+            super::OriginalTilePoint {
+                tile_x: 0,
+                tile_y: 0,
+                tile_z: 1,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+            super::OriginalTilePoint {
+                tile_x: 3,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+        );
+
+        assert_eq!(
+            route.status,
+            super::OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert_eq!(route.start_tile.map(|tile| tile.tile_z), Some(0));
+        assert!(route.path.len() > 1);
         assert!(!route.panel_label().contains("00 00"));
         assert!(!route.panel_label().contains("0x"));
     }
