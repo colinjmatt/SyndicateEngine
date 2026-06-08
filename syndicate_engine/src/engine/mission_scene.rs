@@ -987,7 +987,7 @@ impl OriginalMissionScene {
                 Some(OriginalDebugAgentSpawn {
                     slot: object.record_index.min(3) as u8,
                     record_index: object.record_index,
-                    tile: self.original_control_surface_tile(tile),
+                    tile,
                     sprite_ready: self.ped_render_proof.decision
                         == OriginalObjectRenderDecision::RuntimeRenderReady,
                 })
@@ -995,10 +995,11 @@ impl OriginalMissionScene {
             .take(MAX_ORIGINAL_DEBUG_AGENT_SPAWNS)
             .collect::<Vec<_>>();
         if !strict_spawns.is_empty() {
-            return strict_spawns;
+            return self.spread_original_debug_agent_spawns(strict_spawns);
         }
 
-        self.objects
+        let fallback_spawns = self
+            .objects
             .iter()
             .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
             .filter_map(|object| Some((object.record_index, object.tile?)))
@@ -1007,19 +1008,19 @@ impl OriginalMissionScene {
             .map(|(slot, (record_index, tile))| OriginalDebugAgentSpawn {
                 slot: slot as u8,
                 record_index,
-                tile: self.original_control_surface_tile(tile),
+                tile,
                 sprite_ready: self.ped_render_proof.decision
                     == OriginalObjectRenderDecision::RuntimeRenderReady,
             })
-            .collect()
+            .collect::<Vec<_>>();
+        self.spread_original_debug_agent_spawns(fallback_spawns)
     }
 
     pub fn original_control_suppressed_ped_record_indices(&self) -> Vec<u16> {
         let mut record_indices = self
-            .objects
-            .iter()
-            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
-            .map(|object| object.record_index)
+            .debug_agent_spawns()
+            .into_iter()
+            .map(|spawn| spawn.record_index)
             .collect::<Vec<_>>();
         record_indices.sort_unstable();
         record_indices.dedup();
@@ -1031,6 +1032,30 @@ impl OriginalMissionScene {
             .as_ref()
             .and_then(|model| model.original_control_surface_tile(tile))
             .unwrap_or(tile)
+    }
+
+    fn spread_original_debug_agent_spawns(
+        &self,
+        mut spawns: Vec<OriginalDebugAgentSpawn>,
+    ) -> Vec<OriginalDebugAgentSpawn> {
+        let mut occupied = BTreeSet::new();
+        for spawn in &mut spawns {
+            let tile = self.original_control_surface_tile_avoiding(spawn.tile, &occupied);
+            occupied.insert(tile.key());
+            spawn.tile = tile;
+        }
+        spawns
+    }
+
+    fn original_control_surface_tile_avoiding(
+        &self,
+        tile: OriginalTilePoint,
+        occupied: &BTreeSet<OriginalTileKey>,
+    ) -> OriginalTilePoint {
+        self.spatial_model
+            .as_ref()
+            .and_then(|model| model.original_control_surface_tile_avoiding(tile, occupied))
+            .unwrap_or_else(|| self.original_control_surface_tile(tile))
     }
 
     pub fn debug_agent_object(&self, record_index: u16) -> Option<&OriginalMissionObjectCandidate> {
@@ -2982,6 +3007,31 @@ impl OriginalSpatialModel {
             .map(OriginalTileKey::to_tile_point)
     }
 
+    fn original_control_surface_tile_avoiding(
+        &self,
+        tile: OriginalTilePoint,
+        occupied: &BTreeSet<OriginalTileKey>,
+    ) -> Option<OriginalTilePoint> {
+        self.nearest_route_node_same_z_avoiding(
+            tile.key(),
+            tile.tile_z,
+            ROUTE_PROBE_SEARCH_RADIUS,
+            occupied,
+        )
+        .or_else(|| {
+            self.nearest_route_node_any_z_avoiding(
+                tile.key(),
+                ROUTE_PROBE_DEBUG_SEARCH_RADIUS,
+                occupied,
+            )
+        })
+        .or_else(|| {
+            self.nearest_route_node_same_z(tile.key(), tile.tile_z, ROUTE_PROBE_SEARCH_RADIUS)
+        })
+        .or_else(|| self.nearest_route_node_any_z(tile.key(), ROUTE_PROBE_DEBUG_SEARCH_RADIUS))
+        .map(OriginalTileKey::to_tile_point)
+    }
+
     fn route_probe_to_tile(
         &self,
         goal: OriginalTilePoint,
@@ -3196,6 +3246,33 @@ impl OriginalSpatialModel {
         best.map(|(_, node)| node)
     }
 
+    fn nearest_route_node_same_z_avoiding(
+        &self,
+        target: OriginalTileKey,
+        z: u16,
+        max_radius: u16,
+        occupied: &BTreeSet<OriginalTileKey>,
+    ) -> Option<OriginalTileKey> {
+        if target.z == z && self.route_nodes.contains(&target) && !occupied.contains(&target) {
+            return Some(target);
+        }
+
+        let mut best = None;
+        for node in self
+            .route_nodes
+            .iter()
+            .filter(|node| node.z == z && !occupied.contains(node))
+        {
+            let distance = node.manhattan_xy(target);
+            if distance <= max_radius
+                && best.is_none_or(|(best_distance, _)| distance < best_distance)
+            {
+                best = Some((distance, *node));
+            }
+        }
+        best.map(|(_, node)| node)
+    }
+
     fn nearest_route_node_any_z(
         &self,
         target: OriginalTileKey,
@@ -3203,6 +3280,28 @@ impl OriginalSpatialModel {
     ) -> Option<OriginalTileKey> {
         let mut best = None;
         for node in &self.route_nodes {
+            let distance = node.manhattan_xyz(target);
+            if distance <= max_radius
+                && best.is_none_or(|(best_distance, _)| distance < best_distance)
+            {
+                best = Some((distance, *node));
+            }
+        }
+        best.map(|(_, node)| node)
+    }
+
+    fn nearest_route_node_any_z_avoiding(
+        &self,
+        target: OriginalTileKey,
+        max_radius: u16,
+        occupied: &BTreeSet<OriginalTileKey>,
+    ) -> Option<OriginalTileKey> {
+        let mut best = None;
+        for node in self
+            .route_nodes
+            .iter()
+            .filter(|node| !occupied.contains(node))
+        {
             let distance = node.manhattan_xyz(target);
             if distance <= max_radius
                 && best.is_none_or(|(best_distance, _)| distance < best_distance)
@@ -4927,7 +5026,7 @@ fn decode_maybe_rnc(data: &[u8]) -> Result<Vec<u8>, RncError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{collections::BTreeSet, path::Path};
 
     use super::{
         AnimationCatalog, CARS_OFFSET, OBJECT_OFFSET_PEOPLE_BASE, OBJECT_OFFSET_VEHICLES_BASE,
@@ -5575,7 +5674,7 @@ mod tests {
         assert_eq!(scene.debug_agent_spawns().len(), 4);
         assert_eq!(
             scene.original_control_suppressed_ped_record_indices(),
-            vec![0, 1, 2, 3, 4, 5]
+            vec![0, 1, 2, 3]
         );
     }
 
@@ -5618,6 +5717,48 @@ mod tests {
             scene.first_agent_spawn_tile().map(|tile| tile.tile_z),
             Some(0)
         );
+    }
+
+    #[test]
+    fn debug_agent_spawns_spread_duplicate_snapped_surface_tiles() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        for record_index in 0..4 {
+            let offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * record_index;
+            write_record(
+                &mut decoded[offset..offset + super::PEOPLE_RECORD_BYTES],
+                2,
+                2,
+                1,
+                0,
+                0,
+                0,
+                0x04,
+            );
+        }
+        let map_tiles = synthetic_map_tiles(5, 5, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+
+        let spawns = scene.debug_agent_spawns();
+        let unique_tiles = spawns
+            .iter()
+            .map(|spawn| spawn.tile.key())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(spawns.len(), 4);
+        assert_eq!(unique_tiles.len(), 4);
+        assert!(spawns.iter().all(|spawn| spawn.tile.tile_z == 0));
     }
 
     #[test]
