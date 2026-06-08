@@ -82,6 +82,18 @@ const ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS: f32 = 0.35;
 const ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS: f32 = 1.25;
 const ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT: usize = 3;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
+const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
+const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
+const ORIGINAL_FORMATION_OFFSETS: [(i16, i16); 8] = [
+    (0, 0),
+    (-1, 0),
+    (0, -1),
+    (1, 0),
+    (0, 1),
+    (-1, -1),
+    (1, -1),
+    (-1, 1),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapRenderMode {
@@ -184,6 +196,7 @@ struct OriginalHostileReactionState {
     record_index: u16,
     role: OriginalCombatTargetRole,
     tile: OriginalTilePoint,
+    direction: OriginalDebugAgentDirection,
     next_fire_secs: f32,
     shots: usize,
     blocked: usize,
@@ -294,6 +307,7 @@ impl OriginalHostileReactionState {
             record_index: target.record_index,
             role: target.role,
             tile: target.tile,
+            direction: OriginalDebugAgentDirection::South,
             next_fire_secs: ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS,
             shots: 0,
             blocked: 0,
@@ -302,12 +316,17 @@ impl OriginalHostileReactionState {
 
     fn label(&self) -> String {
         format!(
-            "{} rec {} shots {} blocked {}",
+            "{} rec {} facing {} shots {} blocked {}",
             self.role.label(),
             self.record_index,
+            self.direction.short_label(),
             self.shots,
             self.blocked
         )
+    }
+
+    fn overlay_label(&self) -> String {
+        format!("ALERT {}", self.direction.short_label())
     }
 }
 
@@ -399,10 +418,12 @@ impl OriginalCombatWeaponProfile {
 struct OriginalControlTrace {
     enabled: bool,
     autopilot: bool,
+    playtest: bool,
     quit_after_frames: Option<u32>,
     frame: u32,
     elapsed: f32,
     next_emit_elapsed: f32,
+    next_playtest_elapsed: f32,
     last_signature: String,
     smoke_queued: bool,
 }
@@ -786,6 +807,12 @@ impl OriginalMissionCombatRuntime {
         self.hostile_reactions.contains_key(&record_index)
     }
 
+    fn hostile_alert_label(&self, record_index: u16) -> Option<String> {
+        self.hostile_reactions
+            .get(&record_index)
+            .map(OriginalHostileReactionState::overlay_label)
+    }
+
     fn civilian_panic_active(&self, record_index: u16) -> bool {
         self.civilian_panics.contains_key(&record_index)
     }
@@ -802,6 +829,18 @@ impl OriginalMissionCombatRuntime {
             format!("{} HP {}/{}", target.role.label(), state.hp, state.max_hp)
         };
         Some((state.tile, hp_label, false, state.defeated))
+    }
+
+    fn dropped_weapon_blocker_overlays(&self) -> Vec<OriginalLocalInteractionOverlay> {
+        self.dropped_weapon_blockers
+            .iter()
+            .take(8)
+            .map(|tile| OriginalLocalInteractionOverlay {
+                tile: *tile,
+                label: "DROP PROOF BLOCKED",
+                ready: false,
+            })
+            .collect()
     }
 
     fn mark_target_candidate(&mut self, target: OriginalCombatTargetCandidate) {
@@ -911,7 +950,11 @@ impl OriginalMissionCombatRuntime {
         label
     }
 
-    fn record_npc_reaction(&mut self, target: OriginalCombatTargetCandidate) -> Option<String> {
+    fn record_npc_reaction(
+        &mut self,
+        target: OriginalCombatTargetCandidate,
+        source_tile: Option<OriginalTilePoint>,
+    ) -> Option<String> {
         if target.role == OriginalCombatTargetRole::Civilian {
             if self
                 .peds
@@ -952,11 +995,22 @@ impl OriginalMissionCombatRuntime {
             .entry(target.record_index)
             .and_modify(|reaction| {
                 reaction.tile = target.tile;
+                if let Some(source_tile) = source_tile {
+                    reaction.direction =
+                        OriginalDebugAgentDirection::from_step(target.tile, source_tile);
+                }
                 reaction.next_fire_secs = reaction
                     .next_fire_secs
                     .min(ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS);
             })
-            .or_insert_with(|| OriginalHostileReactionState::from_target(target));
+            .or_insert_with(|| {
+                let mut reaction = OriginalHostileReactionState::from_target(target);
+                if let Some(source_tile) = source_tile {
+                    reaction.direction =
+                        OriginalDebugAgentDirection::from_step(target.tile, source_tile);
+                }
+                reaction
+            });
         let label = format!(
             "{} ped candidate {} alerted locally; return-fire remains debug-gated",
             role, target.record_index
@@ -1012,6 +1066,8 @@ impl OriginalMissionCombatRuntime {
                 original_hostile_return_fire_check(reaction.tile, target_tile, pistol, &line_probe);
             match check.status {
                 OriginalCombatShotStatus::Ready => {
+                    reaction.direction =
+                        OriginalDebugAgentDirection::from_step(reaction.tile, target_tile);
                     reaction.shots += 1;
                     reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS;
                     self.hostile_return_fire += 1;
@@ -1122,17 +1178,27 @@ enum OriginalCombatAttackResult {
 
 impl OriginalControlTrace {
     fn from_env() -> Self {
-        let autopilot = env_flag("SYNDICATE_ORIGINAL_CONTROL_SMOKE");
+        let smoke = env_flag("SYNDICATE_ORIGINAL_CONTROL_SMOKE");
+        let playtest = env_flag("SYNDICATE_ORIGINAL_CONTROL_PLAYTEST");
+        let autopilot = smoke || playtest;
         Self {
             enabled: autopilot || env_flag("SYNDICATE_ORIGINAL_CONTROL_TRACE"),
             autopilot,
+            playtest,
             quit_after_frames: std::env::var("SYNDICATE_ORIGINAL_CONTROL_QUIT_FRAMES")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .or_else(|| autopilot.then_some(240)),
+                .or_else(|| {
+                    if playtest {
+                        Some(900)
+                    } else {
+                        smoke.then_some(240)
+                    }
+                }),
             frame: 0,
             elapsed: 0.0,
             next_emit_elapsed: 0.0,
+            next_playtest_elapsed: 0.0,
             last_signature: String::new(),
             smoke_queued: false,
         }
@@ -1143,6 +1209,17 @@ impl OriginalControlTrace {
         self.elapsed += real_dt.max(0.0);
         if self.autopilot && !self.smoke_queued {
             self.smoke_queued = true;
+            return true;
+        }
+        false
+    }
+
+    fn should_step_playtest(&mut self, force: bool) -> bool {
+        if !self.playtest {
+            return false;
+        }
+        if force || self.elapsed >= self.next_playtest_elapsed {
+            self.next_playtest_elapsed = self.elapsed + ORIGINAL_CONTROL_PLAYTEST_STEP_SECS;
             return true;
         }
         false
@@ -1863,32 +1940,49 @@ impl WorldState {
         if self.original_navigation_debug_enabled {
             self.ensure_original_debug_agents();
             let append_order = append_original_route_order();
-            let selected_agents = self
-                .selected_original_debug_agent_indices()
+            let selected_indices = self.selected_original_debug_agent_indices();
+            let selected_set = selected_indices.iter().copied().collect::<BTreeSet<_>>();
+            let mut down_blocked = 0;
+            let selected_agents = selected_indices
                 .into_iter()
                 .filter_map(|idx| {
-                    self.original_debug_agents
-                        .get(idx)
-                        .map(|agent| (idx, agent.route_order_start_tile(append_order)))
+                    let agent = self.original_debug_agents.get(idx)?;
+                    if agent.is_local_down() {
+                        down_blocked += 1;
+                        return None;
+                    }
+                    Some((idx, agent.route_order_start_tile(append_order)))
                 })
                 .collect::<Vec<_>>();
             if selected_agents.is_empty() {
-                self.combat_log =
-                    "Original movement blocked: no movable original-control ped seed".to_string();
+                self.combat_log = if down_blocked > 0 {
+                    format!(
+                        "Original movement blocked: {down_blocked} selected local down-test agent(s); no movable original-control ped seed"
+                    )
+                } else {
+                    "Original movement blocked: no movable original-control ped seed".to_string()
+                };
                 self.original_route_probe = None;
                 return true;
             }
             let route_probes = {
                 let scene = self.original_mission_scene.as_ref().expect("checked above");
+                let mut occupied = self.local_route_occupied_tiles(&selected_set);
                 selected_agents
                     .into_iter()
-                    .map(|(idx, start)| {
-                        (idx, scene.original_route_debug_probe_between(start, goal))
+                    .enumerate()
+                    .map(|(formation_idx, (idx, start))| {
+                        let formation_goal =
+                            self.original_formation_goal(scene, goal, formation_idx, &mut occupied);
+                        (
+                            idx,
+                            scene.original_route_debug_probe_between(start, formation_goal),
+                        )
                     })
                     .collect::<Vec<_>>()
             };
             let mut ready = 0;
-            let mut blocked = 0;
+            let mut blocked = down_blocked;
             let mut primary_label = None;
             for (idx, route_probe) in route_probes {
                 if primary_label.is_none() || idx == self.selected_original_debug_agent {
@@ -1930,6 +2024,31 @@ impl WorldState {
             self.original_route_probe = Some(route_probe);
         }
         true
+    }
+
+    fn local_route_occupied_tiles(
+        &self,
+        selected_indices: &BTreeSet<usize>,
+    ) -> Vec<OriginalTilePoint> {
+        self.original_debug_agents
+            .iter()
+            .enumerate()
+            .filter(|(idx, agent)| !selected_indices.contains(idx) || agent.is_local_down())
+            .map(|(_, agent)| agent.current_tile())
+            .collect()
+    }
+
+    fn original_formation_goal(
+        &self,
+        scene_model: &OriginalMissionScene,
+        goal: OriginalTilePoint,
+        formation_idx: usize,
+        occupied: &mut Vec<OriginalTilePoint>,
+    ) -> OriginalTilePoint {
+        let requested = original_formation_requested_tile(goal, formation_idx);
+        let snapped = scene_model.original_control_surface_tile_avoiding_tiles(requested, occupied);
+        occupied.push(snapped);
+        snapped
     }
 
     fn try_original_interaction_probe(&mut self) -> bool {
@@ -2082,7 +2201,12 @@ impl WorldState {
 
     fn update_original_control_trace(&mut self, real_dt: f32) {
         let force_emit = self.original_control_trace.begin_frame(real_dt);
-        if force_emit {
+        if self.original_control_trace.playtest {
+            let should_step = self.original_control_trace.should_step_playtest(force_emit);
+            if should_step {
+                self.try_original_control_playtest_step("autopilot");
+            }
+        } else if force_emit {
             self.try_original_control_smoke_route("autopilot");
         }
         if self.original_control_trace.enabled {
@@ -2224,12 +2348,214 @@ impl WorldState {
         true
     }
 
+    fn try_original_control_playtest_step(&mut self, trigger: &str) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            self.combat_log =
+                "Original playtest is available only in first-mission control mode".to_string();
+            return false;
+        }
+        if self.original_mission_scene.is_none() {
+            self.combat_log =
+                "Original playtest blocked: first-mission scene model unavailable".to_string();
+            return true;
+        }
+        self.original_navigation_debug_enabled = true;
+        self.ensure_original_debug_agents();
+        self.select_all_active_original_debug_agents();
+        let objective_target = self
+            .original_mission_scene
+            .as_ref()
+            .and_then(OriginalMissionScene::current_objective_runtime_target);
+        self.original_combat_runtime
+            .ensure_objective_target(objective_target);
+        let Some(target) = objective_target.and_then(original_objective_target_candidate) else {
+            self.combat_log =
+                "Original playtest blocked: no candidate ped objective target".to_string();
+            return true;
+        };
+        if self.original_combat_runtime.objective_completed {
+            self.combat_log =
+                "Original playtest local complete: objective target is down".to_string();
+            return true;
+        }
+        if self
+            .original_debug_agents
+            .iter()
+            .any(|agent| agent.route_status == OriginalDebugAgentRouteStatus::Moving)
+        {
+            self.combat_log = format!(
+                "Original playtest {trigger}: squad closing on objective; {}",
+                self.original_combat_runtime.objective_status_label()
+            );
+            return true;
+        }
+        if self.original_any_selected_agent_ready_to_fire(target) {
+            let previous_cursor = self.original_cursor_tile;
+            self.original_cursor_tile = Some(target.tile);
+            let fired = self.try_original_combat_probe_at_cursor();
+            self.original_cursor_tile = previous_cursor.or(Some(target.tile));
+            self.combat_log = format!(
+                "Original playtest {trigger}: fired at objective; {}",
+                self.original_combat_runtime.objective_status_label()
+            );
+            return fired;
+        }
+
+        self.try_original_control_playtest_route_toward(target.tile, trigger)
+    }
+
+    fn try_original_control_playtest_route_toward(
+        &mut self,
+        target: OriginalTilePoint,
+        trigger: &str,
+    ) -> bool {
+        let goals = self.original_playtest_standoff_goals(target);
+        let previous_cursor = self.original_cursor_tile;
+        let active_selected = self
+            .selected_original_debug_agent_indices()
+            .into_iter()
+            .filter(|idx| {
+                self.original_debug_agents
+                    .get(*idx)
+                    .is_some_and(|agent| !agent.is_local_down())
+            })
+            .count()
+            .max(1);
+        let required_ready = (active_selected / 2).max(1);
+        let mut best_blocked_log = None;
+        let mut attempted = 0;
+
+        for goal in goals.iter().copied() {
+            attempted += 1;
+            self.original_cursor_tile = Some(goal);
+            let routed = self.try_original_route_probe_order();
+            let ready = self.original_selected_route_order_ready_count();
+            if ready >= required_ready {
+                self.original_cursor_tile = previous_cursor.or(Some(goal));
+                self.combat_log = format!(
+                    "Original playtest {trigger}: routed squad toward objective standoff {} ({ready}/{active_selected} agents); {}",
+                    original_tile_short_label(goal),
+                    self.combat_log
+                );
+                return routed;
+            }
+            best_blocked_log = Some(self.combat_log.clone());
+        }
+
+        self.original_cursor_tile = previous_cursor.or_else(|| goals.first().copied());
+        self.combat_log = format!(
+            "Original playtest {trigger}: objective approach blocked after {attempted} candidate standoffs; {}; {}",
+            best_blocked_log.unwrap_or_else(|| "no route candidate tested".to_string()),
+            self.original_combat_runtime.objective_status_label()
+        );
+        true
+    }
+
+    fn original_selected_route_order_ready_count(&self) -> usize {
+        self.selected_original_debug_agent_indices()
+            .into_iter()
+            .filter_map(|idx| self.original_debug_agents.get(idx))
+            .filter(|agent| {
+                !agent.is_local_down()
+                    && matches!(
+                        agent.route_status,
+                        OriginalDebugAgentRouteStatus::Queued
+                            | OriginalDebugAgentRouteStatus::Moving
+                            | OriginalDebugAgentRouteStatus::Arrived
+                    )
+                    && agent.route.len() > 1
+            })
+            .count()
+    }
+
+    fn select_all_active_original_debug_agents(&mut self) {
+        let mut primary = None;
+        for (idx, agent) in self.original_debug_agents.iter_mut().enumerate() {
+            agent.selected = !agent.is_local_down();
+            if agent.selected && primary.is_none() {
+                primary = Some(idx);
+            }
+        }
+        if let Some(primary) = primary {
+            self.selected_original_debug_agent = primary;
+        }
+        self.ensure_original_debug_agent_selection();
+    }
+
+    fn original_any_selected_agent_ready_to_fire(
+        &self,
+        target: OriginalCombatTargetCandidate,
+    ) -> bool {
+        let Some(scene_model) = self.original_mission_scene.as_ref() else {
+            return false;
+        };
+        self.selected_original_debug_agent_indices()
+            .into_iter()
+            .filter_map(|idx| self.original_debug_agents.get(idx))
+            .filter(|agent| !agent.is_local_down())
+            .any(|agent| {
+                let agent_tile = agent.current_tile();
+                let line_probe =
+                    scene_model.original_combat_line_probe_between(agent_tile, target.tile);
+                original_combat_shot_check(
+                    agent_tile,
+                    target.tile,
+                    self.original_combat_runtime.ped_state(target.record_index),
+                    agent.can_fire(),
+                    agent.selected_weapon(),
+                    &line_probe,
+                )
+                .status
+                    == OriginalCombatShotStatus::Ready
+            })
+    }
+
+    fn original_playtest_standoff_goal(&self, target: OriginalTilePoint) -> OriginalTilePoint {
+        let anchor = self
+            .original_debug_agents
+            .iter()
+            .find(|agent| agent.selected && !agent.is_local_down())
+            .or_else(|| {
+                self.original_debug_agents
+                    .iter()
+                    .find(|agent| !agent.is_local_down())
+            })
+            .map(OriginalDebugAgent::current_tile)
+            .unwrap_or(target);
+        original_standoff_tile_toward(target, anchor, ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS)
+    }
+
+    fn original_playtest_standoff_goals(
+        &self,
+        target: OriginalTilePoint,
+    ) -> Vec<OriginalTilePoint> {
+        original_playtest_standoff_goal_candidates(
+            target,
+            self.original_playtest_standoff_goal(target),
+        )
+    }
+
     fn original_control_trace_signature(&self) -> String {
         let route = self
             .original_route_probe
             .as_ref()
             .map(|probe| format!("route={:?}/{}nodes", probe.status, probe.path.len()))
             .unwrap_or_else(|| "route=none".to_string());
+        let mission_state = self
+            .original_combat_runtime
+            .local_mission_state_with_agents(&self.original_debug_agents)
+            .label();
+        let objective_hp = self
+            .original_combat_runtime
+            .objective_target_state()
+            .map(|state| {
+                if state.defeated {
+                    "down".to_string()
+                } else {
+                    format!("{}/{}", state.hp, state.max_hp)
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
         let agents = self
             .original_debug_agents
             .iter()
@@ -2261,9 +2587,15 @@ impl WorldState {
             .collect::<Vec<_>>()
             .join(" | ");
         format!(
-            "mode={} control={} agents={} selected={} {route} {agents}",
+            "mode={} control={} playtest={} mission={} objective_hp={} shots={} hits={} hostile_return={} agents={} selected={} {route} {agents}",
             self.render_mode.label(),
             self.original_navigation_debug_enabled,
+            self.original_control_trace.playtest,
+            mission_state,
+            objective_hp,
+            self.original_combat_runtime.shots_fired,
+            self.original_combat_runtime.hits,
+            self.original_combat_runtime.hostile_return_fire,
             self.original_debug_agents.len(),
             self.selected_original_debug_agent + 1,
         )
@@ -2425,12 +2757,19 @@ impl WorldState {
                 .civilian_panic_active(object.record_index);
             let (label, color) =
                 original_ped_candidate_role_style(object, is_target, defeated, alerted, panicked);
+            let label = if alerted && !defeated {
+                self.original_combat_runtime
+                    .hostile_alert_label(object.record_index)
+                    .unwrap_or_else(|| label.to_string())
+            } else {
+                label.to_string()
+            };
             self.map.draw_original_ped_candidate_overlay(
                 &self.camera,
                 map_tiles,
                 graphics,
                 tile,
-                label,
+                &label,
                 color,
                 defeated,
             );
@@ -2627,6 +2966,21 @@ impl WorldState {
             };
             let agent_tile = agent.current_tile();
             let agent_slot = agent.slot;
+            if agent.is_local_down() {
+                if feedback_origins.is_empty() {
+                    feedback_origins.push(agent_tile);
+                    feedback_status = Some(OriginalCombatShotStatus::Blocked);
+                }
+                primary_label.get_or_insert_with(|| {
+                    format!(
+                        "agent {} is in local down-test and cannot fire",
+                        agent_slot + 1
+                    )
+                });
+                feedback_detail.get_or_insert_with(|| "AGENT DOWN".to_string());
+                blocked += 1;
+                continue;
+            }
             let agent_can_fire = agent.can_fire();
             let weapon = agent.selected_weapon();
             let line_probe =
@@ -2654,7 +3008,7 @@ impl WorldState {
                         continue;
                     };
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
-                        agent.mark_fired(weapon.cooldown_secs);
+                        agent.mark_fired_at(target.tile, weapon.cooldown_secs);
                     }
                     let result = self
                         .original_combat_runtime
@@ -2672,7 +3026,9 @@ impl WorldState {
                         OriginalCombatAttackResult::AlreadyDown => "ALREADY DOWN".to_string(),
                     });
                     let label = self.original_combat_runtime.record_result(target, result);
-                    let reaction = self.original_combat_runtime.record_npc_reaction(target);
+                    let reaction = self
+                        .original_combat_runtime
+                        .record_npc_reaction(target, Some(agent_tile));
                     self.original_control_runtime
                         .record_combat_hit(label.clone());
                     primary_label = Some(format!(
@@ -3232,6 +3588,19 @@ impl WorldState {
                             overlay.ready,
                         );
                     }
+                    for overlay in self
+                        .original_combat_runtime
+                        .dropped_weapon_blocker_overlays()
+                    {
+                        self.map.draw_original_debug_interaction_overlay(
+                            &self.camera,
+                            map_tiles,
+                            graphics,
+                            Some(overlay.tile),
+                            overlay.label,
+                            overlay.ready,
+                        );
+                    }
                     if self.original_navigation_debug_enabled {
                         for agent in &self.original_debug_agents {
                             let object = agent
@@ -3514,6 +3883,15 @@ impl OriginalDebugAgent {
         self.weapon_cooldown = cooldown_secs.max(0.05);
     }
 
+    fn face_tile(&mut self, target: OriginalTilePoint) {
+        self.direction = OriginalDebugAgentDirection::from_step(self.current_tile(), target);
+    }
+
+    fn mark_fired_at(&mut self, target: OriginalTilePoint, cooldown_secs: f32) {
+        self.face_tile(target);
+        self.mark_fired(cooldown_secs);
+    }
+
     fn mark_under_fire(&mut self, local_damage: i32) {
         self.under_fire_remaining = ORIGINAL_CONTROL_AGENT_UNDER_FIRE_SECS;
         self.local_threat_marks = self.local_threat_marks.saturating_add(1);
@@ -3734,6 +4112,19 @@ impl OriginalDebugAgentDirection {
     fn frame_bias(self) -> u16 {
         (self.orientation_byte() / 32) as u16
     }
+
+    fn short_label(self) -> &'static str {
+        match self {
+            Self::South => "S",
+            Self::SouthEast => "SE",
+            Self::East => "E",
+            Self::NorthEast => "NE",
+            Self::North => "N",
+            Self::NorthWest => "NW",
+            Self::West => "W",
+            Self::SouthWest => "SW",
+        }
+    }
 }
 
 fn original_debug_agents_from_scene(scene_model: &OriginalMissionScene) -> Vec<OriginalDebugAgent> {
@@ -3847,6 +4238,111 @@ fn extend_original_debug_selection() -> bool {
 
 fn append_original_route_order() -> bool {
     extend_original_debug_selection()
+}
+
+fn original_formation_requested_tile(
+    goal: OriginalTilePoint,
+    formation_idx: usize,
+) -> OriginalTilePoint {
+    let (dx, dy) = ORIGINAL_FORMATION_OFFSETS
+        .get(formation_idx % ORIGINAL_FORMATION_OFFSETS.len())
+        .copied()
+        .unwrap_or((0, 0));
+    let tile_x = (goal.tile_x as i32 + dx as i32).clamp(0, u16::MAX as i32) as u16;
+    let tile_y = (goal.tile_y as i32 + dy as i32).clamp(0, u16::MAX as i32) as u16;
+    OriginalTilePoint {
+        tile_x,
+        tile_y,
+        ..goal
+    }
+}
+
+fn original_standoff_tile_toward(
+    target: OriginalTilePoint,
+    anchor: OriginalTilePoint,
+    radius: u16,
+) -> OriginalTilePoint {
+    let dx = (anchor.tile_x as i32 - target.tile_x as i32).signum();
+    let dy = (anchor.tile_y as i32 - target.tile_y as i32).signum();
+    let dx = if dx == 0 && dy == 0 { -1 } else { dx };
+    let tile_x = (target.tile_x as i32 + dx * radius as i32).clamp(0, u16::MAX as i32) as u16;
+    let tile_y = (target.tile_y as i32 + dy * radius as i32).clamp(0, u16::MAX as i32) as u16;
+    OriginalTilePoint {
+        tile_x,
+        tile_y,
+        ..target
+    }
+}
+
+fn original_playtest_standoff_goal_candidates(
+    target: OriginalTilePoint,
+    primary: OriginalTilePoint,
+) -> Vec<OriginalTilePoint> {
+    const APPROACH_OFFSETS: [(i16, i16); 9] = [
+        (0, 0),
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 1),
+    ];
+    const APPROACH_RADII: [u16; 4] = [
+        ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS,
+        ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS + 2,
+        ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS + 4,
+        ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS.saturating_sub(1),
+    ];
+
+    let mut candidates = vec![primary, target];
+    for radius in APPROACH_RADII {
+        for (dx, dy) in APPROACH_OFFSETS {
+            let tile_x =
+                (target.tile_x as i32 + dx as i32 * radius as i32).clamp(0, u16::MAX as i32) as u16;
+            let tile_y =
+                (target.tile_y as i32 + dy as i32 * radius as i32).clamp(0, u16::MAX as i32) as u16;
+            candidates.push(OriginalTilePoint {
+                tile_x,
+                tile_y,
+                ..target
+            });
+        }
+    }
+    candidates.sort_by_key(|candidate| {
+        (
+            candidate.tile_x.abs_diff(primary.tile_x) as u32
+                + candidate.tile_y.abs_diff(primary.tile_y) as u32,
+            candidate.tile_x,
+            candidate.tile_y,
+            candidate.tile_z,
+        )
+    });
+    candidates.dedup_by_key(|candidate| {
+        (
+            candidate.tile_x,
+            candidate.tile_y,
+            candidate.tile_z,
+            candidate.off_x,
+            candidate.off_y,
+        )
+    });
+    candidates
+}
+
+fn original_objective_target_candidate(
+    target: OriginalObjectiveRuntimeTarget,
+) -> Option<OriginalCombatTargetCandidate> {
+    if target.target_kind != Some(OriginalMissionObjectKind::Ped) {
+        return None;
+    }
+    Some(OriginalCombatTargetCandidate {
+        record_index: target.target_record_index?,
+        tile: target.target_tile?,
+        objective_target: true,
+        role: OriginalCombatTargetRole::Objective,
+    })
 }
 
 fn original_tile_short_label(tile: OriginalTilePoint) -> String {
@@ -4735,13 +5231,15 @@ mod tests {
     use super::{
         MapRenderMode, OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
         OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatTargetRole,
-        OriginalCombatWeaponProfile, OriginalDebugActionStatus, OriginalDebugAgent,
-        OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn,
-        OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
-        initial_render_mode, original_agent_focus_camera_offset_from_tile_size,
+        OriginalCombatWeaponProfile, OriginalControlTrace, OriginalDebugActionStatus,
+        OriginalDebugAgent, OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus,
+        OriginalDebugAgentSpawn, OriginalLocalMissionState, OriginalMissionCombatRuntime,
+        OriginalMissionControlRuntime, initial_render_mode,
+        original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
-        original_hostile_return_fire_check, original_ped_candidate_role_style,
-        range_tiles_from_freesynd_world_range,
+        original_formation_requested_tile, original_hostile_return_fire_check,
+        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
+        original_standoff_tile_toward, range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
         map_tiles::OriginalMapTiles,
@@ -5175,6 +5673,55 @@ mod tests {
     }
 
     #[test]
+    fn original_formation_and_standoff_helpers_spread_playtest_targets_without_bytes() {
+        let goal = tile(10, 10, 1);
+
+        assert_eq!(original_formation_requested_tile(goal, 0), goal);
+        assert_eq!(original_formation_requested_tile(goal, 1), tile(9, 10, 1));
+        assert_eq!(original_formation_requested_tile(goal, 2), tile(10, 9, 1));
+        assert_eq!(
+            original_formation_requested_tile(tile(0, 0, 0), 1),
+            tile(0, 0, 0)
+        );
+
+        let standoff = original_standoff_tile_toward(goal, tile(4, 12, 1), 4);
+        assert_eq!(standoff, tile(6, 14, 1));
+        assert_eq!(standoff.off_x, goal.off_x);
+        assert_eq!(standoff.off_y, goal.off_y);
+
+        let candidates = original_playtest_standoff_goal_candidates(goal, standoff);
+        assert_eq!(candidates.first().copied(), Some(standoff));
+        assert!(candidates.contains(&goal));
+        assert!(candidates.len() >= 8);
+        let unique = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.tile_x,
+                    candidate.tile_y,
+                    candidate.tile_z,
+                    candidate.off_x,
+                    candidate.off_y,
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), candidates.len());
+        let label = candidates
+            .iter()
+            .take(3)
+            .map(|candidate| {
+                format!(
+                    "{},{},{}",
+                    candidate.tile_x, candidate.tile_y, candidate.tile_z
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        assert!(!label.contains("0x"));
+        assert!(!label.contains("00 00"));
+    }
+
+    #[test]
     fn original_combat_runtime_completes_assassinate_target_locally() {
         let target_tile = tile(8, 9, 0);
         let laser = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Laser).unwrap();
@@ -5227,6 +5774,11 @@ mod tests {
         );
         assert!(runtime.panel_label().contains("objective local-complete"));
         assert!(runtime.panel_label().contains("dropped-pickup blockers 1"));
+        let dropped = runtime.dropped_weapon_blocker_overlays();
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].tile, target_tile);
+        assert_eq!(dropped[0].label, "DROP PROOF BLOCKED");
+        assert!(!dropped[0].ready);
         assert!(!runtime.panel_label().contains("0x"));
         assert!(!runtime.panel_label().contains("00 00"));
     }
@@ -5299,11 +5851,15 @@ mod tests {
         assert_eq!(overlay.0, target_tile);
         assert!(overlay.1.contains("guard"));
         let reaction = runtime
-            .record_npc_reaction(candidate)
+            .record_npc_reaction(candidate, Some(tile(9, 7, 0)))
             .expect("hostile reaction");
 
         assert!(reaction.contains("alerted locally"));
         assert!(runtime.hostile_alert_active(candidate.record_index));
+        assert_eq!(
+            runtime.hostile_alert_label(candidate.record_index),
+            Some("ALERT E".to_string())
+        );
         assert!(runtime.panel_label().contains("react 1"));
         assert!(runtime.panel_label().contains("hostiles 1 active"));
         assert!(!runtime.panel_label().contains("0x"));
@@ -5323,7 +5879,7 @@ mod tests {
 
         runtime.mark_target_candidate(candidate);
         let reaction = runtime
-            .record_npc_reaction(candidate)
+            .record_npc_reaction(candidate, Some(tile(8, 8, 0)))
             .expect("civilian panic marker");
 
         assert!(reaction.contains("panic marker"));
@@ -5427,6 +5983,50 @@ mod tests {
         assert_eq!(laser.local_damage, 32);
         assert!(pistol.cooldown_secs > uzi.cooldown_secs);
         assert!(OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Scanner).is_none());
+    }
+
+    #[test]
+    fn original_debug_agent_faces_target_and_blocks_local_down_fire() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(5, 5, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        agent.mark_fired_at(tile(8, 5, 0), 0.5);
+        assert_eq!(agent.direction, OriginalDebugAgentDirection::East);
+        assert!(!agent.can_fire());
+
+        agent.mark_under_fire(100);
+        assert!(agent.is_local_down());
+        assert!(!agent.can_fire());
+        assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Blocked);
+    }
+
+    #[test]
+    fn original_control_playtest_trace_steps_on_interval_without_asset_bytes() {
+        let mut trace = OriginalControlTrace {
+            enabled: true,
+            autopilot: true,
+            playtest: true,
+            quit_after_frames: Some(8),
+            frame: 0,
+            elapsed: 0.0,
+            next_emit_elapsed: 0.0,
+            next_playtest_elapsed: 0.0,
+            last_signature: String::new(),
+            smoke_queued: false,
+        };
+
+        assert!(trace.should_step_playtest(true));
+        assert!(!trace.should_step_playtest(false));
+        trace.elapsed = super::ORIGINAL_CONTROL_PLAYTEST_STEP_SECS + 0.01;
+        assert!(trace.should_step_playtest(false));
+        assert!(!trace.trace_line("mission=active").contains("00 00"));
+        assert!(!trace.trace_line("mission=active").contains("0x"));
     }
 
     #[test]

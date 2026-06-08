@@ -1253,7 +1253,7 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective lifecycle, persistent door/vehicle/pickup-blocker overlays, civilian panic markers, hostile return-fire pressure, and dropped-pickup blockers without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
+            "{}; {}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective lifecycle, formation-spaced route orders, facing/impact labels, persistent door/vehicle/pickup-blocker overlays, civilian panic markers, hostile return-fire pressure, automated playtest traces, and dropped-pickup blockers without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label(),
             self.weapon_loadout_probe.report_label(),
@@ -1457,6 +1457,18 @@ impl OriginalMissionScene {
             .as_ref()
             .and_then(|model| model.original_control_surface_tile_avoiding(tile, occupied))
             .unwrap_or_else(|| self.original_control_surface_tile(tile))
+    }
+
+    pub fn original_control_surface_tile_avoiding_tiles(
+        &self,
+        tile: OriginalTilePoint,
+        occupied_tiles: &[OriginalTilePoint],
+    ) -> OriginalTilePoint {
+        let occupied = occupied_tiles
+            .iter()
+            .map(|tile| tile.key())
+            .collect::<BTreeSet<_>>();
+        self.original_control_surface_tile_avoiding(tile, &occupied)
     }
 
     pub fn debug_agent_object(&self, record_index: u16) -> Option<&OriginalMissionObjectCandidate> {
