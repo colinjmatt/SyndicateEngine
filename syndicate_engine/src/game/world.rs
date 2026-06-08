@@ -81,6 +81,11 @@ const ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE: i32 = 3;
 const ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS: f32 = 0.35;
 const ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS: f32 = 1.25;
 const ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT: usize = 3;
+const ORIGINAL_CONTROL_HOSTILE_PRESSURE_SECS: f32 = 0.55;
+const ORIGINAL_CONTROL_HOSTILE_PRESSURE_RANGE: u16 = 3;
+const ORIGINAL_CONTROL_CIVILIAN_PANIC_MOVE_SECS: f32 = 0.85;
+const ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS: usize = 5;
+const ORIGINAL_CONTROL_CIVILIAN_FLEE_RADIUS: u16 = 6;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
@@ -198,8 +203,10 @@ struct OriginalHostileReactionState {
     tile: OriginalTilePoint,
     direction: OriginalDebugAgentDirection,
     next_fire_secs: f32,
+    next_pressure_secs: f32,
     shots: usize,
     blocked: usize,
+    pressure_steps: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,10 +219,14 @@ struct OriginalHostileFireEvent {
     label: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct OriginalCivilianPanicState {
     record_index: u16,
     tile: OriginalTilePoint,
+    threat_tile: Option<OriginalTilePoint>,
+    direction: OriginalDebugAgentDirection,
+    next_move_secs: f32,
+    flee_steps: usize,
     sightings: usize,
 }
 
@@ -320,24 +331,41 @@ impl OriginalHostileReactionState {
             tile: target.tile,
             direction: OriginalDebugAgentDirection::South,
             next_fire_secs: ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS,
+            next_pressure_secs: ORIGINAL_CONTROL_HOSTILE_PRESSURE_SECS,
             shots: 0,
             blocked: 0,
+            pressure_steps: 0,
         }
     }
 
     fn label(&self) -> String {
         format!(
-            "{} rec {} facing {} shots {} blocked {}",
+            "{} rec {} facing {} shots {} pressure {} blocked {}",
             self.role.label(),
             self.record_index,
             self.direction.short_label(),
             self.shots,
+            self.pressure_steps,
             self.blocked
         )
     }
 
     fn overlay_label(&self) -> String {
-        format!("ALERT {}", self.direction.short_label())
+        if self.pressure_steps > 0 {
+            format!("PRESS {}", self.direction.short_label())
+        } else {
+            format!("ALERT {}", self.direction.short_label())
+        }
+    }
+}
+
+impl OriginalCivilianPanicState {
+    fn overlay_label(&self) -> String {
+        if self.flee_steps > 0 {
+            format!("FLEE {}", self.direction.short_label())
+        } else {
+            "PANIC".to_string()
+        }
     }
 }
 
@@ -423,6 +451,25 @@ impl OriginalCombatWeaponProfile {
             self.source.label()
         )
     }
+
+    fn impact_label(self) -> &'static str {
+        match self.kind {
+            OriginalWeaponKind::Pistol
+            | OriginalWeaponKind::Uzi
+            | OriginalWeaponKind::Minigun
+            | OriginalWeaponKind::Shotgun
+            | OriginalWeaponKind::LongRange => "BULLET",
+            OriginalWeaponKind::Laser => "LASER",
+            OriginalWeaponKind::Flamer => "FLAME",
+            OriginalWeaponKind::GaussGun => "BLAST",
+            OriginalWeaponKind::Persuadatron
+            | OriginalWeaponKind::Scanner
+            | OriginalWeaponKind::MediKit
+            | OriginalWeaponKind::TimeBomb
+            | OriginalWeaponKind::AccessCard
+            | OriginalWeaponKind::EnergyShield => "EFFECT",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -430,6 +477,7 @@ struct OriginalControlTrace {
     enabled: bool,
     autopilot: bool,
     playtest: bool,
+    require_completion: bool,
     quit_after_frames: Option<u32>,
     frame: u32,
     elapsed: f32,
@@ -511,7 +559,7 @@ impl OriginalMissionControlRuntime {
                     self.opened_door_tiles.insert(tile);
                 }
                 result_label.push_str(
-                    "; local open overlay active, route blockers remain proof-gated/excluded only where supported",
+                    "; local door-open route overlay active, route blocker mutation remains proof-gated/excluded only where supported",
                 );
             }
             OriginalDebugInteractionFocus::WeaponPickupCandidate => {
@@ -590,7 +638,7 @@ impl OriginalMissionControlRuntime {
         overlays.extend(self.opened_door_tiles.iter().take(8).map(|tile| {
             OriginalLocalInteractionOverlay {
                 tile: *tile,
-                label: "LOCAL OPEN",
+                label: "DOOR OPEN LOCAL",
                 ready: true,
             }
         }));
@@ -859,6 +907,29 @@ impl OriginalMissionCombatRuntime {
         self.civilian_panics.contains_key(&record_index)
     }
 
+    fn civilian_panic_label(&self, record_index: u16) -> Option<String> {
+        self.civilian_panics
+            .get(&record_index)
+            .map(OriginalCivilianPanicState::overlay_label)
+    }
+
+    fn ped_runtime_tile(
+        &self,
+        record_index: u16,
+        fallback: OriginalTilePoint,
+    ) -> OriginalTilePoint {
+        self.hostile_reactions
+            .get(&record_index)
+            .map(|reaction| reaction.tile)
+            .or_else(|| {
+                self.civilian_panics
+                    .get(&record_index)
+                    .map(|panic| panic.tile)
+            })
+            .or_else(|| self.peds.get(&record_index).map(|state| state.tile))
+            .unwrap_or(fallback)
+    }
+
     fn combat_target_overlay(&self) -> Option<(OriginalTilePoint, String, bool, bool)> {
         if let Some(overlay) = self.objective_target_overlay() {
             return Some(overlay);
@@ -1010,11 +1081,25 @@ impl OriginalMissionCombatRuntime {
                 .entry(target.record_index)
                 .and_modify(|panic| {
                     panic.tile = target.tile;
+                    panic.threat_tile = source_tile.or(panic.threat_tile);
+                    if let Some(source_tile) = source_tile {
+                        panic.direction =
+                            OriginalDebugAgentDirection::from_step(source_tile, target.tile);
+                    }
+                    panic.next_move_secs = panic.next_move_secs.min(0.05);
                     panic.sightings += 1;
                 })
                 .or_insert(OriginalCivilianPanicState {
                     record_index: target.record_index,
                     tile: target.tile,
+                    threat_tile: source_tile,
+                    direction: source_tile
+                        .map(|source_tile| {
+                            OriginalDebugAgentDirection::from_step(source_tile, target.tile)
+                        })
+                        .unwrap_or(OriginalDebugAgentDirection::South),
+                    next_move_secs: 0.05,
+                    flee_steps: 0,
                     sightings: 1,
                 });
             let label = format!(
@@ -1044,6 +1129,7 @@ impl OriginalMissionCombatRuntime {
                 reaction.next_fire_secs = reaction
                     .next_fire_secs
                     .min(ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS);
+                reaction.next_pressure_secs = reaction.next_pressure_secs.min(0.05);
             })
             .or_insert_with(|| {
                 let mut reaction = OriginalHostileReactionState::from_target(target);
@@ -1067,7 +1153,7 @@ impl OriginalMissionCombatRuntime {
         agents: &[OriginalDebugAgent],
         scene_model: &OriginalMissionScene,
     ) -> Vec<OriginalHostileFireEvent> {
-        if agents.is_empty() || self.hostile_reactions.is_empty() {
+        if agents.is_empty() && self.civilian_panics.is_empty() {
             return Vec::new();
         }
         let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol)
@@ -1083,10 +1169,6 @@ impl OriginalMissionCombatRuntime {
             let Some(reaction) = self.hostile_reactions.get_mut(&key) else {
                 continue;
             };
-            reaction.next_fire_secs -= real_dt.max(0.0);
-            if reaction.next_fire_secs > 0.0 {
-                continue;
-            }
             let Some((target_agent_slot, target_tile)) = agents
                 .iter()
                 .filter(|agent| !agent.is_local_down())
@@ -1102,6 +1184,35 @@ impl OriginalMissionCombatRuntime {
             else {
                 continue;
             };
+            reaction.next_pressure_secs -= real_dt.max(0.0);
+            reaction.next_fire_secs -= real_dt.max(0.0);
+            if reaction.next_fire_secs > 0.0 {
+                if reaction.next_pressure_secs <= 0.0
+                    && reaction.role != OriginalCombatTargetRole::Objective
+                    && original_tile_distance(reaction.tile, target_tile)
+                        > ORIGINAL_CONTROL_HOSTILE_PRESSURE_RANGE
+                    && let Some(next_tile) =
+                        original_local_pressure_step(scene_model, reaction.tile, target_tile)
+                {
+                    reaction.direction =
+                        OriginalDebugAgentDirection::from_step(reaction.tile, next_tile);
+                    reaction.tile = next_tile;
+                    reaction.pressure_steps += 1;
+                    reaction.next_pressure_secs = ORIGINAL_CONTROL_HOSTILE_PRESSURE_SECS;
+                    if let Some(state) = self.peds.get_mut(&key)
+                        && !state.objective_target
+                    {
+                        state.tile = next_tile;
+                    }
+                    self.last_result = Some(format!(
+                        "{} ped candidate {} local pressure step {}; final AI remains gated",
+                        reaction.role.label(),
+                        reaction.record_index,
+                        original_tile_short_label(next_tile)
+                    ));
+                }
+                continue;
+            }
             let line_probe =
                 scene_model.original_combat_line_probe_between(reaction.tile, target_tile);
             let check =
@@ -1132,7 +1243,33 @@ impl OriginalMissionCombatRuntime {
                 OriginalCombatShotStatus::OutOfRange | OriginalCombatShotStatus::Blocked => {
                     reaction.blocked += 1;
                     self.hostile_reaction_blocked += 1;
-                    if reaction.blocked >= ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT {
+                    let pressure_step = if reaction.role != OriginalCombatTargetRole::Objective
+                        && original_tile_distance(reaction.tile, target_tile)
+                            > ORIGINAL_CONTROL_HOSTILE_PRESSURE_RANGE
+                    {
+                        original_local_pressure_step(scene_model, reaction.tile, target_tile)
+                    } else {
+                        None
+                    };
+                    if let Some(next_tile) = pressure_step {
+                        reaction.direction =
+                            OriginalDebugAgentDirection::from_step(reaction.tile, next_tile);
+                        reaction.tile = next_tile;
+                        reaction.pressure_steps += 1;
+                        reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS * 0.55;
+                        reaction.next_pressure_secs = ORIGINAL_CONTROL_HOSTILE_PRESSURE_SECS;
+                        if let Some(state) = self.peds.get_mut(&key)
+                            && !state.objective_target
+                        {
+                            state.tile = next_tile;
+                        }
+                        self.last_result = Some(format!(
+                            "{} ped candidate {} local pressure step after {}; final AI remains gated",
+                            reaction.role.label(),
+                            reaction.record_index,
+                            check.blocker_label
+                        ));
+                    } else if reaction.blocked >= ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT {
                         self.last_result = Some(format!(
                             "{} ped candidate {} reaction suspended after {} blocked checks by {}; local AI remains gated",
                             reaction.role.label(),
@@ -1159,7 +1296,57 @@ impl OriginalMissionCombatRuntime {
         for key in remove {
             self.hostile_reactions.remove(&key);
         }
+        self.update_civilian_panics(real_dt, scene_model);
         events
+    }
+
+    fn update_civilian_panics(&mut self, real_dt: f32, scene_model: &OriginalMissionScene) {
+        if self.civilian_panics.is_empty() {
+            return;
+        }
+        let keys = self.civilian_panics.keys().copied().collect::<Vec<_>>();
+        for key in keys {
+            if self.peds.get(&key).is_some_and(|state| state.defeated) {
+                self.civilian_panics.remove(&key);
+                continue;
+            }
+            let Some(panic) = self.civilian_panics.get_mut(&key) else {
+                continue;
+            };
+            panic.next_move_secs -= real_dt.max(0.0);
+            if panic.next_move_secs > 0.0
+                || panic.flee_steps >= ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS
+            {
+                continue;
+            }
+            let Some(threat_tile) = panic.threat_tile else {
+                panic.next_move_secs = ORIGINAL_CONTROL_CIVILIAN_PANIC_MOVE_SECS;
+                continue;
+            };
+            let goal = original_flee_goal_from_threat(
+                panic.tile,
+                threat_tile,
+                ORIGINAL_CONTROL_CIVILIAN_FLEE_RADIUS,
+            );
+            if let Some(next_tile) = original_local_pressure_step(scene_model, panic.tile, goal) {
+                panic.direction = OriginalDebugAgentDirection::from_step(panic.tile, next_tile);
+                panic.tile = next_tile;
+                panic.flee_steps += 1;
+                panic.next_move_secs = ORIGINAL_CONTROL_CIVILIAN_PANIC_MOVE_SECS;
+                if let Some(state) = self.peds.get_mut(&key)
+                    && !state.objective_target
+                {
+                    state.tile = next_tile;
+                }
+                self.last_result = Some(format!(
+                    "civilian ped candidate {} local flee marker step {}; final flee AI remains gated",
+                    panic.record_index,
+                    original_tile_short_label(next_tile)
+                ));
+            } else {
+                panic.next_move_secs = ORIGINAL_CONTROL_CIVILIAN_PANIC_MOVE_SECS;
+            }
+        }
     }
 
     fn panel_label(&self) -> String {
@@ -1227,6 +1414,7 @@ impl OriginalControlTrace {
             enabled: autopilot || env_flag("SYNDICATE_ORIGINAL_CONTROL_TRACE"),
             autopilot,
             playtest,
+            require_completion: playtest && env_flag("SYNDICATE_ORIGINAL_CONTROL_REQUIRE_COMPLETE"),
             quit_after_frames: std::env::var("SYNDICATE_ORIGINAL_CONTROL_QUIT_FRAMES")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -1661,6 +1849,7 @@ impl WorldState {
         self.update_original_debug_agents(real_dt);
         self.update_original_hostile_reactions(real_dt);
         self.update_original_combat_feedback(real_dt);
+        self.update_original_selected_agent_camera_follow(real_dt);
         self.update_original_control_trace(real_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
@@ -1722,6 +1911,9 @@ impl WorldState {
         }
         if is_key_pressed(KeyCode::J) {
             self.focus_camera_on_original_objective_target();
+        }
+        if is_key_pressed(KeyCode::R) {
+            self.reset_original_local_playtest_state();
         }
         if is_key_pressed(KeyCode::F5) {
             match self.quick_save() {
@@ -2312,12 +2504,10 @@ impl WorldState {
                 println!("{}", self.original_control_trace.trace_line(&signature));
             }
         }
-        if self.original_control_trace.playtest
-            && self
-                .original_combat_runtime
-                .local_mission_state_with_agents(&self.original_debug_agents)
-                .is_complete()
-        {
+        let mission_state = self
+            .original_combat_runtime
+            .local_mission_state_with_agents(&self.original_debug_agents);
+        if self.original_control_trace.playtest && mission_state.is_complete() {
             println!(
                 "[original-control] playtest local mission complete after {} frames; exiting",
                 self.original_control_trace.frame
@@ -2325,6 +2515,17 @@ impl WorldState {
             std::process::exit(0);
         }
         if self.original_control_trace.should_quit() {
+            if self.original_control_trace.playtest
+                && self.original_control_trace.require_completion
+                && !mission_state.is_complete()
+            {
+                println!(
+                    "[original-control] playtest verification failed after {} frames; state {}",
+                    self.original_control_trace.frame,
+                    mission_state.label()
+                );
+                std::process::exit(2);
+            }
             println!(
                 "[original-control] smoke complete after {} frames; exiting",
                 self.original_control_trace.frame
@@ -2740,10 +2941,11 @@ impl WorldState {
             .collect::<Vec<_>>()
             .join(" | ");
         format!(
-            "mode={} control={} playtest={} mission={} objective_hp={} shots={} hits={} hostile_return={} agents={} selected={} {route} {agents}",
+            "mode={} control={} playtest={} verify={} mission={} objective_hp={} shots={} hits={} hostile_return={} agents={} selected={} {route} {agents}",
             self.render_mode.label(),
             self.original_navigation_debug_enabled,
             self.original_control_trace.playtest,
+            self.original_control_trace.require_completion,
             mission_state,
             objective_hp,
             self.original_combat_runtime.shots_fired,
@@ -2897,6 +3099,9 @@ impl WorldState {
             let Some(tile) = object.tile else {
                 continue;
             };
+            let runtime_tile = self
+                .original_combat_runtime
+                .ped_runtime_tile(object.record_index, tile);
             let is_target = objective_target_record == Some(object.record_index);
             let defeated = self
                 .original_combat_runtime
@@ -2914,6 +3119,10 @@ impl WorldState {
                 self.original_combat_runtime
                     .hostile_alert_label(object.record_index)
                     .unwrap_or_else(|| label.to_string())
+            } else if panicked && !defeated {
+                self.original_combat_runtime
+                    .civilian_panic_label(object.record_index)
+                    .unwrap_or_else(|| label.to_string())
             } else {
                 label.to_string()
             };
@@ -2921,7 +3130,7 @@ impl WorldState {
                 &self.camera,
                 map_tiles,
                 graphics,
-                tile,
+                runtime_tile,
                 &label,
                 color,
                 defeated,
@@ -3071,6 +3280,61 @@ impl WorldState {
         true
     }
 
+    fn update_original_selected_agent_camera_follow(&mut self, real_dt: f32) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return false;
+        }
+        let (Some(map_tiles), Some(graphics), Some(agent)) = (
+            self.original_map_tiles.as_ref(),
+            self.original_graphics.as_ref(),
+            self.original_debug_agents
+                .get(self.selected_original_debug_agent),
+        ) else {
+            return false;
+        };
+        let should_follow = self.original_control_trace.playtest
+            || agent.route_status == OriginalDebugAgentRouteStatus::Moving
+            || agent.is_under_fire();
+        let world = original_agent_focus_world_point(map_tiles, graphics, agent.current_tile());
+        let screen = self.camera.world_to_screen(world);
+        let near_edge = original_agent_screen_needs_follow(screen, screen_width(), screen_height());
+        if !should_follow && !near_edge {
+            return false;
+        }
+        let target_offset =
+            vec2(screen_width() * 0.48, screen_height() * 0.58) - world * self.camera.zoom;
+        let t = (real_dt.max(0.0) * 4.0).clamp(0.0, 1.0);
+        self.camera.offset = self.camera.offset.lerp(target_offset, t);
+        self.clamp_original_map_camera();
+        true
+    }
+
+    fn reset_original_local_playtest_state(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            return false;
+        }
+        self.original_debug_agents = self
+            .original_mission_scene
+            .as_ref()
+            .map(original_debug_agents_from_scene)
+            .unwrap_or_default();
+        self.selected_original_debug_agent = 0;
+        self.original_control_runtime = OriginalMissionControlRuntime::default();
+        self.original_combat_runtime =
+            OriginalMissionCombatRuntime::from_scene(self.original_mission_scene.as_ref());
+        self.original_combat_feedback = None;
+        self.original_route_probe = None;
+        self.original_interaction_probe = None;
+        self.original_hover_target = None;
+        self.ensure_original_debug_agent_selection();
+        self.focus_camera_on_selected_original_agent();
+        self.combat_log =
+            "Original first-mission local state reset; source GAME data unchanged".to_string();
+        true
+    }
+
     fn try_original_combat_probe_at_cursor(&mut self) -> bool {
         if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
             || !self.original_navigation_debug_enabled
@@ -3113,6 +3377,7 @@ impl WorldState {
         let mut feedback_origins = Vec::new();
         let mut feedback_status = None;
         let mut feedback_detail: Option<String> = None;
+        let mut feedback_impact: Option<&'static str> = None;
         for idx in selected_agents.iter().copied() {
             let Some(agent) = self.original_debug_agents.get(idx) else {
                 continue;
@@ -3163,6 +3428,7 @@ impl WorldState {
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.mark_fired_at(target.tile, weapon.cooldown_secs);
                     }
+                    feedback_impact.get_or_insert(weapon.impact_label());
                     let result = self
                         .original_combat_runtime
                         .apply_hit(target, weapon.local_damage);
@@ -3260,7 +3526,16 @@ impl WorldState {
                 .as_deref()
                 .is_some_and(|label| label.starts_with("HIT "))
         {
-            feedback_detail = Some(format!("VOLLEY {fired} HIT"));
+            feedback_detail = Some(format!(
+                "VOLLEY {fired} {}",
+                feedback_impact.unwrap_or("HIT")
+            ));
+        } else if fired == 1
+            && feedback_detail
+                .as_deref()
+                .is_some_and(|label| label.starts_with("HIT "))
+        {
+            feedback_detail = Some(format!("{} HIT", feedback_impact.unwrap_or("SHOT")));
         }
         self.combat_log = format!(
             "Original combat local: selected {} fired {} cooldown {} out {} blocked {} down {}; {}; full blocker/AI/mission semantics gated",
@@ -3326,13 +3601,16 @@ impl WorldState {
             })
             .filter_map(|object| {
                 let tile = object.tile?;
+                let runtime_tile = self
+                    .original_combat_runtime
+                    .ped_runtime_tile(object.record_index, tile);
                 let objective_target = objective_target.is_some_and(|target| {
                     target.target_kind == Some(OriginalMissionObjectKind::Ped)
                         && target.target_record_index == Some(object.record_index)
                 });
                 Some((
                     object.record_index,
-                    tile,
+                    runtime_tile,
                     OriginalCombatTargetRole::from_ped_object(object, objective_target),
                     objective_target,
                 ))
@@ -4366,6 +4644,15 @@ fn original_agent_focus_world_point_from_tile_size(
     ) + vec2(tile_width * 0.5, tile_height * 2.0 / 3.0)
 }
 
+fn original_agent_screen_needs_follow(screen: Vec2, width: f32, height: f32) -> bool {
+    let margin_x = (width * 0.18).clamp(96.0, 220.0);
+    let margin_y = (height * 0.18).clamp(72.0, 180.0);
+    screen.x < margin_x
+        || screen.x > width - margin_x
+        || screen.y < margin_y
+        || screen.y > height - margin_y
+}
+
 fn initial_render_mode(
     original_map_loaded: bool,
     original_scene_loaded: bool,
@@ -4563,6 +4850,34 @@ fn range_tiles_from_freesynd_world_range(range_world: u16) -> u16 {
 fn original_tile_near(a: OriginalTilePoint, b: OriginalTilePoint, xy: u16, z: u16) -> bool {
     a.tile_x.abs_diff(b.tile_x) + a.tile_y.abs_diff(b.tile_y) <= xy
         && a.tile_z.abs_diff(b.tile_z) <= z
+}
+
+fn original_local_pressure_step(
+    scene_model: &OriginalMissionScene,
+    start: OriginalTilePoint,
+    goal: OriginalTilePoint,
+) -> Option<OriginalTilePoint> {
+    let route = scene_model.original_route_debug_probe_between(start, goal);
+    (route.status == OriginalRuntimeRouteStatus::CandidateRouteReady)
+        .then(|| route.path.get(1).copied())
+        .flatten()
+}
+
+fn original_flee_goal_from_threat(
+    origin: OriginalTilePoint,
+    threat: OriginalTilePoint,
+    radius: u16,
+) -> OriginalTilePoint {
+    let dx = (origin.tile_x as i32 - threat.tile_x as i32).signum();
+    let dy = (origin.tile_y as i32 - threat.tile_y as i32).signum();
+    let dx = if dx == 0 && dy == 0 { 1 } else { dx };
+    let tile_x = (origin.tile_x as i32 + dx * radius as i32).clamp(0, u16::MAX as i32) as u16;
+    let tile_y = (origin.tile_y as i32 + dy * radius as i32).clamp(0, u16::MAX as i32) as u16;
+    OriginalTilePoint {
+        tile_x,
+        tile_y,
+        ..origin
+    }
 }
 
 fn original_combat_shot_check(
@@ -5440,7 +5755,8 @@ mod tests {
         OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
         OriginalPlaytestFirePosture, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
-        original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
+        original_agent_focus_world_point_from_tile_size, original_agent_screen_needs_follow,
+        original_combat_shot_check, original_flee_goal_from_threat,
         original_formation_goal_candidates, original_formation_requested_tile,
         original_hostile_return_fire_check, original_ped_candidate_role_style,
         original_playtest_standoff_goal_candidates, original_standoff_tile_toward,
@@ -5894,7 +6210,7 @@ mod tests {
         assert!(
             overlays
                 .iter()
-                .any(|overlay| overlay.label == "LOCAL OPEN" && overlay.ready)
+                .any(|overlay| overlay.label == "DOOR OPEN LOCAL" && overlay.ready)
         );
         assert!(
             overlays
@@ -6139,6 +6455,41 @@ mod tests {
     }
 
     #[test]
+    fn original_combat_runtime_tracks_local_hostile_pressure_overlay_tile() {
+        let start_tile = tile(6, 7, 0);
+        let pressure_tile = tile(5, 7, 0);
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        let candidate = OriginalCombatTargetCandidate {
+            record_index: 9,
+            tile: start_tile,
+            objective_target: false,
+            role: OriginalCombatTargetRole::Guard,
+        };
+
+        runtime.mark_target_candidate(candidate);
+        runtime.record_npc_reaction(candidate, Some(tile(9, 7, 0)));
+        let reaction = runtime
+            .hostile_reactions
+            .get_mut(&candidate.record_index)
+            .expect("hostile reaction");
+        reaction.tile = pressure_tile;
+        reaction.pressure_steps = 2;
+        reaction.direction = OriginalDebugAgentDirection::West;
+
+        assert_eq!(
+            runtime.ped_runtime_tile(candidate.record_index, start_tile),
+            pressure_tile
+        );
+        assert_eq!(
+            runtime.hostile_alert_label(candidate.record_index),
+            Some("PRESS W".to_string())
+        );
+        assert!(runtime.panel_label().contains("pressure 2"));
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
+    }
+
+    #[test]
     fn original_combat_runtime_marks_civilian_panic_without_hostile_ai_claims() {
         let target_tile = tile(7, 8, 0);
         let mut runtime = OriginalMissionCombatRuntime::default();
@@ -6159,6 +6510,42 @@ mod tests {
         assert!(runtime.civilian_panic_active(candidate.record_index));
         assert!(!runtime.hostile_alert_active(candidate.record_index));
         assert!(runtime.panel_label().contains("civilian panic 1"));
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
+    }
+
+    #[test]
+    fn original_combat_runtime_tracks_civilian_flee_marker_without_ai_claims() {
+        let start_tile = tile(7, 8, 0);
+        let flee_tile = tile(6, 8, 0);
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        let candidate = OriginalCombatTargetCandidate {
+            record_index: 11,
+            tile: start_tile,
+            objective_target: false,
+            role: OriginalCombatTargetRole::Civilian,
+        };
+
+        runtime.mark_target_candidate(candidate);
+        runtime.record_npc_reaction(candidate, Some(tile(8, 8, 0)));
+        let panic = runtime
+            .civilian_panics
+            .get_mut(&candidate.record_index)
+            .expect("civilian panic");
+        panic.tile = flee_tile;
+        panic.flee_steps = 1;
+        panic.direction = OriginalDebugAgentDirection::West;
+
+        assert_eq!(
+            runtime.ped_runtime_tile(candidate.record_index, start_tile),
+            flee_tile
+        );
+        assert_eq!(
+            runtime.civilian_panic_label(candidate.record_index),
+            Some("FLEE W".to_string())
+        );
+        let goal = original_flee_goal_from_threat(start_tile, tile(8, 8, 0), 6);
+        assert_eq!(goal, tile(1, 8, 0));
         assert!(!runtime.panel_label().contains("0x"));
         assert!(!runtime.panel_label().contains("00 00"));
     }
@@ -6284,6 +6671,7 @@ mod tests {
             enabled: true,
             autopilot: true,
             playtest: true,
+            require_completion: true,
             quit_after_frames: Some(8),
             frame: 0,
             elapsed: 0.0,
@@ -6299,6 +6687,7 @@ mod tests {
         assert!(trace.should_step_playtest(false));
         assert!(!trace.trace_line("mission=active").contains("00 00"));
         assert!(!trace.trace_line("mission=active").contains("0x"));
+        assert!(trace.require_completion);
     }
 
     #[test]
@@ -6365,6 +6754,40 @@ mod tests {
             OriginalCombatShotStatus::HostileReturn,
         );
         assert_eq!(hostile_return.label(), "RETURN");
+    }
+
+    #[test]
+    fn original_weapon_impact_labels_stay_local_and_non_reconstructable() {
+        let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
+        let laser = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Laser).unwrap();
+        let flamer = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Flamer).unwrap();
+        let gauss = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::GaussGun).unwrap();
+
+        assert_eq!(pistol.impact_label(), "BULLET");
+        assert_eq!(laser.impact_label(), "LASER");
+        assert_eq!(flamer.impact_label(), "FLAME");
+        assert_eq!(gauss.impact_label(), "BLAST");
+        assert!(!pistol.panel_label().contains("0x"));
+        assert!(!pistol.panel_label().contains("00 00"));
+    }
+
+    #[test]
+    fn original_camera_follow_helper_keeps_agent_inside_playable_margin() {
+        assert!(original_agent_screen_needs_follow(
+            macroquad::prelude::vec2(40.0, 360.0),
+            1280.0,
+            720.0
+        ));
+        assert!(original_agent_screen_needs_follow(
+            macroquad::prelude::vec2(640.0, 695.0),
+            1280.0,
+            720.0
+        ));
+        assert!(!original_agent_screen_needs_follow(
+            macroquad::prelude::vec2(640.0, 360.0),
+            1280.0,
+            720.0
+        ));
     }
 
     #[test]
