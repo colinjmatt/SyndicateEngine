@@ -653,7 +653,7 @@ impl TacticalMap {
         selected: bool,
         label: &str,
         animation_frame: u16,
-        under_fire: bool,
+        combat_status_label: Option<&str>,
     ) {
         let tile_width = graphics.bank().record_width as f32;
         let tile_height = graphics.bank().record_height as f32;
@@ -733,20 +733,19 @@ impl TacticalMap {
         if selected {
             draw_text(label, p.x + 10.0, p.y - 12.0, 12.0, color);
         }
-        if under_fire {
-            draw_circle_lines(
-                p.x,
-                p.y,
-                radius + 7.0,
-                2.0,
-                Color::new(1.0, 0.05, 0.1, 0.86),
-            );
+        if let Some(combat_status_label) = combat_status_label {
+            let warning_color = if combat_status_label == "LOCAL DOWN" {
+                Color::new(0.78, 0.78, 0.84, 0.86)
+            } else {
+                Color::new(1.0, 0.05, 0.1, 0.86)
+            };
+            draw_circle_lines(p.x, p.y, radius + 7.0, 2.0, warning_color);
             draw_text(
-                "UNDER FIRE",
+                combat_status_label,
                 p.x + 10.0,
                 p.y + 22.0,
                 11.0,
-                Color::new(1.0, 0.1, 0.1, 0.88),
+                warning_color,
             );
         }
     }
@@ -896,6 +895,24 @@ impl TacticalMap {
         let pulse = 15.0 + (1.0 - alpha) * 10.0;
         draw_circle_lines(target.x, target.y, pulse, 2.2, color);
         draw_text(label, target.x + 12.0, target.y + 18.0, 11.0, color);
+    }
+
+    pub fn draw_original_mission_status_overlay(&self, label: &str, complete: bool) {
+        let font_size = 18.0;
+        let measured = measure_text(label, None, font_size as u16, 1.0);
+        let width = (measured.width + 34.0)
+            .min(screen_width() - 48.0)
+            .max(260.0);
+        let x = (screen_width() - width) * 0.5;
+        let y = 22.0;
+        let color = if complete {
+            Color::new(0.2, 1.0, 0.24, 0.92)
+        } else {
+            Color::new(1.0, 0.82, 0.08, 0.88)
+        };
+        draw_rectangle(x, y, width, 38.0, Color::new(0.0, 0.0, 0.0, 0.68));
+        draw_rectangle_lines(x, y, width, 38.0, 2.0, color);
+        draw_text(label, x + 16.0, y + 25.0, font_size, color);
     }
 }
 

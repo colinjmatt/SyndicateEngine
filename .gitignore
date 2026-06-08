@@ -1,6 +1,7 @@
 original_assets/
 visual_diagnostics/
 freesynd_docs/
+saves/
 .DS_Store
 /target/
 syndicate_engine/target/

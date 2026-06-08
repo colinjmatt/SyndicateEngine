@@ -112,7 +112,7 @@ pub fn draw_hud(asset_index: &AssetIndex, selected: &str, order: &str, combat: &
         SKYBLUE,
     );
     draw_text(
-        "WASD/Arrows pan | Wheel zoom | M views | G control | Shift+click queue | E action | F focus | N/P | Esc",
+        "WASD/Arrows pan | Wheel zoom | M views | G control | Shift+click queue | E action | F agent | J objective | Q weapon | Esc",
         28.0,
         352.0,
         15.0,

@@ -1253,12 +1253,24 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
+            "{}; {}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label(),
             self.weapon_loadout_probe.report_label(),
-            self.combat_line_probe_report_label()
+            self.combat_line_probe_report_label(),
+            self.pickup_debug_status_label()
         )
+    }
+
+    pub fn pickup_debug_status_label(&self) -> String {
+        if self.interaction_probe.weapon_pickup_candidates == 0 {
+            "pickup debug: no queued ground-weapon candidate buckets; local inventory mutation blocked".to_string()
+        } else {
+            format!(
+                "pickup debug: {} candidate ground-weapon buckets; local inventory mutation remains proof-gated",
+                self.interaction_probe.weapon_pickup_candidates
+            )
+        }
     }
 
     fn combat_line_probe_report_label(&self) -> String {
@@ -7044,6 +7056,18 @@ mod tests {
                 .report_label()
                 .contains("candidate-only")
         );
+        assert!(
+            scene
+                .pickup_debug_status_label()
+                .contains("local inventory mutation remains proof-gated")
+        );
+        assert!(
+            scene
+                .interaction_objective_report_label()
+                .contains("pickup debug")
+        );
+        assert!(!scene.pickup_debug_status_label().contains("00 00"));
+        assert!(!scene.pickup_debug_status_label().contains("0x"));
         assert!(!scene.interaction_probe.report_label().contains("00 00"));
         assert!(!scene.interaction_probe.report_label().contains("0x"));
     }

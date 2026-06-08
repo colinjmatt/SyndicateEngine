@@ -76,8 +76,11 @@ const ORIGINAL_CONTROL_SHOOT_REACTION_SECS: f32 = 0.20;
 const ORIGINAL_CONTROL_TARGET_HP: i32 = 50;
 const ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS: f32 = 0.58;
 const ORIGINAL_CONTROL_AGENT_UNDER_FIRE_SECS: f32 = 0.90;
+const ORIGINAL_CONTROL_AGENT_LOCAL_HP: i32 = 24;
+const ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE: i32 = 3;
 const ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS: f32 = 0.35;
 const ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS: f32 = 1.25;
+const ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT: usize = 3;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +112,9 @@ struct OriginalDebugAgent {
     selected_weapon_index: usize,
     under_fire_remaining: f32,
     local_threat_marks: u16,
+    local_hp: i32,
+    local_max_hp: i32,
+    local_down_test: bool,
     interaction_intent: Option<OriginalDebugInteractionIntent>,
     action_state: Option<OriginalDebugActionState>,
 }
@@ -181,6 +187,7 @@ struct OriginalHostileFireEvent {
     target: OriginalTilePoint,
     target_agent_slot: u8,
     status: OriginalCombatShotStatus,
+    local_damage: i32,
     label: String,
 }
 
@@ -580,6 +587,58 @@ impl OriginalMissionCombatRuntime {
         ))
     }
 
+    fn objective_status_label(&self) -> String {
+        let Some(target) = self.objective_target else {
+            return "objective local status: no candidate objective target".to_string();
+        };
+        let record = target
+            .target_record_index
+            .map(|idx| idx.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let target_label = format!(
+            "{} {} rec {}",
+            target.objective_kind_label, target.target_bucket_label, record
+        );
+        match self.objective_target_state() {
+            Some(_state) if self.objective_completed => format!(
+                "LOCAL MISSION COMPLETE: {target_label} down; debug-gated local objective state"
+            ),
+            Some(state) if state.defeated => {
+                format!("objective local status: {target_label} down; completion gate pending")
+            }
+            Some(state) => format!(
+                "objective local status: {target_label} HP {}/{}; target live",
+                state.hp, state.max_hp
+            ),
+            None => format!("objective local status: {target_label}; target state pending"),
+        }
+    }
+
+    fn mission_status_overlay(&self) -> Option<(String, bool)> {
+        let target = self.objective_target?;
+        let label = match self.objective_target_state() {
+            Some(_state) if self.objective_completed => format!(
+                "LOCAL MISSION COMPLETE - {} target down",
+                target.objective_kind_label
+            ),
+            Some(state) if state.defeated => {
+                "OBJECTIVE TARGET DOWN - local completion gate pending".to_string()
+            }
+            Some(state) => format!(
+                "OBJECTIVE {} TARGET HP {}/{} - press J to focus",
+                target.objective_kind_label.to_ascii_uppercase(),
+                state.hp,
+                state.max_hp
+            ),
+            None => "OBJECTIVE TARGET STATE PENDING - press J to focus".to_string(),
+        };
+        Some((label, self.objective_completed))
+    }
+
+    fn hostile_alert_active(&self, record_index: u16) -> bool {
+        self.hostile_reactions.contains_key(&record_index)
+    }
+
     fn combat_target_overlay(&self) -> Option<(OriginalTilePoint, String, bool, bool)> {
         if let Some(overlay) = self.objective_target_overlay() {
             return Some(overlay);
@@ -755,6 +814,7 @@ impl OriginalMissionCombatRuntime {
             }
             let Some((target_agent_slot, target_tile)) = agents
                 .iter()
+                .filter(|agent| !agent.is_local_down())
                 .map(|agent| {
                     (
                         agent.slot,
@@ -788,19 +848,31 @@ impl OriginalMissionCombatRuntime {
                         target: target_tile,
                         target_agent_slot,
                         status: OriginalCombatShotStatus::HostileReturn,
+                        local_damage: ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE,
                         label,
                     });
                 }
                 OriginalCombatShotStatus::OutOfRange | OriginalCombatShotStatus::Blocked => {
                     reaction.blocked += 1;
-                    reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS * 0.75;
                     self.hostile_reaction_blocked += 1;
-                    self.last_result = Some(format!(
-                        "{} ped candidate {} reaction blocked by {}; local AI remains gated",
-                        reaction.role.label(),
-                        reaction.record_index,
-                        check.blocker_label
-                    ));
+                    if reaction.blocked >= ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT {
+                        self.last_result = Some(format!(
+                            "{} ped candidate {} reaction suspended after {} blocked checks by {}; local AI remains gated",
+                            reaction.role.label(),
+                            reaction.record_index,
+                            reaction.blocked,
+                            check.blocker_label
+                        ));
+                        remove.push(key);
+                    } else {
+                        reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS * 0.75;
+                        self.last_result = Some(format!(
+                            "{} ped candidate {} reaction blocked by {}; local AI remains gated",
+                            reaction.role.label(),
+                            reaction.record_index,
+                            check.blocker_label
+                        ));
+                    }
                 }
                 _ => {
                     reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS;
@@ -814,20 +886,7 @@ impl OriginalMissionCombatRuntime {
     }
 
     fn panel_label(&self) -> String {
-        let objective = self
-            .objective_target
-            .map(|target| {
-                format!(
-                    "{} target {} rec {}",
-                    target.objective_kind_label,
-                    target.target_bucket_label,
-                    target
-                        .target_record_index
-                        .map(|idx| idx.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                )
-            })
-            .unwrap_or_else(|| "objective target none".to_string());
+        let objective = self.objective_status_label();
         let hp = self
             .objective_target_state()
             .map(|target| {
@@ -859,7 +918,7 @@ impl OriginalMissionCombatRuntime {
             .as_deref()
             .unwrap_or("no local combat result yet");
         format!(
-            "combat local {objective} hp {hp}; shots {} hits {} down {} oor {} blocked {} react {} return {} rb {}; {progress}; {hostile}; {last}",
+            "combat local {objective}; hp {hp}; shots {} hits {} down {} oor {} blocked {} react {} return {} rb {}; {progress}; {hostile}; {last}",
             self.shots_fired,
             self.hits,
             self.defeated,
@@ -1351,6 +1410,9 @@ impl WorldState {
         if is_key_pressed(KeyCode::F) {
             self.focus_camera_on_selected_original_agent();
         }
+        if is_key_pressed(KeyCode::J) {
+            self.focus_camera_on_original_objective_target();
+        }
         if is_key_pressed(KeyCode::F5) {
             match self.quick_save() {
                 Ok(()) => self.combat_log = "Quick-saved tactical state".to_string(),
@@ -1804,7 +1866,7 @@ impl WorldState {
                 .iter_mut()
                 .find(|agent| agent.slot == event.target_agent_slot)
             {
-                agent.mark_under_fire();
+                agent.mark_under_fire(event.local_damage);
             }
             self.original_combat_feedback = Some(OriginalCombatFeedback::new(
                 vec![event.origin],
@@ -1986,12 +2048,15 @@ impl WorldState {
                     .map(|weapon| weapon.label)
                     .unwrap_or("unarmed");
                 format!(
-                    "a{}{} rec{} {} {} tile={},{},{} route={}/{}",
+                    "a{}{} rec{} {} {} hp={}/{} threat={} tile={},{},{} route={}/{}",
                     agent.slot + 1,
                     selected,
                     agent.record_index,
                     agent.route_status.label(),
                     weapon,
+                    agent.local_hp,
+                    agent.local_max_hp,
+                    agent.local_threat_marks,
                     tile.tile_x,
                     tile.tile_y,
                     tile.tile_z,
@@ -2158,7 +2223,11 @@ impl WorldState {
                 .original_combat_runtime
                 .ped_state(object.record_index)
                 .is_some_and(|state| state.defeated);
-            let (label, color) = original_ped_candidate_role_style(object, is_target, defeated);
+            let alerted = self
+                .original_combat_runtime
+                .hostile_alert_active(object.record_index);
+            let (label, color) =
+                original_ped_candidate_role_style(object, is_target, defeated, alerted);
             self.map.draw_original_ped_candidate_overlay(
                 &self.camera,
                 map_tiles,
@@ -2272,6 +2341,43 @@ impl WorldState {
         self.combat_log = format!(
             "Focused camera on original agent {}; original control active",
             slot + 1
+        );
+        true
+    }
+
+    fn focus_camera_on_original_objective_target(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            return false;
+        }
+        let objective_target = self
+            .original_mission_scene
+            .as_ref()
+            .and_then(OriginalMissionScene::current_objective_runtime_target);
+        self.original_combat_runtime
+            .ensure_objective_target(objective_target);
+        let (Some(map_tiles), Some(graphics), Some(target_state)) = (
+            self.original_map_tiles.as_ref(),
+            self.original_graphics.as_ref(),
+            self.original_combat_runtime.objective_target_state(),
+        ) else {
+            self.combat_log =
+                "Objective focus blocked: no candidate objective target is available".to_string();
+            return true;
+        };
+        let record_index = target_state.record_index;
+        let tile = target_state.tile;
+        let status = self.original_combat_runtime.objective_status_label();
+        self.camera.offset = original_agent_focus_camera_offset(
+            map_tiles,
+            graphics,
+            tile,
+            self.camera.zoom,
+            vec2(screen_width() * 0.5, screen_height() * 0.56),
+        );
+        self.clamp_original_map_camera();
+        self.combat_log = format!(
+            "Focused objective target ped candidate {}; {}; original control remains local/debug-gated",
+            record_index, status
         );
         true
     }
@@ -2870,6 +2976,12 @@ impl WorldState {
                             feedback.fade(),
                         );
                     }
+                    if let Some((status_label, complete)) =
+                        self.original_combat_runtime.mission_status_overlay()
+                    {
+                        self.map
+                            .draw_original_mission_status_overlay(&status_label, complete);
+                    }
                     self.map.draw_original_route_probe_overlay(
                         &self.camera,
                         map_tiles,
@@ -2907,7 +3019,7 @@ impl WorldState {
                                 agent.selected,
                                 &agent.map_label(),
                                 agent.animation_frame(self.original_object_animation_frame()),
-                                agent.is_under_fire(),
+                                agent.combat_overlay_label(),
                             );
                         }
                     }
@@ -3022,6 +3134,9 @@ impl OriginalDebugAgent {
             selected_weapon_index: 0,
             under_fire_remaining: 0.0,
             local_threat_marks: 0,
+            local_hp: ORIGINAL_CONTROL_AGENT_LOCAL_HP,
+            local_max_hp: ORIGINAL_CONTROL_AGENT_LOCAL_HP,
+            local_down_test: false,
             interaction_intent: None,
             action_state: None,
         }
@@ -3124,6 +3239,14 @@ impl OriginalDebugAgent {
     fn update(&mut self, real_dt: f32) -> Option<OriginalDebugActionResolution> {
         self.weapon_cooldown = (self.weapon_cooldown - real_dt.max(0.0)).max(0.0);
         self.under_fire_remaining = (self.under_fire_remaining - real_dt.max(0.0)).max(0.0);
+        if self.local_down_test {
+            self.route.clear();
+            self.route_progress = 0.0;
+            if self.route_status != OriginalDebugAgentRouteStatus::Blocked {
+                self.route_status = OriginalDebugAgentRouteStatus::Blocked;
+            }
+            return None;
+        }
         if self.route.len() >= 2 {
             self.route_status = OriginalDebugAgentRouteStatus::Moving;
             let previous_tile = self.current_tile();
@@ -3152,20 +3275,44 @@ impl OriginalDebugAgent {
     }
 
     fn can_fire(&self) -> bool {
-        self.weapon_cooldown <= 0.0
+        self.weapon_cooldown <= 0.0 && !self.local_down_test
     }
 
     fn mark_fired(&mut self, cooldown_secs: f32) {
         self.weapon_cooldown = cooldown_secs.max(0.05);
     }
 
-    fn mark_under_fire(&mut self) {
+    fn mark_under_fire(&mut self, local_damage: i32) {
         self.under_fire_remaining = ORIGINAL_CONTROL_AGENT_UNDER_FIRE_SECS;
         self.local_threat_marks = self.local_threat_marks.saturating_add(1);
+        if local_damage > 0 && !self.local_down_test {
+            self.local_hp = (self.local_hp - local_damage).max(0);
+            if self.local_hp == 0 {
+                self.local_down_test = true;
+                self.route.clear();
+                self.route_progress = 0.0;
+                self.route_status = OriginalDebugAgentRouteStatus::Blocked;
+                self.clear_interaction_intent();
+            }
+        }
     }
 
     fn is_under_fire(&self) -> bool {
         self.under_fire_remaining > 0.0
+    }
+
+    fn is_local_down(&self) -> bool {
+        self.local_down_test
+    }
+
+    fn combat_overlay_label(&self) -> Option<&'static str> {
+        if self.local_down_test {
+            Some("LOCAL DOWN")
+        } else if self.is_under_fire() {
+            Some("UNDER FIRE")
+        } else {
+            None
+        }
     }
 
     fn selected_weapon(&self) -> Option<OriginalCombatWeaponProfile> {
@@ -3244,12 +3391,17 @@ impl OriginalDebugAgent {
         } else {
             "ready".to_string()
         };
+        let health = if self.local_down_test {
+            format!("; local HP 0/{} DOWN-TEST", self.local_max_hp)
+        } else {
+            format!("; local HP {}/{}", self.local_hp, self.local_max_hp)
+        };
         let threat = if self.local_threat_marks > 0 {
             format!("; local threat marks {}", self.local_threat_marks)
         } else {
             String::new()
         };
-        format!("{}; {cooldown}{threat}", self.weapon_label())
+        format!("{}; {cooldown}{health}{threat}", self.weapon_label())
     }
 
     fn map_label(&self) -> String {
@@ -3263,11 +3415,9 @@ impl OriginalDebugAgent {
             self.slot + 1,
             self.route_status.label(),
             weapon,
-            if self.is_under_fire() {
-                " UNDER FIRE"
-            } else {
-                ""
-            },
+            self.combat_overlay_label()
+                .map(|label| format!(" {label}"))
+                .unwrap_or_default(),
             self.interaction_intent
                 .as_ref()
                 .map(|intent| format!(" {}", intent.focus.label()))
@@ -3540,12 +3690,16 @@ fn original_ped_candidate_role_style(
     object: &OriginalMissionObjectCandidate,
     objective_target: bool,
     defeated: bool,
+    alerted: bool,
 ) -> (&'static str, Color) {
     if defeated {
         return ("DOWN", Color::new(0.70, 0.70, 0.75, 0.76));
     }
     if objective_target {
         return ("TARGET", Color::new(1.0, 0.10, 0.06, 0.90));
+    }
+    if alerted {
+        return ("ALERT", Color::new(1.0, 0.24, 0.08, 0.90));
     }
     let role_value = object
         .type_value
@@ -4014,9 +4168,16 @@ fn draw_map_diagnostic_panel(
                     GRAY,
                 );
                 draw_text(
-                    &scene_model.objective_debug_probe.panel_label(),
+                    &scene_model.pickup_debug_status_label(),
                     x + 16.0,
                     y + 504.0,
+                    10.5,
+                    GRAY,
+                );
+                draw_text(
+                    &scene_model.objective_debug_probe.panel_label(),
+                    x + 16.0,
+                    y + 524.0,
                     10.5,
                     GRAY,
                 );
@@ -4025,17 +4186,6 @@ fn draw_map_diagnostic_panel(
                     .unwrap_or_else(|| "E action: gated candidate buckets only".to_string());
                 draw_text(
                     &interaction_probe_label,
-                    x + 16.0,
-                    y + 524.0,
-                    10.5,
-                    if original_navigation_debug_enabled {
-                        SKYBLUE
-                    } else {
-                        GRAY
-                    },
-                );
-                draw_text(
-                    original_control_runtime_label,
                     x + 16.0,
                     y + 544.0,
                     10.5,
@@ -4046,9 +4196,20 @@ fn draw_map_diagnostic_panel(
                     },
                 );
                 draw_text(
-                    original_combat_runtime_label,
+                    original_control_runtime_label,
                     x + 16.0,
                     y + 564.0,
+                    10.5,
+                    if original_navigation_debug_enabled {
+                        SKYBLUE
+                    } else {
+                        GRAY
+                    },
+                );
+                draw_text(
+                    original_combat_runtime_label,
+                    x + 16.0,
+                    y + 584.0,
                     10.5,
                     if original_navigation_debug_enabled {
                         ORANGE
@@ -4059,7 +4220,7 @@ fn draw_map_diagnostic_panel(
                 draw_text(
                     "original control is gated/local; demo grid remains available",
                     x + 16.0,
-                    y + 584.0,
+                    y + 604.0,
                     10.5,
                     GRAY,
                 );
@@ -4073,16 +4234,16 @@ fn draw_map_diagnostic_panel(
                 );
             }
             draw_text(
-                "Map is rendered; objects are candidate-only unless proof passes",
+                "Map and proofed objects render; final gameplay semantics remain gated",
                 x + 16.0,
-                y + 606.0,
+                y + 628.0,
                 12.0,
                 YELLOW,
             );
             draw_text(
                 "Gameplay/pathfinding remain on the demo tactical grid",
                 x + 16.0,
-                y + 624.0,
+                y + 646.0,
                 12.0,
                 GRAY,
             );
@@ -4210,7 +4371,7 @@ fn draw_map_diagnostic_panel(
 
 fn map_panel_height(mode: MapRenderMode) -> f32 {
     match mode {
-        MapRenderMode::OriginalMissionSceneProbe => 648.0,
+        MapRenderMode::OriginalMissionSceneProbe => 670.0,
         MapRenderMode::OriginalMapTiles => 292.0,
         MapRenderMode::BlockAddressability => 212.0,
         MapRenderMode::OriginalGraphicsMap | MapRenderMode::OriginalGraphicsAtlas => 204.0,
@@ -4763,6 +4924,14 @@ mod tests {
         assert_eq!(overlay.1, "down");
         assert!(overlay.2);
         assert!(overlay.3);
+        let mission_overlay = runtime.mission_status_overlay().expect("mission overlay");
+        assert!(mission_overlay.0.contains("LOCAL MISSION COMPLETE"));
+        assert!(mission_overlay.1);
+        assert!(
+            runtime
+                .objective_status_label()
+                .contains("debug-gated local objective state")
+        );
         assert!(runtime.panel_label().contains("objective local-complete"));
         assert!(!runtime.panel_label().contains("0x"));
         assert!(!runtime.panel_label().contains("00 00"));
@@ -4788,6 +4957,7 @@ mod tests {
             .expect("hostile reaction");
 
         assert!(reaction.contains("alerted locally"));
+        assert!(runtime.hostile_alert_active(candidate.record_index));
         assert!(runtime.panel_label().contains("react 1"));
         assert!(runtime.panel_label().contains("hostiles 1 active"));
         assert!(!runtime.panel_label().contains("0x"));
@@ -4891,28 +5061,32 @@ mod tests {
     #[test]
     fn original_ped_candidate_role_style_distinguishes_target_and_npc_agent() {
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0x01, 0), false, false).0,
+            original_ped_candidate_role_style(&ped_object(0x01, 0), false, false, false).0,
             "CIV"
         );
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0x02, 0), false, false).0,
+            original_ped_candidate_role_style(&ped_object(0x02, 0), false, false, false).0,
             "NPC AGENT"
         );
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0x08, 0), false, false).0,
+            original_ped_candidate_role_style(&ped_object(0x08, 0), false, false, false).0,
             "GUARD"
         );
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0, 0x10), false, false).0,
+            original_ped_candidate_role_style(&ped_object(0, 0x10), false, false, false).0,
             "CRIM"
         );
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0x02, 0), true, false).0,
+            original_ped_candidate_role_style(&ped_object(0x02, 0), true, false, false).0,
             "TARGET"
         );
         assert_eq!(
-            original_ped_candidate_role_style(&ped_object(0x02, 0), true, true).0,
+            original_ped_candidate_role_style(&ped_object(0x02, 0), true, true, true).0,
             "DOWN"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x08, 0), false, false, true).0,
+            "ALERT"
         );
     }
 
@@ -4959,8 +5133,12 @@ mod tests {
         let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
         agent.mark_fired(pistol.cooldown_secs);
         assert!(!agent.can_fire());
-        agent.mark_under_fire();
+        agent.mark_under_fire(super::ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE);
         assert!(agent.is_under_fire());
+        assert_eq!(
+            agent.local_hp,
+            super::ORIGINAL_CONTROL_AGENT_LOCAL_HP - super::ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE
+        );
         assert!(agent.weapon_status_label().contains("local threat marks 1"));
         agent.update(
             pistol
@@ -4970,6 +5148,30 @@ mod tests {
         );
         assert!(agent.can_fire());
         assert!(!agent.is_under_fire());
+    }
+
+    #[test]
+    fn original_debug_agent_tracks_local_down_test_without_asset_bytes() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+
+        for _ in 0..8 {
+            agent.mark_under_fire(super::ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE);
+        }
+
+        assert!(agent.is_local_down());
+        assert!(!agent.can_fire());
+        assert_eq!(agent.combat_overlay_label(), Some("LOCAL DOWN"));
+        assert!(agent.weapon_status_label().contains("DOWN-TEST"));
+        assert!(!agent.weapon_status_label().contains("0x"));
+        assert!(!agent.weapon_status_label().contains("00 00"));
     }
 
     #[test]
