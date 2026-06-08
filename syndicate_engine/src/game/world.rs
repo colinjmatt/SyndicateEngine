@@ -927,7 +927,7 @@ impl WorldState {
                     ready += 1;
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.clear_interaction_intent();
-                        agent.assign_route(route_probe.path, append_order);
+                        agent.assign_route_from_probe(&route_probe, append_order);
                     }
                 } else {
                     blocked += 1;
@@ -1135,7 +1135,7 @@ impl WorldState {
             let route_len = route_probe.path.len();
             if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                 agent.clear_interaction_intent();
-                agent.assign_route(route_probe.path, false);
+                agent.assign_route_from_probe(&route_probe, false);
             }
             self.combat_log = format!(
                 "Original smoke route {trigger}: agent {} queued {} nodes; demo gameplay active",
@@ -1307,10 +1307,15 @@ impl WorldState {
         {
             return Vec::new();
         }
-        self.original_debug_agents
-            .iter()
-            .map(|agent| agent.record_index)
-            .collect()
+        self.original_mission_scene
+            .as_ref()
+            .map(OriginalMissionScene::original_control_suppressed_ped_record_indices)
+            .unwrap_or_else(|| {
+                self.original_debug_agents
+                    .iter()
+                    .map(|agent| agent.record_index)
+                    .collect()
+            })
     }
 
     fn original_debug_agent_panel_label(&self) -> String {
@@ -1956,6 +1961,16 @@ impl OriginalDebugAgent {
         self.route_status = OriginalDebugAgentRouteStatus::Queued;
     }
 
+    fn assign_route_from_probe(&mut self, route_probe: &OriginalRuntimeRouteProbe, append: bool) {
+        if !append {
+            if let Some(start_tile) = route_probe.start_tile {
+                self.tile = start_tile;
+                self.route_progress = 0.0;
+            }
+        }
+        self.assign_route(route_probe.path.clone(), append);
+    }
+
     fn clear_route(&mut self) {
         self.route.clear();
         self.route_progress = 0.0;
@@ -1977,6 +1992,10 @@ impl OriginalDebugAgent {
         let action_state = OriginalDebugActionState::from_intent(&intent);
         match intent.status {
             OriginalDebugInteractionIntentStatus::RouteQueued if intent.route_path.len() > 1 => {
+                if let Some(start_tile) = intent.route_path.first().copied() {
+                    self.tile = start_tile;
+                    self.route_progress = 0.0;
+                }
                 self.assign_route(intent.route_path.clone(), false);
                 self.interaction_intent = Some(intent);
                 self.action_state = Some(action_state);
@@ -3041,8 +3060,8 @@ mod tests {
         mission_scene::{
             OriginalAnimationRefs, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
             OriginalDebugInteractionIntentStatus, OriginalDrawStage,
-            OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalRuntimeRouteStatus,
-            OriginalTilePoint,
+            OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalRouteTransitionKind,
+            OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus, OriginalTilePoint,
         },
     };
     use macroquad::prelude::*;
@@ -3083,6 +3102,36 @@ mod tests {
         assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Arrived);
         agent.clear_route();
         assert_eq!(agent.current_tile(), tile(6, 6, 0));
+    }
+
+    #[test]
+    fn debug_agent_route_probe_snaps_to_surface_without_spawn_z_stub() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(4, 5, 2),
+                sprite_ready: true,
+            },
+            true,
+        );
+        let route_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(4, 5, 1)),
+            goal_tile: Some(tile(6, 5, 1)),
+            requested_goal_tile: Some(tile(6, 5, 1)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(4, 5, 1), tile(5, 5, 1), tile(6, 5, 1)],
+            message: "synthetic route ready".to_string(),
+        };
+
+        agent.assign_route_from_probe(&route_probe, false);
+
+        assert_eq!(agent.current_tile(), tile(4, 5, 1));
+        assert_eq!(agent.route.first().copied(), Some(tile(4, 5, 1)));
+        assert!(!agent.route.contains(&tile(4, 5, 2)));
+        assert_eq!(agent.route.len(), 3);
     }
 
     #[test]

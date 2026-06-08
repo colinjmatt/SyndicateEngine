@@ -1004,6 +1004,35 @@ impl OriginalMissionScene {
             .collect()
     }
 
+    pub fn original_control_suppressed_ped_record_indices(&self) -> Vec<u16> {
+        let mut record_indices = self
+            .debug_agent_spawns()
+            .into_iter()
+            .map(|spawn| spawn.record_index)
+            .collect::<Vec<_>>();
+        record_indices.sort_unstable();
+        record_indices.dedup();
+
+        if record_indices.len() >= MAX_ORIGINAL_DEBUG_AGENT_SPAWNS {
+            if let Some(next_reserved_record) = record_indices
+                .iter()
+                .max()
+                .and_then(|idx| idx.checked_add(1))
+            {
+                let reserved_record_is_ped_candidate = self.objects.iter().any(|object| {
+                    object.kind == OriginalMissionObjectKind::Ped
+                        && object.record_index == next_reserved_record
+                        && object.candidate_draw
+                });
+                if reserved_record_is_ped_candidate {
+                    record_indices.push(next_reserved_record);
+                }
+            }
+        }
+
+        record_indices
+    }
+
     pub fn debug_agent_object(&self, record_index: u16) -> Option<&OriginalMissionObjectCandidate> {
         self.objects.iter().find(|object| {
             object.kind == OriginalMissionObjectKind::Ped
@@ -5467,6 +5496,42 @@ mod tests {
                 off_y: 0,
                 off_z: 0,
             }
+        );
+    }
+
+    #[test]
+    fn original_control_suppression_includes_reserved_spawn_ped_only() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        for record_index in 0..6 {
+            let offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * record_index;
+            write_record(
+                &mut decoded[offset..offset + super::PEOPLE_RECORD_BYTES],
+                10 + record_index as u16,
+                12,
+                1,
+                0,
+                0,
+                0,
+                0x04,
+            );
+        }
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(scene.debug_agent_spawns().len(), 4);
+        assert_eq!(
+            scene.original_control_suppressed_ped_record_indices(),
+            vec![0, 1, 2, 3, 4]
         );
     }
 
