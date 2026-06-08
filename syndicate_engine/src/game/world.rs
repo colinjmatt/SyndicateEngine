@@ -1933,6 +1933,17 @@ impl OriginalDebugAgent {
     }
 
     fn assign_route(&mut self, route: Vec<OriginalTilePoint>, append: bool) {
+        let current_tile = self.current_tile();
+        self.assign_route_from_current(route, append, current_tile);
+    }
+
+    fn assign_route_from_current(
+        &mut self,
+        route: Vec<OriginalTilePoint>,
+        append: bool,
+        current_tile: OriginalTilePoint,
+    ) {
+        let had_existing_route = !self.route.is_empty();
         let mut route = if append && !self.route.is_empty() {
             let mut appended = self.route.clone();
             appended.extend(route.into_iter().skip(1));
@@ -1940,17 +1951,13 @@ impl OriginalDebugAgent {
         } else {
             route
         };
-        if route
-            .first()
-            .is_none_or(|first| *first != self.current_tile())
-            && !append
-        {
-            route.insert(0, self.current_tile());
+        if route.first().is_none_or(|first| *first != current_tile) && !append {
+            route.insert(0, current_tile);
         }
         if let Some(next) = route.get(1).copied() {
             self.direction = OriginalDebugAgentDirection::from_step(route[0], next);
         }
-        let progress = if append && !self.route.is_empty() {
+        let progress = if append && had_existing_route {
             self.route_progress
                 .min(route.len().saturating_sub(1) as f32)
         } else {
@@ -1962,13 +1969,16 @@ impl OriginalDebugAgent {
     }
 
     fn assign_route_from_probe(&mut self, route_probe: &OriginalRuntimeRouteProbe, append: bool) {
-        if !append {
-            if let Some(start_tile) = route_probe.start_tile {
-                self.tile = start_tile;
-                self.route_progress = 0.0;
-            }
+        if append {
+            self.assign_route(route_probe.path.clone(), true);
+            return;
         }
-        self.assign_route(route_probe.path.clone(), append);
+        let start_tile = route_probe
+            .start_tile
+            .or_else(|| route_probe.path.first().copied())
+            .unwrap_or_else(|| self.current_tile());
+        self.tile = start_tile;
+        self.assign_route_from_current(route_probe.path.clone(), false, start_tile);
     }
 
     fn clear_route(&mut self) {
@@ -1994,9 +2004,10 @@ impl OriginalDebugAgent {
             OriginalDebugInteractionIntentStatus::RouteQueued if intent.route_path.len() > 1 => {
                 if let Some(start_tile) = intent.route_path.first().copied() {
                     self.tile = start_tile;
-                    self.route_progress = 0.0;
+                    self.assign_route_from_current(intent.route_path.clone(), false, start_tile);
+                } else {
+                    self.assign_route(intent.route_path.clone(), false);
                 }
-                self.assign_route(intent.route_path.clone(), false);
                 self.interaction_intent = Some(intent);
                 self.action_state = Some(action_state);
             }
@@ -3135,6 +3146,40 @@ mod tests {
     }
 
     #[test]
+    fn debug_agent_second_route_after_arrival_does_not_replay_previous_start() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        agent.assign_route(vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)], false);
+        agent.update(4.0);
+        assert_eq!(agent.current_tile(), tile(3, 1, 0));
+
+        let route_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(3, 1, 0)),
+            goal_tile: Some(tile(5, 1, 0)),
+            requested_goal_tile: Some(tile(5, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(3, 1, 0), tile(4, 1, 0), tile(5, 1, 0)],
+            message: "synthetic second route ready".to_string(),
+        };
+
+        agent.assign_route_from_probe(&route_probe, false);
+
+        assert_eq!(agent.current_tile(), tile(3, 1, 0));
+        assert_eq!(agent.route.first().copied(), Some(tile(3, 1, 0)));
+        assert!(!agent.route.contains(&tile(1, 1, 0)));
+        assert_eq!(agent.route.len(), 3);
+    }
+
+    #[test]
     fn debug_agent_applies_directional_render_state_without_mutating_scene_object() {
         let mut agent = OriginalDebugAgent::from_spawn(
             OriginalDebugAgentSpawn {
@@ -3222,6 +3267,40 @@ mod tests {
                 .contains("candidate-only")
         );
         assert_eq!(agent.render_label(), "marker-only sprite proof blocked");
+    }
+
+    #[test]
+    fn debug_agent_interaction_after_arrival_does_not_replay_previous_start() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: false,
+            },
+            true,
+        );
+        agent.assign_route(vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)], false);
+        agent.update(4.0);
+        let intent = OriginalDebugInteractionIntent {
+            status: OriginalDebugInteractionIntentStatus::RouteQueued,
+            focus: OriginalDebugInteractionFocus::DoorOpenCandidate,
+            agent_tile: Some(tile(3, 1, 0)),
+            target_tile: Some(tile(5, 1, 0)),
+            route_status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            route_nodes: 3,
+            route_path: vec![tile(3, 1, 0), tile(4, 1, 0), tile(5, 1, 0)],
+            interaction_range: 1,
+            candidate_total: 1,
+            message: "synthetic debug interaction queued".to_string(),
+        };
+
+        agent.assign_interaction_intent(intent);
+
+        assert_eq!(agent.current_tile(), tile(3, 1, 0));
+        assert_eq!(agent.route.first().copied(), Some(tile(3, 1, 0)));
+        assert!(!agent.route.contains(&tile(1, 1, 0)));
+        assert_eq!(agent.route.len(), 3);
     }
 
     #[test]
