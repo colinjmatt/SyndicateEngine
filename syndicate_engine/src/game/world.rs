@@ -219,6 +219,17 @@ struct OriginalCivilianPanicState {
     sightings: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct OriginalPlaytestFirePosture {
+    ready: usize,
+    cooling: usize,
+    viable_positions: usize,
+    out_of_range: usize,
+    blocked: usize,
+    down_or_unarmed: usize,
+    already_down: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OriginalCombatPedState {
     record_index: u16,
@@ -491,6 +502,7 @@ impl OriginalLocalMissionState {
 
 impl OriginalMissionControlRuntime {
     fn apply_resolution(&mut self, resolution: OriginalDebugActionResolution) {
+        let mut result_label = resolution.result_label;
         match resolution.focus {
             OriginalDebugInteractionFocus::DoorOpenCandidate
             | OriginalDebugInteractionFocus::LargeDoorCandidate => {
@@ -498,18 +510,27 @@ impl OriginalMissionControlRuntime {
                 if let Some(tile) = resolution.target_tile {
                     self.opened_door_tiles.insert(tile);
                 }
+                result_label.push_str(
+                    "; local open overlay active, route blockers remain proof-gated/excluded only where supported",
+                );
             }
             OriginalDebugInteractionFocus::WeaponPickupCandidate => {
                 self.weapon_pickup_resolutions += 1;
                 if let Some(tile) = resolution.target_tile {
                     self.pickup_blocked_tiles.insert(tile);
                 }
+                result_label.push_str(
+                    "; pickup remains blocked until source/drop/inventory ownership proof is available",
+                );
             }
             OriginalDebugInteractionFocus::VehicleEntryCandidate => {
                 self.vehicle_entry_resolutions += 1;
                 if let Some(tile) = resolution.target_tile {
                     self.vehicle_entry_tiles.insert(tile);
                 }
+                result_label.push_str(
+                    "; vehicle entry is a local link marker only until footprint/driver semantics are proven",
+                );
             }
             OriginalDebugInteractionFocus::ObjectiveTargetCandidate => {
                 self.objective_contact_resolutions += 1;
@@ -530,7 +551,7 @@ impl OriginalMissionControlRuntime {
         self.last_result = Some(format!(
             "agent {} {}; target {}",
             resolution.agent_slot + 1,
-            resolution.result_label,
+            result_label,
             resolution
                 .target_tile
                 .map(original_tile_short_label)
@@ -610,7 +631,7 @@ impl OriginalMissionControlRuntime {
             .as_deref()
             .unwrap_or("no local action result yet");
         format!(
-            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; {last}",
+            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; door route overlay {}, pickup proof blockers {}; {last}",
             self.door_resolutions,
             self.weapon_pickup_resolutions,
             self.vehicle_entry_resolutions,
@@ -621,7 +642,28 @@ impl OriginalMissionControlRuntime {
             self.opened_door_tiles.len(),
             self.vehicle_entry_tiles.len(),
             self.pickup_blocked_tiles.len(),
-            self.objective_contact_tiles.len()
+            self.objective_contact_tiles.len(),
+            self.opened_door_tiles.len(),
+            self.pickup_blocked_tiles.len()
+        )
+    }
+}
+
+impl OriginalPlaytestFirePosture {
+    fn should_hold_for_cooldown(self) -> bool {
+        self.ready == 0 && self.cooling > 0 && self.viable_positions > 0
+    }
+
+    fn panel_label(self) -> String {
+        format!(
+            "fire posture ready {} cooling {} viable {} out {} blocked {} down/unarmed {} already-down {}",
+            self.ready,
+            self.cooling,
+            self.viable_positions,
+            self.out_of_range,
+            self.blocked,
+            self.down_or_unarmed,
+            self.already_down
         )
     }
 }
@@ -1972,46 +2014,73 @@ impl WorldState {
                     .into_iter()
                     .enumerate()
                     .map(|(formation_idx, (idx, start))| {
-                        let formation_goal =
-                            self.original_formation_goal(scene, goal, formation_idx, &mut occupied);
-                        (
-                            idx,
-                            scene.original_route_debug_probe_between(start, formation_goal),
-                        )
+                        let (route_probe, fallback_attempts) = Self::original_formation_route_probe(
+                            scene,
+                            start,
+                            goal,
+                            formation_idx,
+                            &mut occupied,
+                        );
+                        (idx, route_probe, fallback_attempts)
                     })
                     .collect::<Vec<_>>()
             };
             let mut ready = 0;
             let mut blocked = down_blocked;
-            let mut primary_label = None;
-            for (idx, route_probe) in route_probes {
-                if primary_label.is_none() || idx == self.selected_original_debug_agent {
-                    primary_label = Some(route_probe.panel_label());
-                    self.original_route_probe = Some(route_probe.clone());
+            let mut selected_probe = None;
+            let mut first_ready_probe = None;
+            let mut first_blocked_probe = None;
+            let mut fallback_attempts_total = 0;
+            for (idx, route_probe, fallback_attempts) in route_probes {
+                fallback_attempts_total += fallback_attempts;
+                if idx == self.selected_original_debug_agent {
+                    selected_probe = Some(route_probe.clone());
                 }
                 if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
-                    && route_probe.path.len() > 1
+                    && !route_probe.path.is_empty()
                 {
                     ready += 1;
+                    if first_ready_probe.is_none() {
+                        first_ready_probe = Some(route_probe.clone());
+                    }
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.clear_interaction_intent();
                         agent.assign_route_from_probe(&route_probe, append_order);
                     }
                 } else {
                     blocked += 1;
+                    if first_blocked_probe.is_none() {
+                        first_blocked_probe = Some(route_probe.clone());
+                    }
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.clear_interaction_intent();
                         agent.block_route();
                     }
                 }
             }
+            let display_probe = selected_probe
+                .as_ref()
+                .filter(|probe| probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady)
+                .cloned()
+                .or(first_ready_probe)
+                .or(selected_probe)
+                .or(first_blocked_probe);
+            self.original_route_probe = display_probe.clone();
             let order_kind = if append_order { "queued" } else { "order" };
+            let fallback_label = if fallback_attempts_total == 0 {
+                "primary formation targets".to_string()
+            } else {
+                format!("{fallback_attempts_total} formation fallback probes")
+            };
             self.combat_log = format!(
-                "Original mission movement {order_kind}: selected {}, ready {}, blocked {}; {}; demo gameplay active",
+                "Original mission movement {order_kind}: selected {}, ready {}, blocked {}; {}; {}; demo gameplay active",
                 ready + blocked,
                 ready,
                 blocked,
-                primary_label.unwrap_or_else(|| "no route probe result".to_string())
+                fallback_label,
+                display_probe
+                    .map(|probe| probe.panel_label())
+                    .unwrap_or_else(|| "no route probe result".to_string())
             );
         } else {
             let route_probe = self
@@ -2038,17 +2107,42 @@ impl WorldState {
             .collect()
     }
 
-    fn original_formation_goal(
-        &self,
+    fn original_formation_route_probe(
         scene_model: &OriginalMissionScene,
+        start: OriginalTilePoint,
         goal: OriginalTilePoint,
         formation_idx: usize,
         occupied: &mut Vec<OriginalTilePoint>,
-    ) -> OriginalTilePoint {
-        let requested = original_formation_requested_tile(goal, formation_idx);
-        let snapped = scene_model.original_control_surface_tile_avoiding_tiles(requested, occupied);
-        occupied.push(snapped);
-        snapped
+    ) -> (OriginalRuntimeRouteProbe, usize) {
+        let mut seen = BTreeSet::new();
+        let mut first_probe = None;
+        let mut fallback_attempts = 0;
+        for requested in original_formation_goal_candidates(goal, formation_idx) {
+            let snapped =
+                scene_model.original_control_surface_tile_avoiding_tiles(requested, occupied);
+            let key = original_tile_dedupe_key(snapped);
+            if !seen.insert(key) {
+                continue;
+            }
+            let probe = scene_model.original_route_debug_probe_between(start, snapped);
+            if probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+                && !probe.path.is_empty()
+            {
+                if let Some(goal_tile) = probe.goal_tile.or_else(|| probe.path.last().copied()) {
+                    occupied.push(goal_tile);
+                }
+                return (probe, fallback_attempts);
+            }
+            if first_probe.is_none() {
+                first_probe = Some(probe);
+            }
+            fallback_attempts += 1;
+        }
+        (
+            first_probe
+                .unwrap_or_else(|| scene_model.original_route_debug_probe_between(start, goal)),
+            fallback_attempts,
+        )
     }
 
     fn try_original_interaction_probe(&mut self) -> bool {
@@ -2217,6 +2311,18 @@ impl WorldState {
             {
                 println!("{}", self.original_control_trace.trace_line(&signature));
             }
+        }
+        if self.original_control_trace.playtest
+            && self
+                .original_combat_runtime
+                .local_mission_state_with_agents(&self.original_debug_agents)
+                .is_complete()
+        {
+            println!(
+                "[original-control] playtest local mission complete after {} frames; exiting",
+                self.original_control_trace.frame
+            );
+            std::process::exit(0);
         }
         if self.original_control_trace.should_quit() {
             println!(
@@ -2389,16 +2495,26 @@ impl WorldState {
             );
             return true;
         }
-        if self.original_any_selected_agent_ready_to_fire(target) {
+        let fire_posture = self.original_selected_fire_posture(target);
+        if fire_posture.ready > 0 {
             let previous_cursor = self.original_cursor_tile;
             self.original_cursor_tile = Some(target.tile);
             let fired = self.try_original_combat_probe_at_cursor();
             self.original_cursor_tile = previous_cursor.or(Some(target.tile));
             self.combat_log = format!(
-                "Original playtest {trigger}: fired at objective; {}",
+                "Original playtest {trigger}: fired at objective; {}; {}",
+                fire_posture.panel_label(),
                 self.original_combat_runtime.objective_status_label()
             );
             return fired;
+        }
+        if fire_posture.should_hold_for_cooldown() {
+            self.combat_log = format!(
+                "Original playtest {trigger}: holding firing positions; {}; {}",
+                fire_posture.panel_label(),
+                self.original_combat_runtime.objective_status_label()
+            );
+            return true;
         }
 
         self.try_original_control_playtest_route_toward(target.tile, trigger)
@@ -2482,32 +2598,69 @@ impl WorldState {
         self.ensure_original_debug_agent_selection();
     }
 
-    fn original_any_selected_agent_ready_to_fire(
+    fn original_selected_fire_posture(
         &self,
         target: OriginalCombatTargetCandidate,
-    ) -> bool {
+    ) -> OriginalPlaytestFirePosture {
         let Some(scene_model) = self.original_mission_scene.as_ref() else {
-            return false;
+            return OriginalPlaytestFirePosture::default();
         };
-        self.selected_original_debug_agent_indices()
+        let mut posture = OriginalPlaytestFirePosture::default();
+        for agent in self
+            .selected_original_debug_agent_indices()
             .into_iter()
             .filter_map(|idx| self.original_debug_agents.get(idx))
-            .filter(|agent| !agent.is_local_down())
-            .any(|agent| {
-                let agent_tile = agent.current_tile();
-                let line_probe =
-                    scene_model.original_combat_line_probe_between(agent_tile, target.tile);
-                original_combat_shot_check(
-                    agent_tile,
-                    target.tile,
-                    self.original_combat_runtime.ped_state(target.record_index),
-                    agent.can_fire(),
-                    agent.selected_weapon(),
-                    &line_probe,
-                )
-                .status
-                    == OriginalCombatShotStatus::Ready
-            })
+        {
+            if agent.is_local_down() {
+                posture.down_or_unarmed += 1;
+                continue;
+            }
+            let agent_tile = agent.current_tile();
+            let line_probe =
+                scene_model.original_combat_line_probe_between(agent_tile, target.tile);
+            let weapon = agent.selected_weapon();
+            let check = original_combat_shot_check(
+                agent_tile,
+                target.tile,
+                self.original_combat_runtime.ped_state(target.record_index),
+                agent.can_fire(),
+                weapon,
+                &line_probe,
+            );
+            match check.status {
+                OriginalCombatShotStatus::Ready => {
+                    posture.ready += 1;
+                    posture.viable_positions += 1;
+                }
+                OriginalCombatShotStatus::Cooling => {
+                    let potential = original_combat_shot_check(
+                        agent_tile,
+                        target.tile,
+                        self.original_combat_runtime.ped_state(target.record_index),
+                        true,
+                        weapon,
+                        &line_probe,
+                    );
+                    match potential.status {
+                        OriginalCombatShotStatus::Ready => {
+                            posture.cooling += 1;
+                            posture.viable_positions += 1;
+                        }
+                        OriginalCombatShotStatus::OutOfRange => posture.out_of_range += 1,
+                        OriginalCombatShotStatus::Blocked => posture.blocked += 1,
+                        OriginalCombatShotStatus::AlreadyDown => posture.already_down += 1,
+                        OriginalCombatShotStatus::NoWeapon => posture.down_or_unarmed += 1,
+                        _ => posture.blocked += 1,
+                    }
+                }
+                OriginalCombatShotStatus::OutOfRange => posture.out_of_range += 1,
+                OriginalCombatShotStatus::Blocked => posture.blocked += 1,
+                OriginalCombatShotStatus::AlreadyDown => posture.already_down += 1,
+                OriginalCombatShotStatus::NoWeapon => posture.down_or_unarmed += 1,
+                OriginalCombatShotStatus::HostileReturn => posture.blocked += 1,
+            }
+        }
+        posture
     }
 
     fn original_playtest_standoff_goal(&self, target: OriginalTilePoint) -> OriginalTilePoint {
@@ -3101,6 +3254,13 @@ impl WorldState {
                     });
                 }
             }
+        }
+        if fired > 1
+            && feedback_detail
+                .as_deref()
+                .is_some_and(|label| label.starts_with("HIT "))
+        {
+            feedback_detail = Some(format!("VOLLEY {fired} HIT"));
         }
         self.combat_log = format!(
             "Original combat local: selected {} fired {} cooldown {} out {} blocked {} down {}; {}; full blocker/AI/mission semantics gated",
@@ -3788,6 +3948,19 @@ impl OriginalDebugAgent {
             .start_tile
             .or_else(|| route_probe.path.first().copied())
             .unwrap_or_else(|| self.current_tile());
+        if route_probe.path.len() <= 1 {
+            self.tile = route_probe
+                .goal_tile
+                .or_else(|| route_probe.path.last().copied())
+                .unwrap_or(start_tile);
+            self.route = route_probe.path.clone();
+            if self.route.is_empty() {
+                self.route.push(self.tile);
+            }
+            self.route_progress = 0.0;
+            self.route_status = OriginalDebugAgentRouteStatus::Arrived;
+            return;
+        }
         self.tile = start_tile;
         self.assign_route_from_current(route_probe.path.clone(), false, start_tile);
     }
@@ -4257,6 +4430,33 @@ fn original_formation_requested_tile(
     }
 }
 
+fn original_formation_goal_candidates(
+    goal: OriginalTilePoint,
+    formation_idx: usize,
+) -> Vec<OriginalTilePoint> {
+    const FALLBACK_RADII: [i16; 3] = [0, 1, 2];
+    let mut candidates = vec![original_formation_requested_tile(goal, formation_idx)];
+    for radius in FALLBACK_RADII {
+        for fallback_idx in 0..ORIGINAL_FORMATION_OFFSETS.len() {
+            let (dx, dy) = ORIGINAL_FORMATION_OFFSETS
+                [(formation_idx + fallback_idx) % ORIGINAL_FORMATION_OFFSETS.len()];
+            let scale = if radius == 0 { 1 } else { radius };
+            let tile_x =
+                (goal.tile_x as i32 + dx as i32 * scale as i32).clamp(0, u16::MAX as i32) as u16;
+            let tile_y =
+                (goal.tile_y as i32 + dy as i32 * scale as i32).clamp(0, u16::MAX as i32) as u16;
+            candidates.push(OriginalTilePoint {
+                tile_x,
+                tile_y,
+                ..goal
+            });
+        }
+    }
+    let mut seen = BTreeSet::new();
+    candidates.retain(|candidate| seen.insert(original_tile_dedupe_key(*candidate)));
+    candidates
+}
+
 fn original_standoff_tile_toward(
     target: OriginalTilePoint,
     anchor: OriginalTilePoint,
@@ -4319,15 +4519,8 @@ fn original_playtest_standoff_goal_candidates(
             candidate.tile_z,
         )
     });
-    candidates.dedup_by_key(|candidate| {
-        (
-            candidate.tile_x,
-            candidate.tile_y,
-            candidate.tile_z,
-            candidate.off_x,
-            candidate.off_y,
-        )
-    });
+    let mut seen = BTreeSet::new();
+    candidates.retain(|candidate| seen.insert(original_tile_dedupe_key(*candidate)));
     candidates
 }
 
@@ -4347,6 +4540,16 @@ fn original_objective_target_candidate(
 
 fn original_tile_short_label(tile: OriginalTilePoint) -> String {
     format!("{},{},{}", tile.tile_x, tile.tile_y, tile.tile_z)
+}
+
+fn original_tile_dedupe_key(tile: OriginalTilePoint) -> (u16, u16, u16, u8, u8) {
+    (
+        tile.tile_x,
+        tile.tile_y,
+        tile.tile_z,
+        tile.off_x,
+        tile.off_y,
+    )
 }
 
 fn original_tile_distance(a: OriginalTilePoint, b: OriginalTilePoint) -> u16 {
@@ -5229,17 +5432,19 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 #[cfg(test)]
 mod tests {
     use super::{
-        MapRenderMode, OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
-        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatTargetRole,
-        OriginalCombatWeaponProfile, OriginalControlTrace, OriginalDebugActionStatus,
-        OriginalDebugAgent, OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus,
-        OriginalDebugAgentSpawn, OriginalLocalMissionState, OriginalMissionCombatRuntime,
-        OriginalMissionControlRuntime, initial_render_mode,
+        MapRenderMode, ORIGINAL_FORMATION_OFFSETS, OriginalCombatAttackResult,
+        OriginalCombatFeedback, OriginalCombatPedState, OriginalCombatShotStatus,
+        OriginalCombatTargetCandidate, OriginalCombatTargetRole, OriginalCombatWeaponProfile,
+        OriginalControlTrace, OriginalDebugActionStatus, OriginalDebugAgent,
+        OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn,
+        OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
+        OriginalPlaytestFirePosture, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
-        original_formation_requested_tile, original_hostile_return_fire_check,
-        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
-        original_standoff_tile_toward, range_tiles_from_freesynd_world_range,
+        original_formation_goal_candidates, original_formation_requested_tile,
+        original_hostile_return_fire_check, original_ped_candidate_role_style,
+        original_playtest_standoff_goal_candidates, original_standoff_tile_toward,
+        range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
         map_tiles::OriginalMapTiles,
@@ -5555,6 +5760,35 @@ mod tests {
     }
 
     #[test]
+    fn original_agent_arrives_when_route_probe_is_already_at_goal() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(4, 4, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        let route_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(4, 4, 0)),
+            goal_tile: Some(tile(4, 4, 0)),
+            requested_goal_tile: Some(tile(4, 4, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(4, 4, 0)],
+            message: "synthetic already-arrived route".to_string(),
+        };
+
+        agent.assign_route_from_probe(&route_probe, false);
+
+        assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Arrived);
+        assert_eq!(agent.current_tile(), tile(4, 4, 0));
+        assert_eq!(agent.route.len(), 1);
+    }
+
+    #[test]
     fn original_agent_resolves_ready_interaction_as_local_action_state() {
         let mut agent = OriginalDebugAgent::from_spawn(
             OriginalDebugAgentSpawn {
@@ -5617,6 +5851,7 @@ mod tests {
         assert!(label.contains("pickup 1"));
         assert!(label.contains("combat probes 1"));
         assert!(label.contains("pickup-blocked 1"));
+        assert!(label.contains("pickup proof blockers 1"));
         assert!(label.contains("gated local hit state"));
         let overlays = runtime.interaction_overlays();
         assert_eq!(overlays.len(), 1);
@@ -5641,6 +5876,13 @@ mod tests {
             target_tile: Some(tile(3, 4, 0)),
             result_label: "vehicle entry candidate linked locally".to_string(),
         });
+        assert!(
+            runtime
+                .last_result
+                .as_deref()
+                .unwrap()
+                .contains("vehicle entry is a local link marker only")
+        );
         runtime.apply_resolution(super::OriginalDebugActionResolution {
             agent_slot: 2,
             focus: OriginalDebugInteractionFocus::ObjectiveTargetCandidate,
@@ -5668,6 +5910,7 @@ mod tests {
         assert!(label.contains("local state open 1"));
         assert!(label.contains("vehicle-link 1"));
         assert!(label.contains("objective-contact 1"));
+        assert!(label.contains("door route overlay 1"));
         assert!(!label.contains("0x"));
         assert!(!label.contains("00 00"));
     }
@@ -5683,6 +5926,10 @@ mod tests {
             original_formation_requested_tile(tile(0, 0, 0), 1),
             tile(0, 0, 0)
         );
+        let formation_candidates = original_formation_goal_candidates(goal, 3);
+        assert_eq!(formation_candidates.first().copied(), Some(tile(11, 10, 1)));
+        assert!(formation_candidates.contains(&goal));
+        assert!(formation_candidates.len() >= ORIGINAL_FORMATION_OFFSETS.len());
 
         let standoff = original_standoff_tile_toward(goal, tile(4, 12, 1), 4);
         assert_eq!(standoff, tile(6, 14, 1));
@@ -5719,6 +5966,31 @@ mod tests {
             .join(";");
         assert!(!label.contains("0x"));
         assert!(!label.contains("00 00"));
+    }
+
+    #[test]
+    fn original_playtest_fire_posture_holds_when_agents_are_cooling_in_viable_positions() {
+        let cooling = OriginalPlaytestFirePosture {
+            ready: 0,
+            cooling: 2,
+            viable_positions: 2,
+            out_of_range: 0,
+            blocked: 0,
+            down_or_unarmed: 0,
+            already_down: 0,
+        };
+        assert!(cooling.should_hold_for_cooldown());
+        assert!(cooling.panel_label().contains("cooling 2"));
+
+        let blocked = OriginalPlaytestFirePosture {
+            cooling: 2,
+            viable_positions: 0,
+            blocked: 2,
+            ..OriginalPlaytestFirePosture::default()
+        };
+        assert!(!blocked.should_hold_for_cooldown());
+        assert!(!blocked.panel_label().contains("0x"));
+        assert!(!blocked.panel_label().contains("00 00"));
     }
 
     #[test]
