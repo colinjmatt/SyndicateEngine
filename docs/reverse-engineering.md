@@ -42,7 +42,7 @@ These notes track observed asset-format behaviour from locally supplied original
 
 ## Reference material
 
-- FreeSynd docs may be kept locally under ignored `freesynd_docs/` for offline reference. That directory is intentionally not committed and should not contain or imply any original Syndicate asset bytes.
+- FreeSynd reference material may be kept locally under ignored `freesynd_docs/` for offline reference. The current local mirror uses `sourceforge-git/` for a SourceForge Git export of the FreeSynd source/docs and `sourceforge-wiki/` for SourceForge wiki pages and attachments. That directory is intentionally not committed and should not contain or imply any original Syndicate asset bytes.
 
 ## TAB/DAT banks
 
