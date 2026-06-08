@@ -759,6 +759,39 @@ impl TacticalMap {
         draw_circle_lines(p.x, p.y, 21.0, 1.5, color);
         draw_text(label, p.x + 12.0, p.y + 16.0, 12.0, color);
     }
+
+    pub fn draw_original_combat_target_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        target_tile: OriginalTilePoint,
+        hp_label: &str,
+        objective_complete: bool,
+        defeated: bool,
+    ) {
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let p =
+            original_tile_marker_screen(camera, map_tiles, target_tile, tile_width, tile_height);
+        let color = if objective_complete {
+            Color::new(0.15, 1.0, 0.25, 0.92)
+        } else if defeated {
+            Color::new(0.70, 0.70, 0.75, 0.82)
+        } else {
+            Color::new(1.0, 0.12, 0.08, 0.92)
+        };
+        draw_circle_lines(p.x, p.y, 13.0, 2.0, color);
+        draw_circle_lines(p.x, p.y, 19.0, 1.5, color);
+        if defeated {
+            draw_line(p.x - 10.0, p.y - 10.0, p.x + 10.0, p.y + 10.0, 2.0, color);
+            draw_line(p.x + 10.0, p.y - 10.0, p.x - 10.0, p.y + 10.0, 2.0, color);
+        } else {
+            draw_circle(p.x, p.y, 3.0, color);
+        }
+        draw_text("TARGET", p.x + 12.0, p.y - 16.0, 12.0, color);
+        draw_text(hp_label, p.x + 12.0, p.y - 2.0, 11.0, color);
+    }
 }
 
 fn original_candidates_for_tile(

@@ -378,6 +378,16 @@ pub struct OriginalObjectiveDebugProbe {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalObjectiveRuntimeTarget {
+    pub objective_index: u8,
+    pub objective_kind_label: &'static str,
+    pub target_bucket_label: &'static str,
+    pub target_kind: Option<OriginalMissionObjectKind>,
+    pub target_record_index: Option<u16>,
+    pub target_tile: Option<OriginalTilePoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OriginalObjectiveProgressStatus {
     NoCandidateObjective,
     CandidateOnly,
@@ -903,7 +913,7 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; debug action resolution gate ready for local control labels only; no gameplay movement, door, inventory, vehicle, combat, or mission-completion mutation",
+            "{}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label()
         )
@@ -1074,6 +1084,11 @@ impl OriginalMissionScene {
             .map(|model| model.route_probe_between(agent_tile, target_tile, true))
             .unwrap_or_else(OriginalRuntimeRouteProbe::unavailable);
         OriginalDebugInteractionIntent::from_probe(agent_tile, target_tile, probe, route_probe)
+    }
+
+    pub fn current_objective_runtime_target(&self) -> Option<OriginalObjectiveRuntimeTarget> {
+        let objective = self.objective_model.objectives.first().copied()?;
+        Some(objective.runtime_target(&self.objects))
     }
 
     pub fn first_agent_spawn_tile(&self) -> Option<OriginalTilePoint> {
@@ -3744,6 +3759,21 @@ impl OriginalObjectiveCandidateRecord {
             .tile_from_objects(objects)
             .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
     }
+
+    fn runtime_target(
+        self,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> OriginalObjectiveRuntimeTarget {
+        let (target_kind, target_record_index) = self.target.object_reference();
+        OriginalObjectiveRuntimeTarget {
+            objective_index: self.record_index,
+            objective_kind_label: self.kind.label(),
+            target_bucket_label: self.target.bucket_label(),
+            target_kind,
+            target_record_index,
+            target_tile: self.target.tile_from_objects(objects).or(self.tile),
+        }
+    }
 }
 
 impl OriginalObjectiveCandidateKind {
@@ -3853,6 +3883,19 @@ impl OriginalObjectiveTarget {
             Self::Group => "group",
             Self::Location(_) => "location",
             Self::UnresolvedOffset => "unresolved-offset",
+        }
+    }
+
+    fn object_reference(self) -> (Option<OriginalMissionObjectKind>, Option<u16>) {
+        match self {
+            Self::Ped(record_index) => (Some(OriginalMissionObjectKind::Ped), Some(record_index)),
+            Self::Vehicle(record_index) => {
+                (Some(OriginalMissionObjectKind::Vehicle), Some(record_index))
+            }
+            Self::Weapon(record_index) => {
+                (Some(OriginalMissionObjectKind::Weapon), Some(record_index))
+            }
+            Self::None | Self::Group | Self::Location(_) | Self::UnresolvedOffset => (None, None),
         }
     }
 
@@ -6296,6 +6339,17 @@ mod tests {
             "persuade"
         );
         assert_eq!(scene.objective_debug_probe.target_bucket, "ped");
+        let runtime_target = scene
+            .current_objective_runtime_target()
+            .expect("current objective target");
+        assert_eq!(runtime_target.objective_kind_label, "persuade");
+        assert_eq!(runtime_target.target_bucket_label, "ped");
+        assert_eq!(
+            runtime_target.target_kind,
+            Some(OriginalMissionObjectKind::Ped)
+        );
+        assert_eq!(runtime_target.target_record_index, Some(0));
+        assert_eq!(runtime_target.target_tile.map(|tile| tile.tile_x), Some(2));
         assert_eq!(scene.objective_debug_probe.scenario_link_candidates, 1);
         assert!(
             scene
