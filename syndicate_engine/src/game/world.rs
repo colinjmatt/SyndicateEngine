@@ -2114,11 +2114,20 @@ impl OriginalDebugAgent {
         self.direction.frame_bias().saturating_add(walk_phase)
     }
 
+    fn render_anchor_tile(&self) -> OriginalTilePoint {
+        let mut tile = self.current_tile();
+        tile.off_x = 0;
+        tile.off_y = 0;
+        tile.off_z = 0;
+        tile
+    }
+
     fn render_object_candidate(
         &self,
         object: Option<&OriginalMissionObjectCandidate>,
     ) -> Option<OriginalMissionObjectCandidate> {
         object.cloned().map(|mut object| {
+            object.tile = Some(self.render_anchor_tile());
             object.orientation = Some(self.direction.orientation_byte());
             if self.route_status == OriginalDebugAgentRouteStatus::Moving {
                 object.state = Some(0x10);
@@ -3200,7 +3209,14 @@ mod tests {
             type_value: Some(0),
             subtype_value: Some(0),
             orientation: Some(0),
-            tile: Some(tile(4, 5, 0)),
+            tile: Some(OriginalTilePoint {
+                tile_x: 4,
+                tile_y: 5,
+                tile_z: 0,
+                off_x: 180,
+                off_y: 172,
+                off_z: 0,
+            }),
             queue_tile: Some(tile(4, 5, 0)),
             animation: OriginalAnimationRefs {
                 base_anim: Some(0),
@@ -3217,6 +3233,18 @@ mod tests {
         assert_eq!(object.orientation, Some(0));
         assert_eq!(rendered.orientation, Some(64));
         assert_eq!(rendered.state, Some(0x10));
+        assert_eq!(
+            rendered.tile,
+            Some(OriginalTilePoint {
+                tile_x: 4,
+                tile_y: 5,
+                tile_z: 0,
+                off_x: 0,
+                off_y: 0,
+                off_z: 0,
+            })
+        );
+        assert_eq!(object.tile.unwrap().off_x, 180);
         assert!(agent.animation_frame(8) > 0);
     }
 
