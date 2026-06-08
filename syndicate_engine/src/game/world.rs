@@ -12,12 +12,13 @@ use crate::{
         map_scene::{MapDiagnosticScene, MapDiagnosticSceneLayer},
         map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
-            OriginalDebugAgentSpawn, OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
+            OriginalDebugAgentSpawn, OriginalDebugAgentWeaponHint, OriginalDebugAgentWeaponSource,
+            OriginalDebugInteractionFocus, OriginalDebugInteractionIntent,
             OriginalDebugInteractionIntentStatus, OriginalDebugInteractionProbe,
             OriginalMissionObjectCandidate, OriginalMissionObjectKind, OriginalMissionScene,
             OriginalObjectRenderDecision, OriginalObjectiveRuntimeTarget,
             OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus, OriginalStaticRenderDecision,
-            OriginalTilePoint,
+            OriginalTilePoint, OriginalWeaponKind,
         },
         mission_source::OriginalMissionSelection,
     },
@@ -70,9 +71,7 @@ pub struct WorldState {
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
 const ORIGINAL_DEBUG_AGENT_MAX_STEP_DT: f32 = 0.05;
-const ORIGINAL_CONTROL_WEAPON_RANGE_TILES: u16 = 8;
-const ORIGINAL_CONTROL_WEAPON_DAMAGE: i32 = 18;
-const ORIGINAL_CONTROL_WEAPON_COOLDOWN_SECS: f32 = 0.28;
+const ORIGINAL_CONTROL_SHOOT_REACTION_SECS: f32 = 0.20;
 const ORIGINAL_CONTROL_TARGET_HP: i32 = 50;
 const ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS: f32 = 0.58;
 
@@ -101,6 +100,7 @@ struct OriginalDebugAgent {
     route_status: OriginalDebugAgentRouteStatus,
     direction: OriginalDebugAgentDirection,
     weapon_cooldown: f32,
+    weapon: Option<OriginalCombatWeaponProfile>,
     interaction_intent: Option<OriginalDebugInteractionIntent>,
     action_state: Option<OriginalDebugActionState>,
 }
@@ -180,6 +180,7 @@ struct OriginalCombatFeedback {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OriginalCombatShotStatus {
     Ready,
+    NoWeapon,
     OutOfRange,
     Blocked,
     AlreadyDown,
@@ -191,6 +192,62 @@ struct OriginalCombatShotCheck {
     status: OriginalCombatShotStatus,
     distance: u16,
     range: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OriginalCombatWeaponProfile {
+    kind: OriginalWeaponKind,
+    label: &'static str,
+    source: OriginalDebugAgentWeaponSource,
+    range_tiles: u16,
+    local_damage: i32,
+    cooldown_secs: f32,
+}
+
+impl OriginalCombatWeaponProfile {
+    fn from_hint(hint: OriginalDebugAgentWeaponHint) -> Option<Self> {
+        let kind = hint.kind?;
+        let mut profile = Self::from_kind(kind)?;
+        profile.source = hint.source;
+        Some(profile)
+    }
+
+    fn from_kind(kind: OriginalWeaponKind) -> Option<Self> {
+        let (label, range_world, local_damage, reload_ms) = match kind {
+            OriginalWeaponKind::Pistol => ("Pistol", 1280, 2, 600),
+            OriginalWeaponKind::GaussGun => ("Gauss gun", 5120, 64, 1500),
+            OriginalWeaponKind::Shotgun => ("Shotgun", 1024, 12, 200),
+            OriginalWeaponKind::Uzi => ("Uzi", 1792, 2, 100),
+            OriginalWeaponKind::Minigun => ("Minigun", 2304, 10, 75),
+            OriginalWeaponKind::Laser => ("Laser", 4096, 32, 200),
+            OriginalWeaponKind::Flamer => ("Flamer", 1152, 8, 50),
+            OriginalWeaponKind::LongRange => ("Long range", 6144, 2, 400),
+            OriginalWeaponKind::Persuadatron
+            | OriginalWeaponKind::Scanner
+            | OriginalWeaponKind::MediKit
+            | OriginalWeaponKind::TimeBomb
+            | OriginalWeaponKind::AccessCard
+            | OriginalWeaponKind::EnergyShield => return None,
+        };
+        Some(Self {
+            kind,
+            label,
+            source: OriginalDebugAgentWeaponSource::NoSupportedWeapon,
+            range_tiles: range_tiles_from_freesynd_world_range(range_world),
+            local_damage,
+            cooldown_secs: ORIGINAL_CONTROL_SHOOT_REACTION_SECS + reload_ms as f32 / 1000.0,
+        })
+    }
+
+    fn panel_label(self) -> String {
+        format!(
+            "{} range {} dmg {} via {}",
+            self.label,
+            self.range_tiles,
+            self.local_damage,
+            self.source.label()
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -277,6 +334,7 @@ impl OriginalMissionControlRuntime {
         self.combat_probe_count += 1;
         let status_label = match status {
             OriginalCombatShotStatus::Ready => "ready",
+            OriginalCombatShotStatus::NoWeapon => "no supported weapon",
             OriginalCombatShotStatus::OutOfRange => "out of range",
             OriginalCombatShotStatus::Blocked => "blocked",
             OriginalCombatShotStatus::AlreadyDown => "already down",
@@ -435,12 +493,17 @@ impl OriginalMissionCombatRuntime {
         }
     }
 
-    fn record_out_of_range(&mut self, target: OriginalCombatTargetCandidate, distance: u16) {
+    fn record_out_of_range(
+        &mut self,
+        target: OriginalCombatTargetCandidate,
+        distance: u16,
+        range: u16,
+    ) {
         self.ensure_ped_state(target.record_index, target.tile, target.objective_target);
         self.out_of_range += 1;
         self.last_result = Some(format!(
             "ped candidate {} out of range {distance}/{}; local combat state unchanged",
-            target.record_index, ORIGINAL_CONTROL_WEAPON_RANGE_TILES
+            target.record_index, range
         ));
     }
 
@@ -611,6 +674,7 @@ impl OriginalCombatFeedback {
     fn color(&self) -> Color {
         match self.status {
             OriginalCombatShotStatus::Ready => Color::new(0.0, 0.95, 1.0, 0.90),
+            OriginalCombatShotStatus::NoWeapon => Color::new(0.55, 0.55, 0.62, 0.76),
             OriginalCombatShotStatus::OutOfRange => Color::new(1.0, 0.65, 0.05, 0.82),
             OriginalCombatShotStatus::Blocked => Color::new(1.0, 0.15, 0.10, 0.82),
             OriginalCombatShotStatus::AlreadyDown => Color::new(0.70, 0.70, 0.75, 0.76),
@@ -621,6 +685,7 @@ impl OriginalCombatFeedback {
     fn label(&self) -> &'static str {
         match self.status {
             OriginalCombatShotStatus::Ready => "SHOT",
+            OriginalCombatShotStatus::NoWeapon => "NO WEAPON",
             OriginalCombatShotStatus::OutOfRange => "RANGE",
             OriginalCombatShotStatus::Blocked => "BLOCKED",
             OriginalCombatShotStatus::AlreadyDown => "DOWN",
@@ -1770,13 +1835,14 @@ impl WorldState {
             .map(OriginalDebugActionState::panel_label)
             .unwrap_or_else(|| "action none".to_string());
         format!(
-            "original agents {}; selected set {} primary {} at {},{},{}; route nodes {}; moving {} blocked {}; intents q/r {}/{} primary {}; {}; {}; demo gameplay available",
+            "original agents {}; selected set {} primary {} at {},{},{}; weapon {}; route nodes {}; moving {} blocked {}; intents q/r {}/{} primary {}; {}; {}; demo gameplay available",
             self.original_debug_agents.len(),
             selected_count,
             agent.slot + 1,
             agent.current_tile().tile_x,
             agent.current_tile().tile_y,
             agent.current_tile().tile_z,
+            agent.weapon_label(),
             agent.route.len(),
             moving,
             blocked,
@@ -1867,11 +1933,13 @@ impl WorldState {
             let agent_tile = agent.current_tile();
             let agent_slot = agent.slot;
             let agent_can_fire = agent.can_fire();
+            let weapon = agent.weapon;
             let check = original_combat_shot_check(
                 agent_tile,
                 target.tile,
                 self.original_combat_runtime.ped_state(target.record_index),
                 agent_can_fire,
+                weapon,
             );
             self.original_control_runtime.record_combat_probe(
                 target.record_index,
@@ -1884,26 +1952,39 @@ impl WorldState {
             }
             match check.status {
                 OriginalCombatShotStatus::Ready => {
+                    let Some(weapon) = weapon else {
+                        continue;
+                    };
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
-                        agent.mark_fired();
+                        agent.mark_fired(weapon.cooldown_secs);
                     }
                     let result = self
                         .original_combat_runtime
-                        .apply_hit(target, ORIGINAL_CONTROL_WEAPON_DAMAGE);
+                        .apply_hit(target, weapon.local_damage);
                     let label = self.original_combat_runtime.record_result(target, result);
                     self.original_control_runtime
                         .record_combat_hit(label.clone());
                     primary_label = Some(format!(
-                        "agent {} fired; {label}; range {}/{}",
+                        "agent {} fired {}; {label}; range {}/{}",
                         agent_slot + 1,
+                        weapon.label,
                         check.distance,
                         check.range
                     ));
                     fired += 1;
                 }
+                OriginalCombatShotStatus::NoWeapon => {
+                    primary_label.get_or_insert_with(|| {
+                        format!("agent {} has no supported combat weapon", agent_slot + 1)
+                    });
+                    blocked += 1;
+                }
                 OriginalCombatShotStatus::OutOfRange => {
-                    self.original_combat_runtime
-                        .record_out_of_range(target, check.distance);
+                    self.original_combat_runtime.record_out_of_range(
+                        target,
+                        check.distance,
+                        check.range,
+                    );
                     primary_label.get_or_insert_with(|| {
                         format!(
                             "agent {} out of range {}/{}",
@@ -2480,7 +2561,20 @@ impl WorldState {
 }
 
 impl OriginalDebugAgent {
+    #[cfg(test)]
     fn from_spawn(spawn: OriginalDebugAgentSpawn, selected: bool) -> Self {
+        Self::from_spawn_with_weapon(
+            spawn,
+            selected,
+            OriginalDebugAgentWeaponHint::player_fallback_pistol(),
+        )
+    }
+
+    fn from_spawn_with_weapon(
+        spawn: OriginalDebugAgentSpawn,
+        selected: bool,
+        weapon_hint: OriginalDebugAgentWeaponHint,
+    ) -> Self {
         Self {
             slot: spawn.slot,
             record_index: spawn.record_index,
@@ -2492,6 +2586,7 @@ impl OriginalDebugAgent {
             route_status: OriginalDebugAgentRouteStatus::Idle,
             direction: OriginalDebugAgentDirection::South,
             weapon_cooldown: 0.0,
+            weapon: OriginalCombatWeaponProfile::from_hint(weapon_hint),
             interaction_intent: None,
             action_state: None,
         }
@@ -2624,8 +2719,8 @@ impl OriginalDebugAgent {
         self.weapon_cooldown <= 0.0
     }
 
-    fn mark_fired(&mut self) {
-        self.weapon_cooldown = ORIGINAL_CONTROL_WEAPON_COOLDOWN_SECS;
+    fn mark_fired(&mut self, cooldown_secs: f32) {
+        self.weapon_cooldown = cooldown_secs.max(0.05);
     }
 
     fn current_tile(&self) -> OriginalTilePoint {
@@ -2666,12 +2761,20 @@ impl OriginalDebugAgent {
         }
     }
 
+    fn weapon_label(&self) -> String {
+        self.weapon
+            .map(OriginalCombatWeaponProfile::panel_label)
+            .unwrap_or_else(|| "no supported weapon".to_string())
+    }
+
     fn map_label(&self) -> String {
         let selected = if self.selected { "selected" } else { "debug" };
+        let weapon = self.weapon.map(|weapon| weapon.label).unwrap_or("unarmed");
         format!(
-            "{selected} agent {} {}{}",
+            "{selected} agent {} {} {}{}",
             self.slot + 1,
             self.route_status.label(),
+            weapon,
             self.interaction_intent
                 .as_ref()
                 .map(|intent| format!(" {}", intent.focus.label()))
@@ -2763,7 +2866,10 @@ fn original_debug_agents_from_scene(scene_model: &OriginalMissionScene) -> Vec<O
         .debug_agent_spawns()
         .into_iter()
         .enumerate()
-        .map(|(idx, spawn)| OriginalDebugAgent::from_spawn(spawn, idx == 0))
+        .map(|(idx, spawn)| {
+            let weapon_hint = scene_model.debug_agent_weapon_hint(spawn.record_index);
+            OriginalDebugAgent::from_spawn_with_weapon(spawn, idx == 0, weapon_hint)
+        })
         .collect()
 }
 
@@ -2876,6 +2982,10 @@ fn original_tile_distance(a: OriginalTilePoint, b: OriginalTilePoint) -> u16 {
     a.tile_x.abs_diff(b.tile_x) + a.tile_y.abs_diff(b.tile_y) + a.tile_z.abs_diff(b.tile_z)
 }
 
+fn range_tiles_from_freesynd_world_range(range_world: u16) -> u16 {
+    range_world.div_ceil(256).max(1)
+}
+
 fn original_tile_near(a: OriginalTilePoint, b: OriginalTilePoint, xy: u16, z: u16) -> bool {
     a.tile_x.abs_diff(b.tile_x) + a.tile_y.abs_diff(b.tile_y) <= xy
         && a.tile_z.abs_diff(b.tile_z) <= z
@@ -2886,13 +2996,17 @@ fn original_combat_shot_check(
     target_tile: OriginalTilePoint,
     target_state: Option<&OriginalCombatPedState>,
     agent_can_fire: bool,
+    weapon: Option<OriginalCombatWeaponProfile>,
 ) -> OriginalCombatShotCheck {
     let distance = original_tile_distance(agent_tile, target_tile);
+    let range = weapon.map(|weapon| weapon.range_tiles).unwrap_or_default();
     let status = if target_state.is_some_and(|state| state.defeated) {
         OriginalCombatShotStatus::AlreadyDown
+    } else if weapon.is_none() {
+        OriginalCombatShotStatus::NoWeapon
     } else if !agent_can_fire {
         OriginalCombatShotStatus::Cooling
-    } else if distance > ORIGINAL_CONTROL_WEAPON_RANGE_TILES {
+    } else if distance > range {
         OriginalCombatShotStatus::OutOfRange
     } else if agent_tile.tile_z.abs_diff(target_tile.tile_z) > 1 {
         OriginalCombatShotStatus::Blocked
@@ -2902,7 +3016,7 @@ fn original_combat_shot_check(
     OriginalCombatShotCheck {
         status,
         distance,
-        range: ORIGINAL_CONTROL_WEAPON_RANGE_TILES,
+        range,
     }
 }
 
@@ -3707,12 +3821,13 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 mod tests {
     use super::{
         MapRenderMode, OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
-        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalDebugActionStatus,
-        OriginalDebugAgent, OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus,
-        OriginalDebugAgentSpawn, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
-        initial_render_mode, original_agent_focus_camera_offset_from_tile_size,
+        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatWeaponProfile,
+        OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
+        OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalMissionCombatRuntime,
+        OriginalMissionControlRuntime, initial_render_mode,
+        original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
-        original_ped_candidate_role_style,
+        original_ped_candidate_role_style, range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
         map_tiles::OriginalMapTiles,
@@ -3721,7 +3836,7 @@ mod tests {
             OriginalDebugInteractionIntentStatus, OriginalDrawStage,
             OriginalMissionObjectCandidate, OriginalMissionObjectKind,
             OriginalObjectiveRuntimeTarget, OriginalRouteTransitionKind, OriginalRuntimeRouteProbe,
-            OriginalRuntimeRouteStatus, OriginalTilePoint,
+            OriginalRuntimeRouteStatus, OriginalTilePoint, OriginalWeaponKind,
         },
     };
     use macroquad::prelude::*;
@@ -4086,6 +4201,7 @@ mod tests {
     #[test]
     fn original_combat_runtime_completes_assassinate_target_locally() {
         let target_tile = tile(8, 9, 0);
+        let laser = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Laser).unwrap();
         let objective = OriginalObjectiveRuntimeTarget {
             objective_index: 0,
             objective_kind_label: "assassinate",
@@ -4103,15 +4219,11 @@ mod tests {
         };
 
         assert_eq!(
-            runtime.apply_hit(candidate, super::ORIGINAL_CONTROL_WEAPON_DAMAGE),
-            OriginalCombatAttackResult::Hit { remaining_hp: 32 }
+            runtime.apply_hit(candidate, laser.local_damage),
+            OriginalCombatAttackResult::Hit { remaining_hp: 18 }
         );
         assert_eq!(
-            runtime.apply_hit(candidate, super::ORIGINAL_CONTROL_WEAPON_DAMAGE),
-            OriginalCombatAttackResult::Hit { remaining_hp: 14 }
-        );
-        assert_eq!(
-            runtime.apply_hit(candidate, super::ORIGINAL_CONTROL_WEAPON_DAMAGE),
+            runtime.apply_hit(candidate, laser.local_damage),
             OriginalCombatAttackResult::Defeated {
                 objective_completed: true
             }
@@ -4131,21 +4243,26 @@ mod tests {
     fn original_combat_shot_check_gates_cooldown_range_height_and_down_state() {
         let start = tile(4, 4, 0);
         let target = tile(8, 4, 0);
+        let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
         assert_eq!(
-            original_combat_shot_check(start, target, None, true).status,
+            original_combat_shot_check(start, target, None, true, Some(pistol)).status,
             OriginalCombatShotStatus::Ready
         );
         assert_eq!(
-            original_combat_shot_check(start, target, None, false).status,
+            original_combat_shot_check(start, target, None, false, Some(pistol)).status,
             OriginalCombatShotStatus::Cooling
         );
         assert_eq!(
-            original_combat_shot_check(start, tile(20, 4, 0), None, true).status,
+            original_combat_shot_check(start, tile(20, 4, 0), None, true, Some(pistol)).status,
             OriginalCombatShotStatus::OutOfRange
         );
         assert_eq!(
-            original_combat_shot_check(start, tile(5, 4, 3), None, true).status,
+            original_combat_shot_check(start, tile(5, 4, 3), None, true, Some(pistol)).status,
             OriginalCombatShotStatus::Blocked
+        );
+        assert_eq!(
+            original_combat_shot_check(start, target, None, true, None).status,
+            OriginalCombatShotStatus::NoWeapon
         );
         let defeated = OriginalCombatPedState {
             record_index: 9,
@@ -4156,9 +4273,25 @@ mod tests {
             defeated: true,
         };
         assert_eq!(
-            original_combat_shot_check(start, target, Some(&defeated), true).status,
+            original_combat_shot_check(start, target, Some(&defeated), true, None).status,
             OriginalCombatShotStatus::AlreadyDown
         );
+    }
+
+    #[test]
+    fn original_combat_weapon_profiles_follow_freesynd_reference_ranges() {
+        let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
+        let uzi = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Uzi).unwrap();
+        let laser = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Laser).unwrap();
+
+        assert_eq!(range_tiles_from_freesynd_world_range(1280), 5);
+        assert_eq!(pistol.range_tiles, 5);
+        assert_eq!(uzi.range_tiles, 7);
+        assert_eq!(laser.range_tiles, 16);
+        assert_eq!(pistol.local_damage, 2);
+        assert_eq!(laser.local_damage, 32);
+        assert!(pistol.cooldown_secs > uzi.cooldown_secs);
+        assert!(OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Scanner).is_none());
     }
 
     #[test]
@@ -4223,9 +4356,10 @@ mod tests {
             true,
         );
         assert!(agent.can_fire());
-        agent.mark_fired();
+        let pistol = OriginalCombatWeaponProfile::from_kind(OriginalWeaponKind::Pistol).unwrap();
+        agent.mark_fired(pistol.cooldown_secs);
         assert!(!agent.can_fire());
-        agent.update(super::ORIGINAL_CONTROL_WEAPON_COOLDOWN_SECS + 0.01);
+        agent.update(pistol.cooldown_secs + 0.01);
         assert!(agent.can_fire());
     }
 

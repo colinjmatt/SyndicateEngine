@@ -72,6 +72,7 @@ pub struct OriginalMissionScene {
     pub navigation_debug_probe: OriginalNavigationDebugProbe,
     pub interaction_probe: OriginalInteractionProbe,
     pub objective_debug_probe: OriginalObjectiveDebugProbe,
+    weapon_loadout_probe: OriginalMissionWeaponLoadoutProbe,
     spatial_model: Option<OriginalSpatialModel>,
     objective_model: OriginalObjectiveScenarioModel,
 }
@@ -437,6 +438,265 @@ pub struct OriginalDebugAgentSpawn {
     pub sprite_ready: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OriginalWeaponKind {
+    Persuadatron,
+    Pistol,
+    GaussGun,
+    Shotgun,
+    Uzi,
+    Minigun,
+    Laser,
+    Flamer,
+    LongRange,
+    Scanner,
+    MediKit,
+    TimeBomb,
+    AccessCard,
+    EnergyShield,
+}
+
+impl OriginalWeaponKind {
+    pub fn from_game_subtype(subtype: u8) -> Option<Self> {
+        match subtype {
+            0x01 => Some(Self::Persuadatron),
+            0x02 => Some(Self::Pistol),
+            0x03 => Some(Self::GaussGun),
+            0x04 => Some(Self::Shotgun),
+            0x05 => Some(Self::Uzi),
+            0x06 => Some(Self::Minigun),
+            0x07 => Some(Self::Laser),
+            0x08 => Some(Self::Flamer),
+            0x09 => Some(Self::LongRange),
+            0x0a => Some(Self::Scanner),
+            0x0b => Some(Self::MediKit),
+            0x0c => Some(Self::TimeBomb),
+            0x0d => Some(Self::AccessCard),
+            0x11 => Some(Self::EnergyShield),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Persuadatron => "Persuadatron",
+            Self::Pistol => "Pistol",
+            Self::GaussGun => "Gauss gun",
+            Self::Shotgun => "Shotgun",
+            Self::Uzi => "Uzi",
+            Self::Minigun => "Minigun",
+            Self::Laser => "Laser",
+            Self::Flamer => "Flamer",
+            Self::LongRange => "Long range",
+            Self::Scanner => "Scanner",
+            Self::MediKit => "MediKit",
+            Self::TimeBomb => "Time bomb",
+            Self::AccessCard => "Access card",
+            Self::EnergyShield => "Energy shield",
+        }
+    }
+
+    pub fn is_shooting_candidate(self) -> bool {
+        matches!(
+            self,
+            Self::Pistol
+                | Self::GaussGun
+                | Self::Shotgun
+                | Self::Uzi
+                | Self::Minigun
+                | Self::Laser
+                | Self::Flamer
+                | Self::LongRange
+        )
+    }
+
+    fn loadout_rank(self) -> u8 {
+        match self {
+            Self::Laser => 7,
+            Self::Minigun => 6,
+            Self::Uzi => 5,
+            Self::Flamer => 4,
+            Self::LongRange => 3,
+            Self::Shotgun => 2,
+            Self::Pistol => 1,
+            Self::GaussGun => 0,
+            Self::Persuadatron
+            | Self::Scanner
+            | Self::MediKit
+            | Self::TimeBomb
+            | Self::AccessCard
+            | Self::EnergyShield => 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalDebugAgentWeaponSource {
+    CurrentWeaponOffset,
+    EquipmentOffset,
+    OwnedInventory,
+    PlayerFallbackPistol,
+    NoSupportedWeapon,
+}
+
+impl OriginalDebugAgentWeaponSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CurrentWeaponOffset => "GAME current weapon",
+            Self::EquipmentOffset => "GAME equipment",
+            Self::OwnedInventory => "GAME inventory owner",
+            Self::PlayerFallbackPistol => "FreeSynd starter pistol fallback",
+            Self::NoSupportedWeapon => "no supported weapon",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalDebugAgentWeaponHint {
+    pub kind: Option<OriginalWeaponKind>,
+    pub source: OriginalDebugAgentWeaponSource,
+    pub weapon_record_index: Option<u16>,
+}
+
+impl OriginalDebugAgentWeaponHint {
+    pub fn player_fallback_pistol() -> Self {
+        Self {
+            kind: Some(OriginalWeaponKind::Pistol),
+            source: OriginalDebugAgentWeaponSource::PlayerFallbackPistol,
+            weapon_record_index: None,
+        }
+    }
+
+    pub fn no_supported_weapon() -> Self {
+        Self {
+            kind: None,
+            source: OriginalDebugAgentWeaponSource::NoSupportedWeapon,
+            weapon_record_index: None,
+        }
+    }
+
+    pub fn label(self) -> String {
+        self.kind
+            .map(|kind| format!("{} via {}", kind.label(), self.source.label()))
+            .unwrap_or_else(|| self.source.label().to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct OriginalMissionWeaponLoadoutProbe {
+    explicit_ped_hints: BTreeMap<u16, OriginalDebugAgentWeaponHint>,
+    inventory_weapon_records: usize,
+    shooting_inventory_weapon_records: usize,
+    current_weapon_hints: usize,
+    equipment_hints: usize,
+    owned_inventory_hints: usize,
+}
+
+impl OriginalMissionWeaponLoadoutProbe {
+    fn from_game_bytes(decoded: &[u8]) -> Self {
+        let mut weapon_kinds = BTreeMap::<u16, OriginalWeaponKind>::new();
+        let mut inventory_by_ped = BTreeMap::<u16, Vec<u16>>::new();
+        let mut inventory_weapon_records = 0;
+        let mut shooting_inventory_weapon_records = 0;
+
+        for (record_index, record) in weapon_records(decoded).enumerate() {
+            let Some(kind) = record
+                .get(25)
+                .copied()
+                .and_then(OriginalWeaponKind::from_game_subtype)
+            else {
+                continue;
+            };
+            let record_index = record_index as u16;
+            weapon_kinds.insert(record_index, kind);
+            if record.get(10).copied() == Some(0x05) {
+                inventory_weapon_records += 1;
+                if kind.is_shooting_candidate() {
+                    shooting_inventory_weapon_records += 1;
+                }
+                if let Some(owner) =
+                    read_record_u16(record, 32).and_then(object_offset_weapon_owner_ped_index)
+                {
+                    inventory_by_ped
+                        .entry(owner)
+                        .or_default()
+                        .push(record_index);
+                }
+            }
+        }
+
+        let mut probe = Self {
+            inventory_weapon_records,
+            shooting_inventory_weapon_records,
+            ..Self::default()
+        };
+
+        for (ped_index, record) in people_records(decoded).enumerate() {
+            let ped_index = ped_index as u16;
+            if let Some(hint) = weapon_hint_from_record_offset(
+                record,
+                68,
+                &weapon_kinds,
+                OriginalDebugAgentWeaponSource::CurrentWeaponOffset,
+            ) {
+                probe.current_weapon_hints += 1;
+                probe.explicit_ped_hints.insert(ped_index, hint);
+                continue;
+            }
+            if let Some(hint) = weapon_hint_from_record_offset(
+                record,
+                58,
+                &weapon_kinds,
+                OriginalDebugAgentWeaponSource::EquipmentOffset,
+            ) {
+                probe.equipment_hints += 1;
+                probe.explicit_ped_hints.insert(ped_index, hint);
+                continue;
+            }
+            if let Some(weapon_record_index) =
+                best_shooting_weapon_for_ped(ped_index, &inventory_by_ped, &weapon_kinds)
+            {
+                let kind = weapon_kinds[&weapon_record_index];
+                probe.owned_inventory_hints += 1;
+                probe.explicit_ped_hints.insert(
+                    ped_index,
+                    OriginalDebugAgentWeaponHint {
+                        kind: Some(kind),
+                        source: OriginalDebugAgentWeaponSource::OwnedInventory,
+                        weapon_record_index: Some(weapon_record_index),
+                    },
+                );
+            }
+        }
+
+        probe
+    }
+
+    fn hint_for_debug_agent(&self, ped_record_index: u16) -> OriginalDebugAgentWeaponHint {
+        self.explicit_ped_hints
+            .get(&ped_record_index)
+            .copied()
+            .unwrap_or_else(|| {
+                if ped_record_index < MAX_ORIGINAL_DEBUG_AGENT_SPAWNS as u16 {
+                    OriginalDebugAgentWeaponHint::player_fallback_pistol()
+                } else {
+                    OriginalDebugAgentWeaponHint::no_supported_weapon()
+                }
+            })
+    }
+
+    fn report_label(&self) -> String {
+        format!(
+            "weapon loadout hints current {} equipment {} inventory owner {}; inventory shooting {}/{}; player squad starter pistol fallback guarded; runtime-only aggregate, not proof of final inventory or combat semantics",
+            self.current_weapon_hints,
+            self.equipment_hints,
+            self.owned_inventory_hints,
+            self.shooting_inventory_weapon_records,
+            self.inventory_weapon_records
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginalRuntimeRouteProbe {
     pub status: OriginalRuntimeRouteStatus,
@@ -767,6 +1027,7 @@ impl OriginalMissionScene {
         let interaction_probe = OriginalInteractionProbe::from_scene(&objects, &objective_model);
         let objective_debug_probe =
             OriginalObjectiveDebugProbe::from_model(&objective_model, &objects);
+        let weapon_loadout_probe = OriginalMissionWeaponLoadoutProbe::from_game_bytes(decoded);
 
         Self {
             mission_label,
@@ -788,6 +1049,7 @@ impl OriginalMissionScene {
             navigation_debug_probe,
             interaction_probe,
             objective_debug_probe,
+            weapon_loadout_probe,
             spatial_model,
             objective_model,
         }
@@ -913,9 +1175,10 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
+            "{}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective state without mutating source GAME data, doors, inventory, vehicles, AI, or final mission results",
             self.interaction_probe.report_label(),
-            self.objective_debug_probe.report_label()
+            self.objective_debug_probe.report_label(),
+            self.weapon_loadout_probe.report_label()
         )
     }
 
@@ -1014,6 +1277,11 @@ impl OriginalMissionScene {
             })
             .collect::<Vec<_>>();
         self.spread_original_debug_agent_spawns(fallback_spawns)
+    }
+
+    pub fn debug_agent_weapon_hint(&self, ped_record_index: u16) -> OriginalDebugAgentWeaponHint {
+        self.weapon_loadout_probe
+            .hint_for_debug_agent(ped_record_index)
     }
 
     pub fn original_control_suppressed_ped_record_indices(&self) -> Vec<u16> {
@@ -4780,6 +5048,18 @@ fn is_enemy_ped_spawn_candidate(object: &OriginalMissionObjectCandidate) -> bool
             || matches!(object.subtype_value, Some(0x02 | 0x04 | 0x08 | 0x10)))
 }
 
+fn people_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
+    let tail = decoded.get(PEOPLE_OFFSET..).unwrap_or(&[]);
+    let len = tail.len().min(256 * PEOPLE_RECORD_BYTES);
+    tail[..len].chunks_exact(PEOPLE_RECORD_BYTES)
+}
+
+fn weapon_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
+    let tail = decoded.get(WEAPONS_OFFSET..).unwrap_or(&[]);
+    let len = tail.len().min(512 * WEAPON_RECORD_BYTES);
+    tail[..len].chunks_exact(WEAPON_RECORD_BYTES)
+}
+
 fn objective_records(decoded: &[u8]) -> std::slice::ChunksExact<'_, u8> {
     let tail = decoded.get(OBJECTIVES_OFFSET..).unwrap_or(&[]);
     let len = tail
@@ -4909,6 +5189,55 @@ fn object_offset_target(offset: u16) -> Option<OriginalObjectOffsetTarget> {
     Some(OriginalObjectOffsetTarget::Unknown)
 }
 
+fn object_offset_weapon_owner_ped_index(offset: u16) -> Option<u16> {
+    match object_offset_target(offset) {
+        Some(OriginalObjectOffsetTarget::Ped(record_index)) => Some(record_index),
+        _ => None,
+    }
+}
+
+fn weapon_hint_from_record_offset(
+    record: &[u8],
+    offset: usize,
+    weapon_kinds: &BTreeMap<u16, OriginalWeaponKind>,
+    source: OriginalDebugAgentWeaponSource,
+) -> Option<OriginalDebugAgentWeaponHint> {
+    let weapon_record_index =
+        read_record_u16(record, offset).and_then(|offset| match object_offset_target(offset) {
+            Some(OriginalObjectOffsetTarget::Weapon(record_index)) => Some(record_index),
+            _ => None,
+        })?;
+    let kind = weapon_kinds.get(&weapon_record_index).copied()?;
+    kind.is_shooting_candidate()
+        .then_some(OriginalDebugAgentWeaponHint {
+            kind: Some(kind),
+            source,
+            weapon_record_index: Some(weapon_record_index),
+        })
+}
+
+fn best_shooting_weapon_for_ped(
+    ped_record_index: u16,
+    inventory_by_ped: &BTreeMap<u16, Vec<u16>>,
+    weapon_kinds: &BTreeMap<u16, OriginalWeaponKind>,
+) -> Option<u16> {
+    inventory_by_ped
+        .get(&ped_record_index)?
+        .iter()
+        .copied()
+        .filter(|record_index| {
+            weapon_kinds
+                .get(record_index)
+                .is_some_and(|kind| kind.is_shooting_candidate())
+        })
+        .max_by_key(|record_index| {
+            weapon_kinds
+                .get(record_index)
+                .map(|kind| kind.loadout_rank())
+                .unwrap_or_default()
+        })
+}
+
 fn strided_object_index(offset: u16, base: u16, end: u16, stride: usize) -> Option<u16> {
     if offset < base || offset >= end {
         return None;
@@ -5030,11 +5359,12 @@ mod tests {
 
     use super::{
         AnimationCatalog, CARS_OFFSET, OBJECT_OFFSET_PEOPLE_BASE, OBJECT_OFFSET_VEHICLES_BASE,
-        OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport, OriginalDebugInteractionFocus,
+        OBJECT_OFFSET_WEAPONS_BASE, OBJECTIVES_OFFSET, OriginalAnimationCatalogSupport,
+        OriginalDebugAgentWeaponSource, OriginalDebugInteractionFocus,
         OriginalDebugInteractionIntentStatus, OriginalDebugInteractionStatus, OriginalDrawStage,
         OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
-        OriginalMissionSelection, OriginalSpriteBankSupport, PEOPLE_OFFSET, SCENARIOS_OFFSET,
-        STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
+        OriginalMissionSelection, OriginalSpriteBankSupport, OriginalWeaponKind, PEOPLE_OFFSET,
+        SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
         format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
     use crate::engine::{
@@ -5639,6 +5969,124 @@ mod tests {
                 off_y: 0,
                 off_z: 0,
             }
+        );
+    }
+
+    #[test]
+    fn debug_agent_weapon_hint_prefers_current_weapon_offset() {
+        let mut decoded = vec![0u8; WEAPONS_OFFSET + super::WEAPON_RECORD_BYTES * 3 + 16];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES],
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let weapon_index = 2u16;
+        let weapon_offset = WEAPONS_OFFSET + super::WEAPON_RECORD_BYTES * weapon_index as usize;
+        write_record(
+            &mut decoded[weapon_offset..weapon_offset + super::WEAPON_RECORD_BYTES],
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x05,
+        );
+        decoded[weapon_offset + 24] = 0x04;
+        decoded[weapon_offset + 25] = 0x05;
+        decoded[weapon_offset + 32..weapon_offset + 34]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+        decoded[PEOPLE_OFFSET + 68..PEOPLE_OFFSET + 70].copy_from_slice(
+            &(OBJECT_OFFSET_WEAPONS_BASE + weapon_index * super::WEAPON_RECORD_BYTES as u16)
+                .to_le_bytes(),
+        );
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let hint = scene.debug_agent_weapon_hint(0);
+
+        assert_eq!(hint.kind, Some(OriginalWeaponKind::Uzi));
+        assert_eq!(
+            hint.source,
+            OriginalDebugAgentWeaponSource::CurrentWeaponOffset
+        );
+        assert_eq!(hint.weapon_record_index, Some(weapon_index));
+        assert!(scene.report_row().contains("weapon loadout hints"));
+        assert!(!scene.report_row().contains("0x"));
+        assert!(!scene.report_row().contains("00 00"));
+    }
+
+    #[test]
+    fn debug_agent_weapon_hint_uses_inventory_owner_then_player_fallback() {
+        let mut decoded = vec![0u8; WEAPONS_OFFSET + super::WEAPON_RECORD_BYTES * 2 + 16];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES],
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let weapon_offset = WEAPONS_OFFSET + super::WEAPON_RECORD_BYTES;
+        write_record(
+            &mut decoded[weapon_offset..weapon_offset + super::WEAPON_RECORD_BYTES],
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0x05,
+        );
+        decoded[weapon_offset + 24] = 0x04;
+        decoded[weapon_offset + 25] = 0x07;
+        decoded[weapon_offset + 32..weapon_offset + 34]
+            .copy_from_slice(&OBJECT_OFFSET_PEOPLE_BASE.to_le_bytes());
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let owned = scene.debug_agent_weapon_hint(0);
+        let fallback = scene.debug_agent_weapon_hint(1);
+        let unsupported = scene.debug_agent_weapon_hint(6);
+
+        assert_eq!(owned.kind, Some(OriginalWeaponKind::Laser));
+        assert_eq!(owned.source, OriginalDebugAgentWeaponSource::OwnedInventory);
+        assert_eq!(fallback.kind, Some(OriginalWeaponKind::Pistol));
+        assert_eq!(
+            fallback.source,
+            OriginalDebugAgentWeaponSource::PlayerFallbackPistol
+        );
+        assert_eq!(unsupported.kind, None);
+        assert_eq!(
+            unsupported.source,
+            OriginalDebugAgentWeaponSource::NoSupportedWeapon
         );
     }
 
