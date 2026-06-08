@@ -977,7 +977,7 @@ impl OriginalMissionScene {
                 Some(OriginalDebugAgentSpawn {
                     slot: object.record_index.min(3) as u8,
                     record_index: object.record_index,
-                    tile,
+                    tile: self.original_control_surface_tile(tile),
                     sprite_ready: self.ped_render_proof.decision
                         == OriginalObjectRenderDecision::RuntimeRenderReady,
                 })
@@ -997,7 +997,7 @@ impl OriginalMissionScene {
             .map(|(slot, (record_index, tile))| OriginalDebugAgentSpawn {
                 slot: slot as u8,
                 record_index,
-                tile,
+                tile: self.original_control_surface_tile(tile),
                 sprite_ready: self.ped_render_proof.decision
                     == OriginalObjectRenderDecision::RuntimeRenderReady,
             })
@@ -1006,31 +1006,21 @@ impl OriginalMissionScene {
 
     pub fn original_control_suppressed_ped_record_indices(&self) -> Vec<u16> {
         let mut record_indices = self
-            .debug_agent_spawns()
-            .into_iter()
-            .map(|spawn| spawn.record_index)
+            .objects
+            .iter()
+            .filter(|object| object.kind == OriginalMissionObjectKind::Ped && object.candidate_draw)
+            .map(|object| object.record_index)
             .collect::<Vec<_>>();
         record_indices.sort_unstable();
         record_indices.dedup();
-
-        if record_indices.len() >= MAX_ORIGINAL_DEBUG_AGENT_SPAWNS {
-            if let Some(next_reserved_record) = record_indices
-                .iter()
-                .max()
-                .and_then(|idx| idx.checked_add(1))
-            {
-                let reserved_record_is_ped_candidate = self.objects.iter().any(|object| {
-                    object.kind == OriginalMissionObjectKind::Ped
-                        && object.record_index == next_reserved_record
-                        && object.candidate_draw
-                });
-                if reserved_record_is_ped_candidate {
-                    record_indices.push(next_reserved_record);
-                }
-            }
-        }
-
         record_indices
+    }
+
+    fn original_control_surface_tile(&self, tile: OriginalTilePoint) -> OriginalTilePoint {
+        self.spatial_model
+            .as_ref()
+            .and_then(|model| model.original_control_surface_tile(tile))
+            .unwrap_or(tile)
     }
 
     pub fn debug_agent_object(&self, record_index: u16) -> Option<&OriginalMissionObjectCandidate> {
@@ -1087,9 +1077,14 @@ impl OriginalMissionScene {
     }
 
     pub fn first_agent_spawn_tile(&self) -> Option<OriginalTilePoint> {
-        self.spatial_model
-            .as_ref()
-            .and_then(OriginalSpatialModel::first_agent_spawn_tile)
+        self.debug_agent_spawns()
+            .first()
+            .map(|spawn| spawn.tile)
+            .or_else(|| {
+                self.spatial_model
+                    .as_ref()
+                    .and_then(OriginalSpatialModel::first_agent_spawn_tile)
+            })
     }
 }
 
@@ -2963,6 +2958,12 @@ impl OriginalSpatialModel {
             .first()
             .or_else(|| self.ped_occupied_tiles.iter().next())
             .copied()
+            .map(OriginalTileKey::to_tile_point)
+    }
+
+    fn original_control_surface_tile(&self, tile: OriginalTilePoint) -> Option<OriginalTilePoint> {
+        self.nearest_route_node_same_z(tile.key(), tile.tile_z, ROUTE_PROBE_SEARCH_RADIUS)
+            .or_else(|| self.nearest_route_node_any_z(tile.key(), ROUTE_PROBE_DEBUG_SEARCH_RADIUS))
             .map(OriginalTileKey::to_tile_point)
     }
 
@@ -5500,7 +5501,7 @@ mod tests {
     }
 
     #[test]
-    fn original_control_suppression_includes_reserved_spawn_ped_only() {
+    fn original_control_suppression_hides_base_peds_while_overlay_owns_agents() {
         let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
         for record_index in 0..6 {
             let offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * record_index;
@@ -5531,7 +5532,48 @@ mod tests {
         assert_eq!(scene.debug_agent_spawns().len(), 4);
         assert_eq!(
             scene.original_control_suppressed_ped_record_indices(),
-            vec![0, 1, 2, 3, 4]
+            vec![0, 1, 2, 3, 4, 5]
+        );
+    }
+
+    #[test]
+    fn debug_agent_spawns_start_on_control_surface_without_visible_z_snap() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        for record_index in 0..4 {
+            let offset = PEOPLE_OFFSET + super::PEOPLE_RECORD_BYTES * record_index;
+            write_record(
+                &mut decoded[offset..offset + super::PEOPLE_RECORD_BYTES],
+                1 + record_index as u16,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0x04,
+            );
+        }
+        let map_tiles = synthetic_map_tiles(5, 5, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+
+        let spawns = scene.debug_agent_spawns();
+
+        assert_eq!(spawns.len(), 4);
+        assert!(spawns.iter().all(|spawn| spawn.tile.tile_z == 0));
+        assert_eq!(
+            scene.first_agent_spawn_tile().map(|tile| tile.tile_z),
+            Some(0)
         );
     }
 
