@@ -792,6 +792,65 @@ impl TacticalMap {
         draw_text("TARGET", p.x + 12.0, p.y - 16.0, 12.0, color);
         draw_text(hp_label, p.x + 12.0, p.y - 2.0, 11.0, color);
     }
+
+    pub fn draw_original_ped_candidate_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        tile: OriginalTilePoint,
+        label: &str,
+        color: Color,
+        defeated: bool,
+    ) {
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let p = original_tile_marker_screen(camera, map_tiles, tile, tile_width, tile_height);
+        draw_circle_lines(p.x, p.y, 10.0, 1.5, color);
+        if defeated {
+            draw_line(p.x - 7.0, p.y - 7.0, p.x + 7.0, p.y + 7.0, 1.8, color);
+            draw_line(p.x + 7.0, p.y - 7.0, p.x - 7.0, p.y + 7.0, 1.8, color);
+        } else {
+            draw_circle(p.x, p.y, 2.0, color);
+        }
+        draw_text(label, p.x + 9.0, p.y + 11.0, 10.5, color);
+    }
+
+    pub fn draw_original_combat_feedback_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        origins: &[OriginalTilePoint],
+        target_tile: OriginalTilePoint,
+        label: &str,
+        color: Color,
+        fade: f32,
+    ) {
+        if origins.is_empty() {
+            return;
+        }
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let alpha = fade.clamp(0.0, 1.0);
+        let color = Color::new(color.r, color.g, color.b, color.a * alpha);
+        let target =
+            original_tile_marker_screen(camera, map_tiles, target_tile, tile_width, tile_height);
+        for origin_tile in origins {
+            let origin = original_tile_marker_screen(
+                camera,
+                map_tiles,
+                *origin_tile,
+                tile_width,
+                tile_height,
+            );
+            draw_line(origin.x, origin.y, target.x, target.y, 2.0, color);
+            draw_circle_lines(origin.x, origin.y, 7.0, 1.3, color);
+        }
+        let pulse = 15.0 + (1.0 - alpha) * 10.0;
+        draw_circle_lines(target.x, target.y, pulse, 2.2, color);
+        draw_text(label, target.x + 12.0, target.y + 18.0, 11.0, color);
+    }
 }
 
 fn original_candidates_for_tile(

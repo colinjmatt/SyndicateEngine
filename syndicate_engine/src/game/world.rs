@@ -64,6 +64,7 @@ pub struct WorldState {
     selected_original_debug_agent: usize,
     original_control_runtime: OriginalMissionControlRuntime,
     original_combat_runtime: OriginalMissionCombatRuntime,
+    original_combat_feedback: Option<OriginalCombatFeedback>,
     original_control_trace: OriginalControlTrace,
 }
 
@@ -73,6 +74,7 @@ const ORIGINAL_CONTROL_WEAPON_RANGE_TILES: u16 = 8;
 const ORIGINAL_CONTROL_WEAPON_DAMAGE: i32 = 18;
 const ORIGINAL_CONTROL_WEAPON_COOLDOWN_SECS: f32 = 0.28;
 const ORIGINAL_CONTROL_TARGET_HP: i32 = 50;
+const ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS: f32 = 0.58;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapRenderMode {
@@ -165,6 +167,14 @@ struct OriginalCombatTargetCandidate {
     record_index: u16,
     tile: OriginalTilePoint,
     objective_target: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OriginalCombatFeedback {
+    origins: Vec<OriginalTilePoint>,
+    target_tile: OriginalTilePoint,
+    status: OriginalCombatShotStatus,
+    remaining: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,6 +380,10 @@ impl OriginalMissionCombatRuntime {
         self.peds.get(&record_index)
     }
 
+    fn objective_target_record_index(&self) -> Option<u16> {
+        self.objective_target?.target_record_index
+    }
+
     fn objective_target_overlay(&self) -> Option<(OriginalTilePoint, String, bool, bool)> {
         let state = self.objective_target_state()?;
         let hp_label = if state.defeated {
@@ -565,6 +579,53 @@ impl OriginalControlTrace {
     fn should_quit(&self) -> bool {
         self.quit_after_frames
             .is_some_and(|quit_after_frames| self.frame >= quit_after_frames)
+    }
+}
+
+impl OriginalCombatFeedback {
+    fn new(
+        origins: Vec<OriginalTilePoint>,
+        target_tile: OriginalTilePoint,
+        status: OriginalCombatShotStatus,
+    ) -> Self {
+        Self {
+            origins,
+            target_tile,
+            status,
+            remaining: ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS,
+        }
+    }
+
+    fn update(&mut self, real_dt: f32) {
+        self.remaining = (self.remaining - real_dt.max(0.0)).max(0.0);
+    }
+
+    fn is_alive(&self) -> bool {
+        self.remaining > 0.0
+    }
+
+    fn fade(&self) -> f32 {
+        (self.remaining / ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS).clamp(0.0, 1.0)
+    }
+
+    fn color(&self) -> Color {
+        match self.status {
+            OriginalCombatShotStatus::Ready => Color::new(0.0, 0.95, 1.0, 0.90),
+            OriginalCombatShotStatus::OutOfRange => Color::new(1.0, 0.65, 0.05, 0.82),
+            OriginalCombatShotStatus::Blocked => Color::new(1.0, 0.15, 0.10, 0.82),
+            OriginalCombatShotStatus::AlreadyDown => Color::new(0.70, 0.70, 0.75, 0.76),
+            OriginalCombatShotStatus::Cooling => Color::new(0.95, 0.85, 0.20, 0.76),
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self.status {
+            OriginalCombatShotStatus::Ready => "SHOT",
+            OriginalCombatShotStatus::OutOfRange => "RANGE",
+            OriginalCombatShotStatus::Blocked => "BLOCKED",
+            OriginalCombatShotStatus::AlreadyDown => "DOWN",
+            OriginalCombatShotStatus::Cooling => "COOLDOWN",
+        }
     }
 }
 
@@ -860,6 +921,7 @@ impl WorldState {
             selected_original_debug_agent: 0,
             original_control_runtime: OriginalMissionControlRuntime::default(),
             original_combat_runtime,
+            original_combat_feedback: None,
             original_control_trace: OriginalControlTrace::from_env(),
         }
     }
@@ -876,6 +938,7 @@ impl WorldState {
         self.update_sim_controls();
         self.update_original_scene_cursor_probe();
         self.update_original_debug_agents(real_dt);
+        self.update_original_combat_feedback(real_dt);
         self.update_original_control_trace(real_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
@@ -1355,6 +1418,15 @@ impl WorldState {
         }
     }
 
+    fn update_original_combat_feedback(&mut self, real_dt: f32) {
+        if let Some(feedback) = &mut self.original_combat_feedback {
+            feedback.update(real_dt);
+            if !feedback.is_alive() {
+                self.original_combat_feedback = None;
+            }
+        }
+    }
+
     fn update_original_control_trace(&mut self, real_dt: f32) {
         let force_emit = self.original_control_trace.begin_frame(real_dt);
         if force_emit {
@@ -1610,6 +1682,40 @@ impl WorldState {
             })
     }
 
+    fn draw_original_ped_candidate_role_overlays(
+        &self,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        scene_model: &OriginalMissionScene,
+        controlled_ped_record_indices: &[u16],
+    ) {
+        let objective_target_record = self.original_combat_runtime.objective_target_record_index();
+        for object in scene_model.objects.iter().filter(|object| {
+            object.kind == OriginalMissionObjectKind::Ped
+                && object.candidate_draw
+                && !controlled_ped_record_indices.contains(&object.record_index)
+        }) {
+            let Some(tile) = object.tile else {
+                continue;
+            };
+            let is_target = objective_target_record == Some(object.record_index);
+            let defeated = self
+                .original_combat_runtime
+                .ped_state(object.record_index)
+                .is_some_and(|state| state.defeated);
+            let (label, color) = original_ped_candidate_role_style(object, is_target, defeated);
+            self.map.draw_original_ped_candidate_overlay(
+                &self.camera,
+                map_tiles,
+                graphics,
+                tile,
+                label,
+                color,
+                defeated,
+            );
+        }
+    }
+
     fn original_debug_agent_panel_label(&self) -> String {
         if !self.original_navigation_debug_enabled {
             return "original control gated by G; demo gameplay remains active".to_string();
@@ -1752,6 +1858,8 @@ impl WorldState {
         let mut cooling = 0;
         let mut already_down = 0;
         let mut primary_label = None;
+        let mut feedback_origins = Vec::new();
+        let mut feedback_status = None;
         for idx in selected_agents.iter().copied() {
             let Some(agent) = self.original_debug_agents.get(idx) else {
                 continue;
@@ -1770,6 +1878,10 @@ impl WorldState {
                 check.distance,
                 check.status,
             );
+            if check.status == OriginalCombatShotStatus::Ready || feedback_origins.is_empty() {
+                feedback_origins.push(agent_tile);
+                feedback_status = Some(check.status);
+            }
             match check.status {
                 OriginalCombatShotStatus::Ready => {
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
@@ -1837,6 +1949,17 @@ impl WorldState {
             already_down,
             primary_label.unwrap_or_else(|| "no selected agent could fire".to_string())
         );
+        if !feedback_origins.is_empty() {
+            self.original_combat_feedback = Some(OriginalCombatFeedback::new(
+                feedback_origins,
+                target.tile,
+                if fired > 0 {
+                    OriginalCombatShotStatus::Ready
+                } else {
+                    feedback_status.unwrap_or(OriginalCombatShotStatus::Blocked)
+                },
+            ));
+        }
         true
     }
 
@@ -2208,6 +2331,12 @@ impl WorldState {
                         self.original_object_animation_frame(),
                         &controlled_ped_record_indices,
                     );
+                    self.draw_original_ped_candidate_role_overlays(
+                        map_tiles,
+                        graphics,
+                        scene_model,
+                        &controlled_ped_record_indices,
+                    );
                     if let Some((target_tile, hp_label, objective_complete, defeated)) =
                         self.original_combat_runtime.objective_target_overlay()
                     {
@@ -2219,6 +2348,18 @@ impl WorldState {
                             &hp_label,
                             objective_complete,
                             defeated,
+                        );
+                    }
+                    if let Some(feedback) = &self.original_combat_feedback {
+                        self.map.draw_original_combat_feedback_overlay(
+                            &self.camera,
+                            map_tiles,
+                            graphics,
+                            &feedback.origins,
+                            feedback.target_tile,
+                            feedback.label(),
+                            feedback.color(),
+                            feedback.fade(),
                         );
                     }
                     self.map.draw_original_route_probe_overlay(
@@ -2762,6 +2903,31 @@ fn original_combat_shot_check(
         status,
         distance,
         range: ORIGINAL_CONTROL_WEAPON_RANGE_TILES,
+    }
+}
+
+fn original_ped_candidate_role_style(
+    object: &OriginalMissionObjectCandidate,
+    objective_target: bool,
+    defeated: bool,
+) -> (&'static str, Color) {
+    if defeated {
+        return ("DOWN", Color::new(0.70, 0.70, 0.75, 0.76));
+    }
+    if objective_target {
+        return ("TARGET", Color::new(1.0, 0.10, 0.06, 0.90));
+    }
+    let role_value = object
+        .type_value
+        .filter(|value| *value != 0)
+        .or_else(|| object.subtype_value.filter(|value| *value != 0));
+    match role_value {
+        Some(0x01) => ("CIV", Color::new(0.72, 0.78, 0.82, 0.66)),
+        Some(0x02) => ("NPC AGENT", Color::new(1.0, 0.62, 0.05, 0.78)),
+        Some(0x04) => ("POLICE", Color::new(0.25, 0.70, 1.0, 0.78)),
+        Some(0x08) => ("GUARD", Color::new(1.0, 0.78, 0.08, 0.78)),
+        Some(0x10) => ("CRIM", Color::new(1.0, 0.28, 0.16, 0.78)),
+        _ => ("NPC", Color::new(0.72, 0.78, 0.82, 0.60)),
     }
 }
 
@@ -3540,12 +3706,13 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 #[cfg(test)]
 mod tests {
     use super::{
-        MapRenderMode, OriginalCombatAttackResult, OriginalCombatPedState,
+        MapRenderMode, OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
         OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalDebugActionStatus,
         OriginalDebugAgent, OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus,
         OriginalDebugAgentSpawn, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
         initial_render_mode, original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_combat_shot_check,
+        original_ped_candidate_role_style,
     };
     use crate::engine::{
         map_tiles::OriginalMapTiles,
@@ -3567,6 +3734,28 @@ mod tests {
             off_x: 128,
             off_y: 128,
             off_z: 0,
+        }
+    }
+
+    fn ped_object(type_value: u8, subtype_value: u8) -> OriginalMissionObjectCandidate {
+        OriginalMissionObjectCandidate {
+            kind: OriginalMissionObjectKind::Ped,
+            record_index: 9,
+            desc: Some(0x04),
+            state: Some(0),
+            type_value: Some(type_value),
+            subtype_value: Some(subtype_value),
+            orientation: Some(0),
+            tile: Some(tile(4, 5, 0)),
+            queue_tile: Some(tile(4, 5, 0)),
+            animation: OriginalAnimationRefs {
+                base_anim: Some(0),
+                current_anim: Some(0),
+                current_frame: Some(0),
+            },
+            candidate_record: true,
+            candidate_draw: true,
+            draw_stage: Some(OriginalDrawStage::People),
         }
     }
 
@@ -3970,6 +4159,56 @@ mod tests {
             original_combat_shot_check(start, target, Some(&defeated), true).status,
             OriginalCombatShotStatus::AlreadyDown
         );
+    }
+
+    #[test]
+    fn original_ped_candidate_role_style_distinguishes_target_and_npc_agent() {
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x01, 0), false, false).0,
+            "CIV"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x02, 0), false, false).0,
+            "NPC AGENT"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x08, 0), false, false).0,
+            "GUARD"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0, 0x10), false, false).0,
+            "CRIM"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x02, 0), true, false).0,
+            "TARGET"
+        );
+        assert_eq!(
+            original_ped_candidate_role_style(&ped_object(0x02, 0), true, true).0,
+            "DOWN"
+        );
+    }
+
+    #[test]
+    fn original_combat_feedback_fades_and_labels_status() {
+        let mut feedback = OriginalCombatFeedback::new(
+            vec![tile(1, 1, 0)],
+            tile(2, 2, 0),
+            OriginalCombatShotStatus::Ready,
+        );
+        assert!(feedback.is_alive());
+        assert_eq!(feedback.label(), "SHOT");
+        assert!(feedback.fade() > 0.99);
+        feedback.update(super::ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS + 0.01);
+        assert!(!feedback.is_alive());
+        assert_eq!(feedback.fade(), 0.0);
+
+        let blocked = OriginalCombatFeedback::new(
+            vec![tile(1, 1, 0)],
+            tile(2, 2, 0),
+            OriginalCombatShotStatus::Blocked,
+        );
+        assert_eq!(blocked.label(), "BLOCKED");
     }
 
     #[test]
