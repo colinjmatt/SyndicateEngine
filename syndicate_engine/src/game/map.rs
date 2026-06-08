@@ -653,6 +653,7 @@ impl TacticalMap {
         selected: bool,
         label: &str,
         animation_frame: u16,
+        under_fire: bool,
     ) {
         let tile_width = graphics.bank().record_width as f32;
         let tile_height = graphics.bank().record_height as f32;
@@ -732,6 +733,22 @@ impl TacticalMap {
         if selected {
             draw_text(label, p.x + 10.0, p.y - 12.0, 12.0, color);
         }
+        if under_fire {
+            draw_circle_lines(
+                p.x,
+                p.y,
+                radius + 7.0,
+                2.0,
+                Color::new(1.0, 0.05, 0.1, 0.86),
+            );
+            draw_text(
+                "UNDER FIRE",
+                p.x + 10.0,
+                p.y + 22.0,
+                11.0,
+                Color::new(1.0, 0.1, 0.1, 0.88),
+            );
+        }
     }
 
     pub fn draw_original_debug_interaction_overlay(
@@ -791,6 +808,35 @@ impl TacticalMap {
         }
         draw_text("TARGET", p.x + 12.0, p.y - 16.0, 12.0, color);
         draw_text(hp_label, p.x + 12.0, p.y - 2.0, 11.0, color);
+    }
+
+    pub fn draw_original_combat_hover_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        target_tile: OriginalTilePoint,
+        label: &str,
+        hostile: bool,
+    ) {
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let p =
+            original_tile_marker_screen(camera, map_tiles, target_tile, tile_width, tile_height);
+        let color = if hostile {
+            Color::new(1.0, 0.32, 0.06, 0.88)
+        } else {
+            Color::new(0.95, 0.85, 0.12, 0.78)
+        };
+        draw_circle_lines(p.x, p.y, 22.0, 1.5, color);
+        draw_circle_lines(
+            p.x,
+            p.y,
+            27.0,
+            1.0,
+            Color::new(color.r, color.g, color.b, 0.42),
+        );
+        draw_text(label, p.x + 13.0, p.y - 30.0, 11.0, color);
     }
 
     pub fn draw_original_ped_candidate_overlay(

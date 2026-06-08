@@ -587,6 +587,7 @@ pub enum OriginalCombatLineStatus {
     CandidateClear,
     BlockedByStaticFootprint,
     BlockedByVehicleFootprint,
+    BlockedByPedOccupancy,
     HeightTransitionUnproven,
     SpatialModelUnavailable,
 }
@@ -1265,9 +1266,10 @@ impl OriginalMissionScene {
             .as_ref()
             .map(|model| {
                 format!(
-                    "combat line probe candidate blockers static {} vehicle {}; runtime-only aggregate, not proof of final line-of-fire semantics",
+                    "combat line probe candidate blockers static {} vehicle {} ped {}; runtime-only aggregate, not proof of final line-of-fire semantics",
                     model.static_blocked_tiles.len(),
-                    model.vehicle_blocked_tiles.len()
+                    model.vehicle_blocked_tiles.len(),
+                    model.ped_occupied_tiles.len()
                 )
             })
             .unwrap_or_else(|| {
@@ -3529,6 +3531,14 @@ impl OriginalSpatialModel {
                     checked_tiles,
                     Some(key.to_tile_point()),
                     "vehicle footprint candidate",
+                );
+            }
+            if self.ped_occupied_tiles.contains(key) {
+                return OriginalCombatLineProbe::blocked(
+                    OriginalCombatLineStatus::BlockedByPedOccupancy,
+                    checked_tiles,
+                    Some(key.to_tile_point()),
+                    "ped occupancy candidate",
                 );
             }
         }
@@ -6623,6 +6633,63 @@ mod tests {
         assert_eq!(blocked.blocker_label, "static footprint candidate");
         assert_eq!(blocked.blocker_tile.unwrap().tile_x, 2);
         assert_eq!(clear.status, OriginalCombatLineStatus::CandidateClear);
+        assert!(scene.report_row().contains("combat line probe"));
+        assert!(!scene.report_row().contains("00 00"));
+        assert!(!scene.report_row().contains("0x"));
+    }
+
+    #[test]
+    fn combat_line_probe_blocks_ped_occupancy_without_bytes() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 24];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let map_tiles = synthetic_map_tiles(5, 1, 2, [1, 0]);
+        let tile_types = synthetic_tile_types(&[(1, 0x05)]);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            collect_candidate_objects(&decoded),
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            Some(&map_tiles),
+            Some(&tile_types),
+        );
+        let start = super::OriginalTilePoint {
+            tile_x: 0,
+            tile_y: 0,
+            tile_z: 0,
+            off_x: 128,
+            off_y: 128,
+            off_z: 0,
+        };
+        let blocked = scene.original_combat_line_probe_between(
+            start,
+            super::OriginalTilePoint {
+                tile_x: 4,
+                tile_y: 0,
+                tile_z: 0,
+                off_x: 128,
+                off_y: 128,
+                off_z: 0,
+            },
+        );
+
+        assert_eq!(
+            blocked.status,
+            OriginalCombatLineStatus::BlockedByPedOccupancy
+        );
+        assert_eq!(blocked.blocker_label, "ped occupancy candidate");
         assert!(scene.report_row().contains("combat line probe"));
         assert!(!scene.report_row().contains("00 00"));
         assert!(!scene.report_row().contains("0x"));
