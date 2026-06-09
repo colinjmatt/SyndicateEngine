@@ -651,6 +651,7 @@ impl TacticalMap {
         route: &[OriginalTilePoint],
         progress: f32,
         selected: bool,
+        primary_selected: bool,
         label: &str,
         animation_frame: u16,
         combat_status_label: Option<&str>,
@@ -718,20 +719,50 @@ impl TacticalMap {
             );
         }
 
-        let color = if selected {
-            Color::new(0.0, 0.95, 1.0, 0.90)
+        let color = if primary_selected {
+            Color::new(1.0, 0.92, 0.05, 0.95)
+        } else if selected {
+            Color::new(0.0, 0.95, 1.0, 0.86)
         } else {
             Color::new(0.2, 0.75, 1.0, 0.54)
         };
-        let radius = if selected { 12.0 } else { 8.0 };
+        let radius = if primary_selected {
+            15.0
+        } else if selected {
+            11.0
+        } else {
+            8.0
+        };
         draw_circle_lines(p.x, p.y, radius, 2.0, color);
         if !drew_sprite {
-            draw_circle(p.x, p.y, if selected { 4.5 } else { 3.0 }, color);
+            draw_circle(
+                p.x,
+                p.y,
+                if primary_selected {
+                    5.0
+                } else if selected {
+                    4.0
+                } else {
+                    3.0
+                },
+                color,
+            );
+        } else if primary_selected {
+            draw_circle_lines(p.x, p.y, 21.0, 1.7, Color::new(1.0, 1.0, 0.2, 0.88));
         } else if selected {
-            draw_circle_lines(p.x, p.y, 17.0, 1.5, Color::new(1.0, 1.0, 0.2, 0.86));
+            draw_circle_lines(p.x, p.y, 17.0, 1.3, Color::new(0.0, 0.95, 1.0, 0.72));
         }
-        if selected {
+        if primary_selected {
             draw_text(label, p.x + 10.0, p.y - 12.0, 12.0, color);
+        } else if selected {
+            let agent_short = label.split_whitespace().nth(2).unwrap_or("?");
+            draw_text(
+                &format!("A{agent_short}"),
+                p.x + 9.0,
+                p.y - 9.0,
+                10.0,
+                color,
+            );
         }
         if let Some(combat_status_label) = combat_status_label {
             let warning_color = if combat_status_label == "LOCAL DOWN" {

@@ -89,6 +89,7 @@ const ORIGINAL_CONTROL_CIVILIAN_FLEE_RADIUS: u16 = 6;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
+const ORIGINAL_CONTROL_FORMATION_STEP_DELAY_SECS: f32 = 0.10;
 const ORIGINAL_FORMATION_OFFSETS: [(i16, i16); 8] = [
     (0, 0),
     (-1, 0),
@@ -123,6 +124,7 @@ struct OriginalDebugAgent {
     selected: bool,
     sprite_ready: bool,
     route_status: OriginalDebugAgentRouteStatus,
+    route_start_delay: f32,
     direction: OriginalDebugAgentDirection,
     weapon_cooldown: f32,
     weapons: Vec<OriginalCombatWeaponProfile>,
@@ -523,6 +525,23 @@ struct OriginalLocalInteractionOverlay {
     ready: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OriginalLocalRouteGate {
+    closed_door: Option<OriginalTilePoint>,
+    opened_doors: usize,
+    dynamic_blocker: Option<OriginalTilePoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginalPlayHudSummary {
+    objective: String,
+    squad: String,
+    combat: String,
+    interaction: String,
+    controls: String,
+    complete: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OriginalLocalMissionState {
     ProofMissing,
@@ -911,6 +930,13 @@ impl OriginalMissionCombatRuntime {
         self.civilian_panics
             .get(&record_index)
             .map(OriginalCivilianPanicState::overlay_label)
+    }
+
+    fn hostile_pressure_steps(&self) -> usize {
+        self.hostile_reactions
+            .values()
+            .map(|reaction| reaction.pressure_steps)
+            .sum()
     }
 
     fn ped_runtime_tile(
@@ -2176,6 +2202,7 @@ impl WorldState {
             let append_order = append_original_route_order();
             let selected_indices = self.selected_original_debug_agent_indices();
             let selected_set = selected_indices.iter().copied().collect::<BTreeSet<_>>();
+            let selected_count = selected_indices.len();
             let mut down_blocked = 0;
             let selected_agents = selected_indices
                 .into_iter()
@@ -2201,6 +2228,9 @@ impl WorldState {
             }
             let route_probes = {
                 let scene = self.original_mission_scene.as_ref().expect("checked above");
+                let door_tiles = original_route_door_candidate_tiles(scene);
+                let opened_doors = self.original_control_runtime.opened_door_tiles.clone();
+                let dynamic_blockers = self.local_route_dynamic_blocker_tiles(&selected_set);
                 let mut occupied = self.local_route_occupied_tiles(&selected_set);
                 selected_agents
                     .into_iter()
@@ -2212,8 +2242,11 @@ impl WorldState {
                             goal,
                             formation_idx,
                             &mut occupied,
+                            &door_tiles,
+                            &opened_doors,
+                            &dynamic_blockers,
                         );
-                        (idx, route_probe, fallback_attempts)
+                        (idx, formation_idx, route_probe, fallback_attempts)
                     })
                     .collect::<Vec<_>>()
             };
@@ -2223,7 +2256,8 @@ impl WorldState {
             let mut first_ready_probe = None;
             let mut first_blocked_probe = None;
             let mut fallback_attempts_total = 0;
-            for (idx, route_probe, fallback_attempts) in route_probes {
+            let mut local_gate_blocked = 0;
+            for (idx, formation_idx, route_probe, fallback_attempts) in route_probes {
                 fallback_attempts_total += fallback_attempts;
                 if idx == self.selected_original_debug_agent {
                     selected_probe = Some(route_probe.clone());
@@ -2238,9 +2272,20 @@ impl WorldState {
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.clear_interaction_intent();
                         agent.assign_route_from_probe(&route_probe, append_order);
+                        let delay = original_formation_start_delay(
+                            formation_idx,
+                            selected_count,
+                            append_order,
+                        );
+                        agent.set_route_start_delay(delay);
                     }
                 } else {
                     blocked += 1;
+                    if route_probe.message.contains("local door gate blocked")
+                        || route_probe.message.contains("local dynamic blocker")
+                    {
+                        local_gate_blocked += 1;
+                    }
                     if first_blocked_probe.is_none() {
                         first_blocked_probe = Some(route_probe.clone());
                     }
@@ -2265,10 +2310,11 @@ impl WorldState {
                 format!("{fallback_attempts_total} formation fallback probes")
             };
             self.combat_log = format!(
-                "Original mission movement {order_kind}: selected {}, ready {}, blocked {}; {}; {}; demo gameplay active",
+                "Original mission movement {order_kind}: selected {}, ready {}, blocked {} (local gates {}); {}; {}; demo gameplay active",
                 ready + blocked,
                 ready,
                 blocked,
+                local_gate_blocked,
                 fallback_label,
                 display_probe
                     .map(|probe| probe.panel_label())
@@ -2299,12 +2345,36 @@ impl WorldState {
             .collect()
     }
 
+    fn local_route_dynamic_blocker_tiles(
+        &self,
+        selected_indices: &BTreeSet<usize>,
+    ) -> Vec<OriginalTilePoint> {
+        let mut blockers = self
+            .original_debug_agents
+            .iter()
+            .enumerate()
+            .filter(|(idx, agent)| !selected_indices.contains(idx) && agent.is_local_down())
+            .map(|(_, agent)| agent.current_tile())
+            .collect::<Vec<_>>();
+        blockers.extend(
+            self.original_combat_runtime
+                .peds
+                .values()
+                .filter(|state| state.defeated)
+                .map(|state| state.tile),
+        );
+        blockers
+    }
+
     fn original_formation_route_probe(
         scene_model: &OriginalMissionScene,
         start: OriginalTilePoint,
         goal: OriginalTilePoint,
         formation_idx: usize,
         occupied: &mut Vec<OriginalTilePoint>,
+        door_tiles: &[OriginalTilePoint],
+        opened_doors: &BTreeSet<OriginalTilePoint>,
+        dynamic_blockers: &[OriginalTilePoint],
     ) -> (OriginalRuntimeRouteProbe, usize) {
         let mut seen = BTreeSet::new();
         let mut first_probe = None;
@@ -2320,10 +2390,28 @@ impl WorldState {
             if probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
                 && !probe.path.is_empty()
             {
-                if let Some(goal_tile) = probe.goal_tile.or_else(|| probe.path.last().copied()) {
-                    occupied.push(goal_tile);
+                let (probe, gate) = original_apply_local_route_gates(
+                    probe,
+                    door_tiles,
+                    opened_doors,
+                    dynamic_blockers,
+                );
+                if probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady {
+                    for reservation in original_route_spacing_reservations(&probe.path) {
+                        occupied.push(reservation);
+                    }
+                    if let Some(goal_tile) = probe.goal_tile.or_else(|| probe.path.last().copied())
+                    {
+                        occupied.push(goal_tile);
+                    }
+                    let _ = gate;
+                    return (probe, fallback_attempts);
                 }
-                return (probe, fallback_attempts);
+                if first_probe.is_none() {
+                    first_probe = Some(probe);
+                }
+                fallback_attempts += 1;
+                continue;
             }
             if first_probe.is_none() {
                 first_probe = Some(probe);
@@ -2508,6 +2596,31 @@ impl WorldState {
             .original_combat_runtime
             .local_mission_state_with_agents(&self.original_debug_agents);
         if self.original_control_trace.playtest && mission_state.is_complete() {
+            if self.original_control_trace.require_completion {
+                println!(
+                    "[original-control] playtest local mission complete after {} frames; verifying reset and interaction gate state",
+                    self.original_control_trace.frame
+                );
+                let interaction = self.original_playtest_interaction_gate_label();
+                let reset_ok = self.reset_original_local_playtest_state();
+                let reset_state = self
+                    .original_combat_runtime
+                    .local_mission_state_with_agents(&self.original_debug_agents);
+                println!(
+                    "[original-control] playtest reset verification reset={} state={} agents={} interaction={}",
+                    reset_ok,
+                    reset_state.label(),
+                    self.original_debug_agents.len(),
+                    interaction
+                );
+                std::process::exit(
+                    if reset_ok && reset_state == OriginalLocalMissionState::Active {
+                        0
+                    } else {
+                        2
+                    },
+                );
+            }
             println!(
                 "[original-control] playtest local mission complete after {} frames; exiting",
                 self.original_control_trace.frame
@@ -3666,6 +3779,119 @@ impl WorldState {
         }
     }
 
+    fn original_play_hud_summary(&self) -> Option<OriginalPlayHudSummary> {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe {
+            return None;
+        }
+        let mission_state = self
+            .original_combat_runtime
+            .local_mission_state_with_agents(&self.original_debug_agents);
+        let objective = self
+            .original_combat_runtime
+            .objective_target_state()
+            .map(|state| {
+                if mission_state.is_complete() {
+                    "Objective complete - target down".to_string()
+                } else if state.defeated {
+                    "Objective target down - completion pending".to_string()
+                } else {
+                    format!("Objective: target HP {}/{}", state.hp, state.max_hp)
+                }
+            })
+            .unwrap_or_else(|| "Objective: candidate target pending".to_string());
+        let selected = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| agent.selected)
+            .count();
+        let moving = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| agent.route_status == OriginalDebugAgentRouteStatus::Moving)
+            .count();
+        let queued = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| agent.route_status == OriginalDebugAgentRouteStatus::Queued)
+            .count();
+        let down = self
+            .original_debug_agents
+            .iter()
+            .filter(|agent| agent.is_local_down())
+            .count();
+        let primary = self
+            .original_debug_agents
+            .get(self.selected_original_debug_agent)
+            .map(|agent| {
+                format!(
+                    "A{} {} HP {}/{}",
+                    agent.slot + 1,
+                    agent
+                        .selected_weapon()
+                        .map(|weapon| weapon.label)
+                        .unwrap_or("unarmed"),
+                    agent.local_hp,
+                    agent.local_max_hp
+                )
+            })
+            .unwrap_or_else(|| "A? unavailable".to_string());
+        let squad = format!(
+            "Squad: selected {} | moving {} queued {} down {} | {}",
+            selected, moving, queued, down, primary
+        );
+        let combat = format!(
+            "Combat: shots {} hits {} hostile returns {} pressure {} panic {}",
+            self.original_combat_runtime.shots_fired,
+            self.original_combat_runtime.hits,
+            self.original_combat_runtime.hostile_return_fire,
+            self.original_combat_runtime.hostile_pressure_steps(),
+            self.original_combat_runtime.civilian_panics.len()
+        );
+        let interaction = format!(
+            "Actions: doors open {} | vehicle links {} | pickup blockers {} | R reset",
+            self.original_control_runtime.opened_door_tiles.len(),
+            self.original_control_runtime.vehicle_entry_tiles.len(),
+            self.original_control_runtime.pickup_blocked_tiles.len()
+        );
+        Some(OriginalPlayHudSummary {
+            objective,
+            squad,
+            combat,
+            interaction,
+            controls: "Right-click move | Left-click select/fire | E action | Q weapon | T details"
+                .to_string(),
+            complete: mission_state.is_complete(),
+        })
+    }
+
+    fn original_playtest_interaction_gate_label(&self) -> String {
+        let Some(scene_model) = self.original_mission_scene.as_ref() else {
+            return "interaction proof missing: scene model unavailable".to_string();
+        };
+        if scene_model.interaction_probe.door_interaction_candidates > 0 {
+            return format!(
+                "door/open local gate candidates {} opened {}; route blocker mutation remains gated",
+                scene_model.interaction_probe.door_interaction_candidates,
+                self.original_control_runtime.opened_door_tiles.len()
+            );
+        }
+        if scene_model.interaction_probe.weapon_pickup_candidates > 0 {
+            return format!(
+                "pickup local candidates {} blockers {}; inventory mutation gated",
+                scene_model.interaction_probe.weapon_pickup_candidates,
+                self.original_control_runtime.pickup_blocked_tiles.len()
+            );
+        }
+        if scene_model.interaction_probe.vehicle_entry_candidates > 0 {
+            return format!(
+                "vehicle local candidates {} links {}; passenger mutation gated",
+                scene_model.interaction_probe.vehicle_entry_candidates,
+                self.original_control_runtime.vehicle_entry_tiles.len()
+            );
+        }
+        "interaction proof blocked: no local door/pickup/vehicle bucket available".to_string()
+    }
+
     fn clamp_original_map_camera(&mut self) {
         if matches!(
             self.render_mode,
@@ -4056,6 +4282,7 @@ impl WorldState {
                                 &agent.route,
                                 agent.route_progress,
                                 agent.selected,
+                                agent.slot as usize == self.selected_original_debug_agent,
                                 &agent.map_label(),
                                 agent.animation_frame(self.original_object_animation_frame()),
                                 agent.combat_overlay_label(),
@@ -4099,29 +4326,36 @@ impl WorldState {
             } else {
                 self.current_map_panel_label()
             };
-            let original_debug_agent_label = self.original_debug_agent_panel_label();
-            draw_map_diagnostic_panel(
-                self.current_diagnostic_scene(),
-                self.current_block_correlation(),
-                self.original_mission.as_ref(),
-                self.original_mission_scene.as_ref(),
-                self.original_map_view.as_ref(),
-                self.original_graphics.as_ref(),
-                self.original_object_graphics.as_ref(),
-                self.original_map_tiles.as_ref(),
-                self.original_tile_types.as_ref(),
-                self.original_graphics_field(),
-                self.render_mode,
-                &map_label,
-                &self.camera,
-                self.original_cursor_tile,
-                self.original_route_probe.as_ref(),
-                self.original_interaction_probe.as_ref(),
-                self.original_navigation_debug_enabled,
-                &original_debug_agent_label,
-                &self.original_control_runtime.panel_label(),
-                &self.original_combat_runtime.panel_label(),
-            );
+            if self.render_mode == MapRenderMode::OriginalMissionSceneProbe
+                && !self.original_control_trace.enabled
+                && let Some(summary) = self.original_play_hud_summary()
+            {
+                draw_original_control_play_panel(&summary);
+            } else {
+                let original_debug_agent_label = self.original_debug_agent_panel_label();
+                draw_map_diagnostic_panel(
+                    self.current_diagnostic_scene(),
+                    self.current_block_correlation(),
+                    self.original_mission.as_ref(),
+                    self.original_mission_scene.as_ref(),
+                    self.original_map_view.as_ref(),
+                    self.original_graphics.as_ref(),
+                    self.original_object_graphics.as_ref(),
+                    self.original_map_tiles.as_ref(),
+                    self.original_tile_types.as_ref(),
+                    self.original_graphics_field(),
+                    self.render_mode,
+                    &map_label,
+                    &self.camera,
+                    self.original_cursor_tile,
+                    self.original_route_probe.as_ref(),
+                    self.original_interaction_probe.as_ref(),
+                    self.original_navigation_debug_enabled,
+                    &original_debug_agent_label,
+                    &self.original_control_runtime.panel_label(),
+                    &self.original_combat_runtime.panel_label(),
+                );
+            }
         }
 
         let hud_order = self.selected_agent_hud_order();
@@ -4167,6 +4401,7 @@ impl OriginalDebugAgent {
             selected,
             sprite_ready: spawn.sprite_ready,
             route_status: OriginalDebugAgentRouteStatus::Idle,
+            route_start_delay: 0.0,
             direction: OriginalDebugAgentDirection::South,
             weapon_cooldown: 0.0,
             weapons,
@@ -4214,6 +4449,7 @@ impl OriginalDebugAgent {
         };
         self.route = route;
         self.route_progress = progress;
+        self.route_start_delay = 0.0;
         self.route_status = OriginalDebugAgentRouteStatus::Queued;
     }
 
@@ -4236,6 +4472,7 @@ impl OriginalDebugAgent {
                 self.route.push(self.tile);
             }
             self.route_progress = 0.0;
+            self.route_start_delay = 0.0;
             self.route_status = OriginalDebugAgentRouteStatus::Arrived;
             return;
         }
@@ -4243,15 +4480,26 @@ impl OriginalDebugAgent {
         self.assign_route_from_current(route_probe.path.clone(), false, start_tile);
     }
 
+    fn set_route_start_delay(&mut self, delay_secs: f32) {
+        if self.route.len() > 1 {
+            self.route_start_delay = delay_secs.max(0.0);
+            if self.route_start_delay > 0.0 {
+                self.route_status = OriginalDebugAgentRouteStatus::Queued;
+            }
+        }
+    }
+
     fn clear_route(&mut self) {
         self.route.clear();
         self.route_progress = 0.0;
+        self.route_start_delay = 0.0;
         self.route_status = OriginalDebugAgentRouteStatus::Idle;
     }
 
     fn block_route(&mut self) {
         self.route.clear();
         self.route_progress = 0.0;
+        self.route_start_delay = 0.0;
         self.route_status = OriginalDebugAgentRouteStatus::Blocked;
     }
 
@@ -4276,6 +4524,7 @@ impl OriginalDebugAgent {
             OriginalDebugInteractionIntentStatus::ReadyAtTarget => {
                 self.route.clear();
                 self.route_progress = 0.0;
+                self.route_start_delay = 0.0;
                 self.route_status = OriginalDebugAgentRouteStatus::Arrived;
                 self.interaction_intent = Some(intent);
                 self.action_state = Some(action_state);
@@ -4294,9 +4543,15 @@ impl OriginalDebugAgent {
         if self.local_down_test {
             self.route.clear();
             self.route_progress = 0.0;
+            self.route_start_delay = 0.0;
             if self.route_status != OriginalDebugAgentRouteStatus::Blocked {
                 self.route_status = OriginalDebugAgentRouteStatus::Blocked;
             }
+            return None;
+        }
+        if self.route_start_delay > 0.0 {
+            self.route_start_delay = (self.route_start_delay - real_dt.max(0.0)).max(0.0);
+            self.route_status = OriginalDebugAgentRouteStatus::Queued;
             return None;
         }
         if self.route.len() >= 2 {
@@ -4312,6 +4567,7 @@ impl OriginalDebugAgent {
                 if let Some(last) = self.route.last().copied() {
                     self.tile = last;
                 }
+                self.route_start_delay = 0.0;
                 self.route_status = OriginalDebugAgentRouteStatus::Arrived;
                 if let Some(intent) = self.interaction_intent.as_mut() {
                     intent.mark_ready_after_route(self.tile);
@@ -4700,6 +4956,31 @@ fn append_original_route_order() -> bool {
     extend_original_debug_selection()
 }
 
+fn original_formation_start_delay(
+    formation_idx: usize,
+    selected_count: usize,
+    append_order: bool,
+) -> f32 {
+    if append_order || selected_count <= 1 {
+        0.0
+    } else {
+        formation_idx as f32 * ORIGINAL_CONTROL_FORMATION_STEP_DELAY_SECS
+    }
+}
+
+fn original_route_spacing_reservations(path: &[OriginalTilePoint]) -> Vec<OriginalTilePoint> {
+    let mut reservations = Vec::new();
+    for tile in path.iter().rev().take(3).copied() {
+        if reservations
+            .iter()
+            .all(|reserved| original_tile_dedupe_key(*reserved) != original_tile_dedupe_key(tile))
+        {
+            reservations.push(tile);
+        }
+    }
+    reservations
+}
+
 fn original_formation_requested_tile(
     goal: OriginalTilePoint,
     formation_idx: usize,
@@ -4742,6 +5023,92 @@ fn original_formation_goal_candidates(
     let mut seen = BTreeSet::new();
     candidates.retain(|candidate| seen.insert(original_tile_dedupe_key(*candidate)));
     candidates
+}
+
+fn original_route_door_candidate_tiles(
+    scene_model: &OriginalMissionScene,
+) -> Vec<OriginalTilePoint> {
+    scene_model
+        .objects
+        .iter()
+        .filter(|object| {
+            object.kind == OriginalMissionObjectKind::Static
+                && object.candidate_draw
+                && (matches!(object.type_value, Some(3 | 4))
+                    || matches!(object.subtype_value, Some(0x0c..=0x0f | 0x26)))
+        })
+        .filter_map(|object| object.tile)
+        .collect()
+}
+
+fn original_apply_local_route_gates(
+    mut probe: OriginalRuntimeRouteProbe,
+    door_tiles: &[OriginalTilePoint],
+    opened_doors: &BTreeSet<OriginalTilePoint>,
+    dynamic_blockers: &[OriginalTilePoint],
+) -> (OriginalRuntimeRouteProbe, OriginalLocalRouteGate) {
+    let gate = original_local_route_gate(&probe.path, door_tiles, opened_doors, dynamic_blockers);
+    if probe.status != OriginalRuntimeRouteStatus::CandidateRouteReady {
+        return (probe, gate);
+    }
+    if let Some(blocker) = gate.dynamic_blocker {
+        probe.status = OriginalRuntimeRouteStatus::CandidateRouteBlocked;
+        probe.message = format!(
+            "original route locally blocked by local dynamic blocker at {}; final occupancy semantics gated",
+            original_tile_short_label(blocker)
+        );
+        return (probe, gate);
+    }
+    if let Some(door) = gate.closed_door {
+        probe.status = OriginalRuntimeRouteStatus::CandidateRouteBlocked;
+        probe.message = format!(
+            "original route local door gate blocked at {}; press E near the door to open the runtime-only route overlay; final door semantics gated",
+            original_tile_short_label(door)
+        );
+        return (probe, gate);
+    }
+    if gate.opened_doors > 0 {
+        probe.message = format!(
+            "{}; local door-open gate allowed {} candidate tile(s)",
+            probe.message, gate.opened_doors
+        );
+    }
+    (probe, gate)
+}
+
+fn original_local_route_gate(
+    path: &[OriginalTilePoint],
+    door_tiles: &[OriginalTilePoint],
+    opened_doors: &BTreeSet<OriginalTilePoint>,
+    dynamic_blockers: &[OriginalTilePoint],
+) -> OriginalLocalRouteGate {
+    let mut gate = OriginalLocalRouteGate::default();
+    for tile in path.iter().skip(1).copied() {
+        if let Some(blocker) = dynamic_blockers
+            .iter()
+            .copied()
+            .find(|blocker| original_tile_same_cell(*blocker, tile))
+        {
+            gate.dynamic_blocker = Some(blocker);
+            break;
+        }
+        if door_tiles
+            .iter()
+            .copied()
+            .any(|door| original_tile_same_cell(door, tile))
+        {
+            if opened_doors
+                .iter()
+                .copied()
+                .any(|opened| original_tile_matches_open_door(opened, tile))
+            {
+                gate.opened_doors += 1;
+            } else if gate.closed_door.is_none() {
+                gate.closed_door = Some(tile);
+            }
+        }
+    }
+    gate
 }
 
 fn original_standoff_tile_toward(
@@ -4841,6 +5208,18 @@ fn original_tile_dedupe_key(tile: OriginalTilePoint) -> (u16, u16, u16, u8, u8) 
 
 fn original_tile_distance(a: OriginalTilePoint, b: OriginalTilePoint) -> u16 {
     a.tile_x.abs_diff(b.tile_x) + a.tile_y.abs_diff(b.tile_y) + a.tile_z.abs_diff(b.tile_z)
+}
+
+fn original_tile_same_cell(a: OriginalTilePoint, b: OriginalTilePoint) -> bool {
+    a.tile_x == b.tile_x && a.tile_y == b.tile_y && a.tile_z.abs_diff(b.tile_z) <= 1
+}
+
+fn original_tile_matches_open_door(
+    opened: OriginalTilePoint,
+    path_tile: OriginalTilePoint,
+) -> bool {
+    opened.tile_x.abs_diff(path_tile.tile_x) + opened.tile_y.abs_diff(path_tile.tile_y) <= 1
+        && opened.tile_z.abs_diff(path_tile.tile_z) <= 1
 }
 
 fn range_tiles_from_freesynd_world_range(range_world: u16) -> u16 {
@@ -5009,6 +5388,32 @@ fn draw_minimap(agents: &[Agent]) {
         let py = y + 38.0 + agent.grid.y / 28.0 * 124.0;
         draw_circle(px, py, if agent.selected { 5.0 } else { 3.5 }, agent.color);
     }
+}
+
+fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
+    let panel_width = 430.0_f32.min(screen_width() - 44.0);
+    let panel_height = 142.0;
+    let x = screen_width() - panel_width - 22.0;
+    let y = 22.0;
+    let accent = if summary.complete {
+        Color::new(0.2, 1.0, 0.25, 0.92)
+    } else {
+        SKYBLUE
+    };
+    draw_rectangle(
+        x,
+        y,
+        panel_width,
+        panel_height,
+        Color::new(0.0, 0.0, 0.0, 0.58),
+    );
+    draw_rectangle_lines(x, y, panel_width, panel_height, 2.0, accent);
+    draw_text("MISSION 1 LOCAL CONTROL", x + 14.0, y + 24.0, 16.0, accent);
+    draw_text(&summary.objective, x + 14.0, y + 48.0, 13.0, YELLOW);
+    draw_text(&summary.squad, x + 14.0, y + 70.0, 12.0, LIGHTGRAY);
+    draw_text(&summary.combat, x + 14.0, y + 92.0, 12.0, ORANGE);
+    draw_text(&summary.interaction, x + 14.0, y + 114.0, 12.0, SKYBLUE);
+    draw_text(&summary.controls, x + 14.0, y + 134.0, 11.0, GRAY);
 }
 
 fn draw_map_diagnostic_panel(
@@ -5756,10 +6161,12 @@ mod tests {
         OriginalPlaytestFirePosture, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_agent_screen_needs_follow,
-        original_combat_shot_check, original_flee_goal_from_threat,
-        original_formation_goal_candidates, original_formation_requested_tile,
-        original_hostile_return_fire_check, original_ped_candidate_role_style,
-        original_playtest_standoff_goal_candidates, original_standoff_tile_toward,
+        original_apply_local_route_gates, original_combat_shot_check,
+        original_flee_goal_from_threat, original_formation_goal_candidates,
+        original_formation_requested_tile, original_formation_start_delay,
+        original_hostile_return_fire_check, original_local_route_gate,
+        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
+        original_route_spacing_reservations, original_standoff_tile_toward,
         range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
@@ -5843,6 +6250,35 @@ mod tests {
         assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Arrived);
         agent.clear_route();
         assert_eq!(agent.current_tile(), tile(6, 6, 0));
+    }
+
+    #[test]
+    fn debug_agent_route_start_delay_staggers_formation_without_rewriting_route() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 2,
+                record_index: 8,
+                tile: tile(4, 5, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        agent.assign_route(vec![tile(4, 5, 0), tile(5, 5, 0), tile(6, 5, 0)], false);
+        agent.set_route_start_delay(0.2);
+
+        agent.update(0.05);
+        assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Queued);
+        assert_eq!(agent.current_tile(), tile(4, 5, 0));
+        assert_eq!(agent.route.first().copied(), Some(tile(4, 5, 0)));
+
+        agent.update(0.20);
+        assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Queued);
+        assert_eq!(agent.current_tile(), tile(4, 5, 0));
+
+        agent.update(0.05);
+        assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Moving);
+        assert_eq!(agent.route.first().copied(), Some(tile(4, 5, 0)));
+        assert!(!agent.render_label().contains("00 00"));
     }
 
     #[test]
@@ -6238,6 +6674,9 @@ mod tests {
         assert_eq!(original_formation_requested_tile(goal, 0), goal);
         assert_eq!(original_formation_requested_tile(goal, 1), tile(9, 10, 1));
         assert_eq!(original_formation_requested_tile(goal, 2), tile(10, 9, 1));
+        assert_eq!(original_formation_start_delay(0, 4, false), 0.0);
+        assert!(original_formation_start_delay(3, 4, false) > 0.25);
+        assert_eq!(original_formation_start_delay(3, 4, true), 0.0);
         assert_eq!(
             original_formation_requested_tile(tile(0, 0, 0), 1),
             tile(0, 0, 0)
@@ -6246,6 +6685,9 @@ mod tests {
         assert_eq!(formation_candidates.first().copied(), Some(tile(11, 10, 1)));
         assert!(formation_candidates.contains(&goal));
         assert!(formation_candidates.len() >= ORIGINAL_FORMATION_OFFSETS.len());
+        let reservations =
+            original_route_spacing_reservations(&[tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)]);
+        assert_eq!(reservations.first().copied(), Some(tile(3, 1, 0)));
 
         let standoff = original_standoff_tile_toward(goal, tile(4, 12, 1), 4);
         assert_eq!(standoff, tile(6, 14, 1));
@@ -6282,6 +6724,62 @@ mod tests {
             .join(";");
         assert!(!label.contains("0x"));
         assert!(!label.contains("00 00"));
+    }
+
+    #[test]
+    fn original_local_route_gate_blocks_closed_doors_and_dynamic_blockers_without_bytes() {
+        let path = vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)];
+        let door_tiles = vec![tile(2, 1, 0)];
+        let opened = std::collections::BTreeSet::new();
+        let gate = original_local_route_gate(&path, &door_tiles, &opened, &[]);
+        assert_eq!(gate.closed_door, Some(tile(2, 1, 0)));
+        assert_eq!(gate.opened_doors, 0);
+
+        let mut opened = std::collections::BTreeSet::new();
+        opened.insert(tile(2, 1, 0));
+        let route_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 0)),
+            goal_tile: Some(tile(3, 1, 0)),
+            requested_goal_tile: Some(tile(3, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: path.clone(),
+            message: "synthetic route ready".to_string(),
+        };
+        let (opened_probe, opened_gate) =
+            original_apply_local_route_gates(route_probe, &door_tiles, &opened, &[]);
+        assert_eq!(
+            opened_probe.status,
+            OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert_eq!(opened_gate.opened_doors, 1);
+        assert!(
+            opened_probe
+                .message
+                .contains("local door-open gate allowed")
+        );
+        assert!(!opened_probe.message.contains("00 00"));
+
+        let blocked_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 0)),
+            goal_tile: Some(tile(3, 1, 0)),
+            requested_goal_tile: Some(tile(3, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path,
+            message: "synthetic route ready".to_string(),
+        };
+        let (blocked_probe, blocked_gate) =
+            original_apply_local_route_gates(blocked_probe, &[], &opened, &[tile(3, 1, 0)]);
+        assert_eq!(
+            blocked_probe.status,
+            OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(blocked_gate.dynamic_blocker, Some(tile(3, 1, 0)));
+        assert!(blocked_probe.message.contains("local dynamic blocker"));
+        assert!(!blocked_probe.message.contains("0x"));
     }
 
     #[test]
