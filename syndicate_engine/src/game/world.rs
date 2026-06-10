@@ -205,8 +205,12 @@ struct OriginalMissionCombatRuntime {
     npc_reactions: usize,
     hostile_return_fire: usize,
     hostile_reaction_blocked: usize,
+    hostile_reaction_held: usize,
     civilian_panic_count: usize,
+    agent_down_tests: usize,
+    selection_repairs: usize,
     objective_completed: bool,
+    last_down_test_agent: Option<u8>,
     last_target: Option<OriginalCombatTargetCandidate>,
     hostile_reactions: BTreeMap<u16, OriginalHostileReactionState>,
     civilian_panics: BTreeMap<u16, OriginalCivilianPanicState>,
@@ -225,6 +229,7 @@ struct OriginalHostileReactionState {
     shots: usize,
     blocked: usize,
     pressure_steps: usize,
+    held: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,23 +358,29 @@ impl OriginalHostileReactionState {
             shots: 0,
             blocked: 0,
             pressure_steps: 0,
+            held: false,
         }
     }
 
     fn label(&self) -> String {
         format!(
-            "{} rec {} facing {} shots {} pressure {} blocked {}",
+            "{} rec {} facing {} shots {} pressure {} blocked {}{}",
             self.role.label(),
             self.record_index,
             self.direction.short_label(),
             self.shots,
             self.pressure_steps,
-            self.blocked
+            self.blocked,
+            if self.held { " held" } else { "" }
         )
     }
 
     fn overlay_label(&self) -> String {
-        if self.pressure_steps > 0 {
+        if self.held {
+            format!("HELD {}", self.direction.short_label())
+        } else if self.shots > 0 {
+            format!("FIRE {}", self.direction.short_label())
+        } else if self.pressure_steps > 0 {
             format!("PRESS {}", self.direction.short_label())
         } else {
             format!("ALERT {}", self.direction.short_label())
@@ -379,7 +390,9 @@ impl OriginalHostileReactionState {
 
 impl OriginalCivilianPanicState {
     fn overlay_label(&self) -> String {
-        if self.flee_steps > 0 {
+        if self.flee_steps >= ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS {
+            format!("FLED {}", self.direction.short_label())
+        } else if self.flee_steps > 0 {
             format!("FLEE {}", self.direction.short_label())
         } else {
             "PANIC".to_string()
@@ -1111,6 +1124,37 @@ impl OriginalMissionCombatRuntime {
             .sum()
     }
 
+    fn hostile_held_count(&self) -> usize {
+        self.hostile_reactions
+            .values()
+            .filter(|reaction| reaction.held)
+            .count()
+    }
+
+    fn civilian_flee_steps(&self) -> usize {
+        self.civilian_panics
+            .values()
+            .map(|panic| panic.flee_steps)
+            .sum()
+    }
+
+    fn record_agent_down_test(&mut self, agent_slot: u8, selection_repaired: bool) {
+        self.agent_down_tests = self.agent_down_tests.saturating_add(1);
+        self.last_down_test_agent = Some(agent_slot);
+        if selection_repaired {
+            self.selection_repairs = self.selection_repairs.saturating_add(1);
+        }
+        self.last_result = Some(format!(
+            "agent {} entered local down-test; active selection repair {}; source GAME data unchanged",
+            agent_slot + 1,
+            if selection_repaired {
+                "applied"
+            } else {
+                "not needed"
+            }
+        ));
+    }
+
     fn ped_runtime_tile(
         &self,
         record_index: u16,
@@ -1328,6 +1372,8 @@ impl OriginalMissionCombatRuntime {
                     .next_fire_secs
                     .min(ORIGINAL_CONTROL_HOSTILE_REACTION_DELAY_SECS);
                 reaction.next_pressure_secs = reaction.next_pressure_secs.min(0.05);
+                reaction.blocked = 0;
+                reaction.held = false;
             })
             .or_insert_with(|| {
                 let mut reaction = OriginalHostileReactionState::from_target(target);
@@ -1385,6 +1431,11 @@ impl OriginalMissionCombatRuntime {
             else {
                 continue;
             };
+            if reaction.held {
+                reaction.direction =
+                    OriginalDebugAgentDirection::from_step(reaction.tile, target_tile);
+                continue;
+            }
             reaction.next_pressure_secs -= real_dt.max(0.0);
             reaction.next_fire_secs -= real_dt.max(0.0);
             if reaction.next_fire_secs > 0.0 {
@@ -1484,14 +1535,16 @@ impl OriginalMissionCombatRuntime {
                             check.blocker_label
                         ));
                     } else if reaction.blocked >= ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT {
+                        reaction.held = true;
+                        reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS;
+                        self.hostile_reaction_held = self.hostile_reaction_held.saturating_add(1);
                         self.last_result = Some(format!(
-                            "{} ped candidate {} reaction suspended after {} blocked checks by {}; local AI remains gated",
+                            "{} ped candidate {} reaction holding after {} blocked checks by {}; local AI remains gated",
                             reaction.role.label(),
                             reaction.record_index,
                             reaction.blocked,
                             check.blocker_label
                         ));
-                        remove.push(key);
                     } else {
                         reaction.next_fire_secs = ORIGINAL_CONTROL_HOSTILE_RELOAD_SECS * 0.75;
                         self.last_result = Some(format!(
@@ -1600,6 +1653,7 @@ impl OriginalMissionCombatRuntime {
         } else {
             "objective pending"
         };
+        let held = self.hostile_held_count();
         let hostile = if self.hostile_reactions.is_empty() {
             "hostile reactions none".to_string()
         } else {
@@ -1617,7 +1671,7 @@ impl OriginalMissionCombatRuntime {
             .as_deref()
             .unwrap_or("no local combat result yet");
         format!(
-            "combat local {objective}; mission state {mission_state}; hp {hp}; shots {} hits {} down {} oor {} blocked {} react {} return {} rb {}; civilian panic {} dropped-pickup blockers {}; {progress}; {hostile}; {last}",
+            "combat local {objective}; mission state {mission_state}; hp {hp}; shots {} hits {} down {} oor {} blocked {} react {} return {} rb {} held {}; civilian panic {} flee steps {}; agent down-test {} selection repairs {} last down {}; dropped-pickup blockers {}; {progress}; {hostile}; {last}",
             self.shots_fired,
             self.hits,
             self.defeated,
@@ -1626,7 +1680,14 @@ impl OriginalMissionCombatRuntime {
             self.npc_reactions,
             self.hostile_return_fire,
             self.hostile_reaction_blocked,
+            held,
             self.civilian_panics.len(),
+            self.civilian_flee_steps(),
+            self.agent_down_tests,
+            self.selection_repairs,
+            self.last_down_test_agent
+                .map(|slot| format!("A{}", slot + 1))
+                .unwrap_or_else(|| "none".to_string()),
             self.dropped_weapon_blockers.len()
         )
     }
@@ -2913,13 +2974,19 @@ impl WorldState {
         let mut repair_selection = false;
         for event in events {
             let mut down_now = false;
+            let mut selection_repaired = false;
             if let Some(agent) = self
                 .original_debug_agents
                 .iter_mut()
                 .find(|agent| agent.slot == event.target_agent_slot)
             {
                 down_now = agent.mark_under_fire(event.local_damage);
-                repair_selection |= down_now && agent.selected;
+                selection_repaired = down_now && agent.selected;
+                repair_selection |= selection_repaired;
+            }
+            if down_now {
+                self.original_combat_runtime
+                    .record_agent_down_test(event.target_agent_slot, selection_repaired);
             }
             self.original_combat_feedback = Some(
                 OriginalCombatFeedback::new(vec![event.origin], event.target, event.status)
@@ -2930,7 +2997,20 @@ impl WorldState {
                         event.local_damage
                     )),
             );
-            self.combat_log = event.label;
+            self.combat_log = if down_now {
+                format!(
+                    "{}; A{} down-test{}",
+                    event.label,
+                    event.target_agent_slot + 1,
+                    if selection_repaired {
+                        ", selection repaired"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                event.label
+            };
         }
         if repair_selection {
             self.ensure_original_debug_agent_selection();
@@ -2979,21 +3059,27 @@ impl WorldState {
                 let hits = self.original_combat_runtime.hits;
                 let hostile_return = self.original_combat_runtime.hostile_return_fire;
                 let pressure = self.original_combat_runtime.hostile_pressure_steps();
+                let held = self.original_combat_runtime.hostile_held_count();
+                let civilian_flee = self.original_combat_runtime.civilian_flee_steps();
                 let spacing_holds = self.original_control_runtime.formation_spacing_holds;
                 let agents_down = self
                     .original_debug_agents
                     .iter()
                     .filter(|agent| agent.is_local_down())
                     .count();
+                let selection_repairs = self.original_combat_runtime.selection_repairs;
                 let door_gate = self.original_control_door_gate_playtest_label();
                 println!(
-                    "[original-control] playtest final state shots={} hits={} hostile_return={} pressure={} spacing_holds={} agents_down={} interaction={} door_gate={}",
+                    "[original-control] playtest final state shots={} hits={} hostile_return={} pressure={} held={} civilian_flee={} spacing_holds={} agents_down={} selection_repairs={} interaction={} door_gate={}",
                     shots,
                     hits,
                     hostile_return,
                     pressure,
+                    held,
+                    civilian_flee,
                     spacing_holds,
                     agents_down,
+                    selection_repairs,
                     interaction,
                     door_gate
                 );
@@ -3450,7 +3536,7 @@ impl WorldState {
             .collect::<Vec<_>>()
             .join(" | ");
         format!(
-            "mode={} control={} playtest={} verify={} mission={} objective_hp={} shots={} hits={} hostile_return={} agents={} selected={} {route} {agents}",
+            "mode={} control={} playtest={} verify={} mission={} objective_hp={} shots={} hits={} hostile_return={} hostile_held={} civilian_flee={} down_tests={} selection_repairs={} agents={} selected={} {route} {agents}",
             self.render_mode.label(),
             self.original_navigation_debug_enabled,
             self.original_control_trace.playtest,
@@ -3460,6 +3546,10 @@ impl WorldState {
             self.original_combat_runtime.shots_fired,
             self.original_combat_runtime.hits,
             self.original_combat_runtime.hostile_return_fire,
+            self.original_combat_runtime.hostile_held_count(),
+            self.original_combat_runtime.civilian_flee_steps(),
+            self.original_combat_runtime.agent_down_tests,
+            self.original_combat_runtime.selection_repairs,
             self.original_debug_agents.len(),
             self.selected_original_debug_agent + 1,
         )
@@ -4280,15 +4370,18 @@ impl WorldState {
             })
             .collect::<Vec<_>>();
         let combat = format!(
-            "Combat: shots {} hits {} downed {} | alert {} return {} pressure {} panic {} | squad down {}",
+            "Combat: shots {} hits {} downed {} | alert {} return {} pressure {} held {} panic {}/{} | squad down {} repair {}",
             self.original_combat_runtime.shots_fired,
             self.original_combat_runtime.hits,
             self.original_combat_runtime.defeated,
             self.original_combat_runtime.hostile_reactions.len(),
             self.original_combat_runtime.hostile_return_fire,
             self.original_combat_runtime.hostile_pressure_steps(),
+            self.original_combat_runtime.hostile_held_count(),
             self.original_combat_runtime.civilian_panics.len(),
-            down
+            self.original_combat_runtime.civilian_flee_steps(),
+            down,
+            self.original_combat_runtime.selection_repairs
         );
         let door_state = original_door_action_summary(
             &self.original_control_runtime,
@@ -5224,7 +5317,7 @@ impl OriginalDebugAgent {
 
     fn combat_overlay_label(&self) -> Option<&'static str> {
         if self.local_down_test {
-            Some("LOCAL DOWN")
+            Some("DOWN-TEST")
         } else if self.is_under_fire() {
             Some("UNDER FIRE")
         } else {
@@ -8231,6 +8324,38 @@ mod tests {
     }
 
     #[test]
+    fn original_combat_runtime_keeps_blocked_hostile_state_readable_without_ai_claims() {
+        let start_tile = tile(6, 7, 0);
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        let candidate = OriginalCombatTargetCandidate {
+            record_index: 9,
+            tile: start_tile,
+            objective_target: false,
+            role: OriginalCombatTargetRole::Guard,
+        };
+
+        runtime.mark_target_candidate(candidate);
+        runtime.record_npc_reaction(candidate, Some(tile(9, 7, 0)));
+        let reaction = runtime
+            .hostile_reactions
+            .get_mut(&candidate.record_index)
+            .expect("hostile reaction");
+        reaction.blocked = super::ORIGINAL_CONTROL_HOSTILE_BLOCKED_LIMIT;
+        reaction.held = true;
+        reaction.direction = OriginalDebugAgentDirection::East;
+
+        assert_eq!(
+            runtime.hostile_alert_label(candidate.record_index),
+            Some("HELD E".to_string())
+        );
+        assert_eq!(runtime.hostile_held_count(), 1);
+        assert!(runtime.panel_label().contains("held 1"));
+        assert!(runtime.panel_label().contains("blocked 3 held"));
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
+    }
+
+    #[test]
     fn original_combat_runtime_marks_civilian_panic_without_hostile_ai_claims() {
         let target_tile = tile(7, 8, 0);
         let mut runtime = OriginalMissionCombatRuntime::default();
@@ -8287,6 +8412,38 @@ mod tests {
         );
         let goal = original_flee_goal_from_threat(start_tile, tile(8, 8, 0), 6);
         assert_eq!(goal, tile(1, 8, 0));
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
+    }
+
+    #[test]
+    fn original_combat_runtime_reports_civilian_fled_state_without_final_ai_claims() {
+        let start_tile = tile(7, 8, 0);
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        let candidate = OriginalCombatTargetCandidate {
+            record_index: 11,
+            tile: start_tile,
+            objective_target: false,
+            role: OriginalCombatTargetRole::Civilian,
+        };
+
+        runtime.mark_target_candidate(candidate);
+        runtime.record_npc_reaction(candidate, Some(tile(8, 8, 0)));
+        let panic = runtime
+            .civilian_panics
+            .get_mut(&candidate.record_index)
+            .expect("civilian panic");
+        panic.flee_steps = super::ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS;
+        panic.direction = OriginalDebugAgentDirection::West;
+
+        assert_eq!(
+            runtime.civilian_panic_label(candidate.record_index),
+            Some("FLED W".to_string())
+        );
+        assert_eq!(
+            runtime.civilian_flee_steps(),
+            super::ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS
+        );
         assert!(!runtime.panel_label().contains("0x"));
         assert!(!runtime.panel_label().contains("00 00"));
     }
@@ -8588,10 +8745,33 @@ mod tests {
         assert!(agent.is_local_down());
         assert!(!agent.mark_under_fire(super::ORIGINAL_CONTROL_HOSTILE_LOCAL_DAMAGE));
         assert!(!agent.can_fire());
-        assert_eq!(agent.combat_overlay_label(), Some("LOCAL DOWN"));
+        assert_eq!(agent.combat_overlay_label(), Some("DOWN-TEST"));
         assert!(agent.weapon_status_label().contains("DOWN-TEST"));
         assert!(!agent.weapon_status_label().contains("0x"));
         assert!(!agent.weapon_status_label().contains("00 00"));
+    }
+
+    #[test]
+    fn original_combat_runtime_tracks_agent_down_test_selection_repair_without_bytes() {
+        let mut runtime = OriginalMissionCombatRuntime::default();
+
+        runtime.record_agent_down_test(2, true);
+
+        assert_eq!(runtime.agent_down_tests, 1);
+        assert_eq!(runtime.selection_repairs, 1);
+        assert_eq!(runtime.last_down_test_agent, Some(2));
+        assert!(
+            runtime
+                .panel_label()
+                .contains("agent down-test 1 selection repairs 1 last down A3")
+        );
+        assert!(
+            runtime
+                .panel_label()
+                .contains("active selection repair applied")
+        );
+        assert!(!runtime.panel_label().contains("0x"));
+        assert!(!runtime.panel_label().contains("00 00"));
     }
 
     #[test]
