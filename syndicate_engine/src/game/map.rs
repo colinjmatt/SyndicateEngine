@@ -859,6 +859,51 @@ impl TacticalMap {
         draw_text(label, p.x + 12.0, p.y + 16.0, 12.0, color);
     }
 
+    pub fn draw_original_equipped_weapon_overlay(
+        &self,
+        camera: &CameraRig,
+        map_tiles: &OriginalMapTiles,
+        graphics: &RuntimeOriginalGraphics,
+        target_tile: OriginalTilePoint,
+        facing: Vec2,
+        label: &str,
+        selected: bool,
+        hostile: bool,
+    ) {
+        let tile_width = graphics.bank().record_width as f32;
+        let tile_height = graphics.bank().record_height as f32;
+        let feet =
+            original_tile_marker_screen(camera, map_tiles, target_tile, tile_width, tile_height);
+        let facing = if facing.length_squared() > 0.001 {
+            facing.normalize()
+        } else {
+            vec2(0.8, -0.2)
+        };
+        let color = if hostile {
+            Color::new(1.0, 0.24, 0.08, 0.92)
+        } else if selected {
+            Color::new(1.0, 0.92, 0.12, 0.94)
+        } else {
+            Color::new(0.05, 0.95, 1.0, 0.82)
+        };
+        let hand = feet + vec2(0.0, -15.0) + vec2(facing.x * 3.0, facing.y * 2.0);
+        let muzzle = hand + facing * 15.0;
+        let stock = hand - facing * 5.0;
+        draw_line(stock.x, stock.y, muzzle.x, muzzle.y, 3.0, color);
+        draw_line(
+            hand.x,
+            hand.y,
+            hand.x - facing.y * 5.0,
+            hand.y + facing.x * 5.0,
+            1.6,
+            Color::new(color.r, color.g, color.b, color.a * 0.75),
+        );
+        draw_circle(muzzle.x, muzzle.y, 2.2, color);
+        if selected || hostile {
+            draw_text(label, muzzle.x + 5.0, muzzle.y - 4.0, 10.5, color);
+        }
+    }
+
     pub fn draw_original_combat_target_overlay(
         &self,
         camera: &CameraRig,
