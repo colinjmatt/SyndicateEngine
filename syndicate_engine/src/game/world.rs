@@ -25,7 +25,7 @@ use crate::{
     game::{
         agent::Agent,
         combat::{AttackResult, Combatant, resolve_attack},
-        map::{TacticalMap, original_map_tile_world_top_left},
+        map::{OriginalControlledAgentDraw, TacticalMap, original_map_tile_world_top_left},
         original_graphics::RuntimeOriginalGraphics,
         original_map_view::OriginalMapViewState,
         original_sprites::RuntimeOriginalObjectGraphics,
@@ -3730,6 +3730,34 @@ impl WorldState {
             })
     }
 
+    fn controlled_original_agent_draws(
+        &self,
+        scene_model: &OriginalMissionScene,
+    ) -> Vec<OriginalControlledAgentDraw> {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return Vec::new();
+        }
+        self.original_debug_agents
+            .iter()
+            .filter_map(|agent| {
+                let object = agent
+                    .sprite_ready
+                    .then(|| scene_model.debug_agent_object(agent.record_index))
+                    .flatten()?;
+                let object = agent.render_object_candidate(Some(object))?;
+                Some(OriginalControlledAgentDraw {
+                    object,
+                    anchor_tile: agent.route_anchor_tile(),
+                    route: agent.route.clone(),
+                    progress: agent.route_progress,
+                    animation_frame: agent.animation_frame(self.original_object_animation_frame()),
+                })
+            })
+            .collect()
+    }
+
     fn draw_original_ped_candidate_role_overlays(
         &self,
         map_tiles: &OriginalMapTiles,
@@ -3941,12 +3969,11 @@ impl WorldState {
         ) else {
             return false;
         };
-        let should_follow = self.original_control_trace.playtest
-            || agent.route_status == OriginalDebugAgentRouteStatus::Moving
-            || agent.is_under_fire();
+        let should_follow = self.original_control_trace.autopilot;
         let world = original_agent_focus_world_point(map_tiles, graphics, agent.current_tile());
         let screen = self.camera.world_to_screen(world);
-        let near_edge = original_agent_screen_needs_follow(screen, screen_width(), screen_height());
+        let near_edge = should_follow
+            && original_agent_screen_needs_follow(screen, screen_width(), screen_height());
         if !should_follow && !near_edge {
             return false;
         }
@@ -4802,6 +4829,12 @@ impl WorldState {
                     };
                     let controlled_ped_record_indices =
                         self.controlled_original_ped_record_indices();
+                    let controlled_agent_draws =
+                        if object_graphics.is_some() && self.original_navigation_debug_enabled {
+                            self.controlled_original_agent_draws(scene_model)
+                        } else {
+                            Vec::new()
+                        };
                     self.map.draw_original_mission_scene(
                         &self.camera,
                         map_tiles,
@@ -4811,6 +4844,7 @@ impl WorldState {
                         object_graphics,
                         self.original_object_animation_frame(),
                         &controlled_ped_record_indices,
+                        &controlled_agent_draws,
                     );
                     self.draw_original_ped_candidate_role_overlays(
                         map_tiles,
@@ -4909,17 +4943,20 @@ impl WorldState {
                                 .then(|| scene_model.debug_agent_object(agent.record_index))
                                 .flatten();
                             let directional_object = agent.render_object_candidate(object);
+                            let sprite_present =
+                                object_graphics.is_some() && directional_object.is_some();
                             self.map.draw_original_debug_agent_marker(
                                 &self.camera,
                                 map_tiles,
                                 graphics,
-                                object_graphics,
-                                directional_object.as_ref(),
+                                None,
+                                None,
                                 agent.route_anchor_tile(),
                                 &agent.route,
                                 agent.route_progress,
                                 agent.selected,
                                 agent.slot as usize == self.selected_original_debug_agent,
+                                sprite_present,
                                 &agent.map_label(),
                                 agent.animation_frame(self.original_object_animation_frame()),
                                 agent.combat_overlay_label(),

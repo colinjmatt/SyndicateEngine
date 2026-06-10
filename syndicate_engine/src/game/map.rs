@@ -38,6 +38,15 @@ pub struct TacticalMap {
     tiles: Vec<TileKind>,
 }
 
+#[derive(Debug, Clone)]
+pub struct OriginalControlledAgentDraw {
+    pub object: OriginalMissionObjectCandidate,
+    pub anchor_tile: OriginalTilePoint,
+    pub route: Vec<OriginalTilePoint>,
+    pub progress: f32,
+    pub animation_frame: u16,
+}
+
 impl TacticalMap {
     pub fn demo_city() -> Self {
         let width = 28;
@@ -410,6 +419,7 @@ impl TacticalMap {
         object_graphics: Option<&RuntimeOriginalObjectGraphics>,
         object_animation_frame: u16,
         controlled_ped_record_indices: &[u16],
+        controlled_agent_draws: &[OriginalControlledAgentDraw],
     ) {
         let tile_size = vec2(
             graphics.bank().record_width as f32 * camera.zoom,
@@ -461,6 +471,47 @@ impl TacticalMap {
                             tile_size,
                             camera.zoom,
                             object_animation_frame,
+                        );
+                    }
+                    for controlled in controlled_agent_draws.iter().filter(|controlled| {
+                        let (current, _, _) = original_route_progress_sample(
+                            controlled.anchor_tile,
+                            &controlled.route,
+                            controlled.progress,
+                        );
+                        current.tile_x == item.x as u16
+                            && current.tile_y == item.y as u16
+                            && current.tile_z == object_z as u16
+                    }) {
+                        let (current, next, t) = original_route_progress_sample(
+                            controlled.anchor_tile,
+                            &controlled.route,
+                            controlled.progress,
+                        );
+                        let current_top_left =
+                            camera.world_to_screen(original_map_tile_world_top_left(
+                                map_tiles,
+                                current.tile_x as f32,
+                                current.tile_y as f32,
+                                current.tile_z.saturating_add(1) as f32,
+                                graphics.bank().record_width as f32,
+                                graphics.bank().record_height as f32,
+                            ));
+                        let next_top_left =
+                            camera.world_to_screen(original_map_tile_world_top_left(
+                                map_tiles,
+                                next.tile_x as f32,
+                                next.tile_y as f32,
+                                next.tile_z.saturating_add(1) as f32,
+                                graphics.bank().record_width as f32,
+                                graphics.bank().record_height as f32,
+                            ));
+                        object_graphics.draw_mission_object(
+                            &controlled.object,
+                            current_top_left.lerp(next_top_left, t),
+                            tile_size,
+                            camera.zoom,
+                            controlled.animation_frame,
                         );
                     }
                 }
@@ -652,6 +703,7 @@ impl TacticalMap {
         progress: f32,
         selected: bool,
         primary_selected: bool,
+        sprite_present: bool,
         label: &str,
         animation_frame: u16,
         combat_status_label: Option<&str>,
@@ -691,7 +743,7 @@ impl TacticalMap {
             }
         }
 
-        let mut drew_sprite = false;
+        let mut drew_sprite = sprite_present;
         if let (Some(object_graphics), Some(object)) = (object_graphics, object) {
             let object_z = current.tile_z.saturating_add(1) as f32;
             let current_top_left = camera.world_to_screen(original_map_tile_world_top_left(
@@ -765,7 +817,7 @@ impl TacticalMap {
             );
         }
         if let Some(combat_status_label) = combat_status_label {
-            let warning_color = if combat_status_label == "LOCAL DOWN" {
+            let warning_color = if combat_status_label == "DOWN-TEST" {
                 Color::new(0.78, 0.78, 0.84, 0.86)
             } else {
                 Color::new(1.0, 0.05, 0.1, 0.86)
