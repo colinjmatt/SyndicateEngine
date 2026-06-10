@@ -174,6 +174,8 @@ struct OriginalMissionControlRuntime {
     pickup_blocked_tiles: BTreeSet<OriginalTilePoint>,
     objective_contact_tiles: BTreeSet<OriginalTilePoint>,
     scenario_trigger_tiles: BTreeSet<OriginalTilePoint>,
+    route_blocked_door_hint: Option<OriginalTilePoint>,
+    route_cancel_count: usize,
     last_result: Option<String>,
 }
 
@@ -538,6 +540,8 @@ struct OriginalPlayHudSummary {
     squad: String,
     combat: String,
     interaction: String,
+    command: String,
+    agents: Vec<String>,
     controls: String,
     complete: bool,
 }
@@ -576,6 +580,12 @@ impl OriginalMissionControlRuntime {
                 self.door_resolutions += 1;
                 if let Some(tile) = resolution.target_tile {
                     self.opened_door_tiles.insert(tile);
+                    if self
+                        .route_blocked_door_hint
+                        .is_some_and(|hint| original_tile_matches_open_door(tile, hint))
+                    {
+                        self.route_blocked_door_hint = None;
+                    }
                 }
                 result_label.push_str(
                     "; local door-open route overlay active, route blocker mutation remains proof-gated/excluded only where supported",
@@ -623,6 +633,34 @@ impl OriginalMissionControlRuntime {
                 .target_tile
                 .map(original_tile_short_label)
                 .unwrap_or_else(|| "none".to_string())
+        ));
+    }
+
+    fn record_route_blocked_door_hint(&mut self, tile: Option<OriginalTilePoint>) {
+        self.route_blocked_door_hint = tile;
+        if let Some(tile) = tile {
+            self.last_result = Some(format!(
+                "door/open route gate found at {}; press E to open a runtime-only local gate",
+                original_tile_short_label(tile)
+            ));
+        }
+    }
+
+    fn clear_route_blocked_door_hint_if_open(&mut self) {
+        if self.route_blocked_door_hint.is_some_and(|hint| {
+            self.opened_door_tiles
+                .iter()
+                .copied()
+                .any(|opened| original_tile_matches_open_door(opened, hint))
+        }) {
+            self.route_blocked_door_hint = None;
+        }
+    }
+
+    fn record_route_cancel(&mut self, selected: usize) {
+        self.route_cancel_count = self.route_cancel_count.saturating_add(1);
+        self.last_result = Some(format!(
+            "cancelled local orders for {selected} selected original-control agent(s); source GAME data unchanged"
         ));
     }
 
@@ -698,7 +736,7 @@ impl OriginalMissionControlRuntime {
             .as_deref()
             .unwrap_or("no local action result yet");
         format!(
-            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; door route overlay {}, pickup proof blockers {}; {last}",
+            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; door route overlay {}, route door hint {}, cancels {}, pickup proof blockers {}; {last}",
             self.door_resolutions,
             self.weapon_pickup_resolutions,
             self.vehicle_entry_resolutions,
@@ -711,6 +749,10 @@ impl OriginalMissionControlRuntime {
             self.pickup_blocked_tiles.len(),
             self.objective_contact_tiles.len(),
             self.opened_door_tiles.len(),
+            self.route_blocked_door_hint
+                .map(original_tile_short_label)
+                .unwrap_or_else(|| "none".to_string()),
+            self.route_cancel_count,
             self.pickup_blocked_tiles.len()
         )
     }
@@ -1905,6 +1947,9 @@ impl WorldState {
         if is_key_pressed(KeyCode::Q) {
             self.try_cycle_original_debug_agent_weapons();
         }
+        if is_key_pressed(KeyCode::C) {
+            self.cancel_selected_original_orders();
+        }
         if is_mouse_button_pressed(MouseButton::Right) {
             if !self.try_original_route_probe_order() {
                 let mouse = vec2(mouse_position().0, mouse_position().1);
@@ -2226,13 +2271,13 @@ impl WorldState {
                 self.original_route_probe = None;
                 return true;
             }
-            let route_probes = {
+            let (door_tiles, opened_doors, dynamic_blockers, route_probes) = {
                 let scene = self.original_mission_scene.as_ref().expect("checked above");
                 let door_tiles = original_route_door_candidate_tiles(scene);
                 let opened_doors = self.original_control_runtime.opened_door_tiles.clone();
                 let dynamic_blockers = self.local_route_dynamic_blocker_tiles(&selected_set);
                 let mut occupied = self.local_route_occupied_tiles(&selected_set);
-                selected_agents
+                let route_probes = selected_agents
                     .into_iter()
                     .enumerate()
                     .map(|(formation_idx, (idx, start))| {
@@ -2248,7 +2293,8 @@ impl WorldState {
                         );
                         (idx, formation_idx, route_probe, fallback_attempts)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (door_tiles, opened_doors, dynamic_blockers, route_probes)
             };
             let mut ready = 0;
             let mut blocked = down_blocked;
@@ -2257,6 +2303,7 @@ impl WorldState {
             let mut first_blocked_probe = None;
             let mut fallback_attempts_total = 0;
             let mut local_gate_blocked = 0;
+            let mut route_blocked_door_hint = None;
             for (idx, formation_idx, route_probe, fallback_attempts) in route_probes {
                 fallback_attempts_total += fallback_attempts;
                 if idx == self.selected_original_debug_agent {
@@ -2286,6 +2333,15 @@ impl WorldState {
                     {
                         local_gate_blocked += 1;
                     }
+                    if route_blocked_door_hint.is_none() {
+                        let gate = original_local_route_gate(
+                            &route_probe.path,
+                            &door_tiles,
+                            &opened_doors,
+                            &dynamic_blockers,
+                        );
+                        route_blocked_door_hint = gate.closed_door;
+                    }
                     if first_blocked_probe.is_none() {
                         first_blocked_probe = Some(route_probe.clone());
                     }
@@ -2303,6 +2359,12 @@ impl WorldState {
                 .or(selected_probe)
                 .or(first_blocked_probe);
             self.original_route_probe = display_probe.clone();
+            self.original_control_runtime
+                .record_route_blocked_door_hint(route_blocked_door_hint);
+            if ready > 0 {
+                self.original_control_runtime
+                    .clear_route_blocked_door_hint_if_open();
+            }
             let order_kind = if append_order { "queued" } else { "order" };
             let fallback_label = if fallback_attempts_total == 0 {
                 "primary formation targets".to_string()
@@ -2455,6 +2517,9 @@ impl WorldState {
             .or_else(|| selected_agents.first())
             .map(|(_, tile)| *tile);
         let target_tile = self.original_cursor_tile;
+        if self.try_resolve_route_blocked_door_gate(&selected_agents) {
+            return true;
+        }
         let (probe, intents) = {
             let scene_model = self.original_mission_scene.as_ref().expect("checked above");
             let probe = scene_model.original_debug_interaction_probe_between(
@@ -2507,6 +2572,56 @@ impl WorldState {
             ready,
             blocked,
             primary_label.unwrap_or_else(|| probe.panel_label())
+        );
+        true
+    }
+
+    fn try_resolve_route_blocked_door_gate(
+        &mut self,
+        selected_agents: &[(usize, OriginalTilePoint)],
+    ) -> bool {
+        let Some(door_tile) = self.original_control_runtime.route_blocked_door_hint else {
+            return false;
+        };
+        let Some(scene_model) = self.original_mission_scene.as_ref() else {
+            return false;
+        };
+        let door_tiles = original_route_door_candidate_tiles(scene_model);
+        if !door_tiles
+            .iter()
+            .copied()
+            .any(|candidate| original_tile_matches_open_door(candidate, door_tile))
+        {
+            return false;
+        }
+        let Some((idx, agent_tile)) = selected_agents
+            .iter()
+            .min_by_key(|(_, tile)| original_tile_distance(*tile, door_tile))
+            .copied()
+        else {
+            return false;
+        };
+        let agent_slot = self
+            .original_debug_agents
+            .get(idx)
+            .map(|agent| agent.slot)
+            .unwrap_or(idx as u8);
+        self.original_interaction_probe =
+            Some(scene_model.original_debug_interaction_probe_between(
+                Some(agent_tile),
+                Some(door_tile),
+                self.original_navigation_debug_enabled,
+            ));
+        self.original_control_runtime
+            .apply_resolution(OriginalDebugActionResolution {
+                agent_slot,
+                focus: OriginalDebugInteractionFocus::DoorOpenCandidate,
+                target_tile: Some(door_tile),
+                result_label: "door/open route gate opened locally from last blocked route; FreeSynd door blocking reference, final door animation/lock semantics gated".to_string(),
+            });
+        self.combat_log = format!(
+            "Door/open local gate: {} opened as runtime-only route overlay; retry movement, final door semantics gated",
+            original_tile_short_label(door_tile)
         );
         true
     }
@@ -2602,6 +2717,19 @@ impl WorldState {
                     self.original_control_trace.frame
                 );
                 let interaction = self.original_playtest_interaction_gate_label();
+                let shots = self.original_combat_runtime.shots_fired;
+                let hits = self.original_combat_runtime.hits;
+                let hostile_return = self.original_combat_runtime.hostile_return_fire;
+                let pressure = self.original_combat_runtime.hostile_pressure_steps();
+                let agents_down = self
+                    .original_debug_agents
+                    .iter()
+                    .filter(|agent| agent.is_local_down())
+                    .count();
+                println!(
+                    "[original-control] playtest final state shots={} hits={} hostile_return={} pressure={} agents_down={} interaction={}",
+                    shots, hits, hostile_return, pressure, agents_down, interaction
+                );
                 let reset_ok = self.reset_original_local_playtest_state();
                 let reset_state = self
                     .original_combat_runtime
@@ -3150,6 +3278,35 @@ impl WorldState {
             agent.clear_route();
             agent.clear_interaction_intent();
         }
+    }
+
+    fn cancel_selected_original_orders(&mut self) -> bool {
+        if self.render_mode != MapRenderMode::OriginalMissionSceneProbe
+            || !self.original_navigation_debug_enabled
+        {
+            return false;
+        }
+        self.ensure_original_debug_agents();
+        let selected_indices = self.selected_original_debug_agent_indices();
+        if selected_indices.is_empty() {
+            self.combat_log = "Cancel blocked: no selected original-control agent".to_string();
+            return true;
+        }
+        let mut cancelled = 0;
+        for idx in selected_indices {
+            if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                agent.clear_route();
+                agent.clear_interaction_intent();
+                cancelled += 1;
+            }
+        }
+        self.original_route_probe = None;
+        self.original_interaction_probe = None;
+        self.original_control_runtime.record_route_cancel(cancelled);
+        self.combat_log = format!(
+            "Cancelled local orders for {cancelled} selected original-control agent(s); movement/combat state remains local"
+        );
+        true
     }
 
     fn try_select_original_debug_agent_at_cursor(&mut self) -> bool {
@@ -3839,26 +3996,45 @@ impl WorldState {
             "Squad: selected {} | moving {} queued {} down {} | {}",
             selected, moving, queued, down, primary
         );
+        let agents = self
+            .original_debug_agents
+            .iter()
+            .take(4)
+            .enumerate()
+            .map(|(idx, agent)| {
+                original_agent_play_status_row(agent, idx == self.selected_original_debug_agent)
+            })
+            .collect::<Vec<_>>();
         let combat = format!(
-            "Combat: shots {} hits {} hostile returns {} pressure {} panic {}",
+            "Combat: shots {} hits {} return {} pressure {} panic {}",
             self.original_combat_runtime.shots_fired,
             self.original_combat_runtime.hits,
             self.original_combat_runtime.hostile_return_fire,
             self.original_combat_runtime.hostile_pressure_steps(),
             self.original_combat_runtime.civilian_panics.len()
         );
+        let door_hint = self
+            .original_control_runtime
+            .route_blocked_door_hint
+            .map(original_tile_short_label);
         let interaction = format!(
-            "Actions: doors open {} | vehicle links {} | pickup blockers {} | R reset",
+            "Actions: doors {}{} | vehicles {} | pickups blocked {} | cancels {}",
             self.original_control_runtime.opened_door_tiles.len(),
+            door_hint
+                .map(|hint| format!(" hint {hint}"))
+                .unwrap_or_default(),
             self.original_control_runtime.vehicle_entry_tiles.len(),
-            self.original_control_runtime.pickup_blocked_tiles.len()
+            self.original_control_runtime.pickup_blocked_tiles.len(),
+            self.original_control_runtime.route_cancel_count
         );
         Some(OriginalPlayHudSummary {
             objective,
             squad,
             combat,
             interaction,
-            controls: "Right-click move | Left-click select/fire | E action | Q weapon | T details"
+            command: original_compact_command_label(&self.combat_log),
+            agents,
+            controls: "RMB move | LMB select/fire | E action/open | C cancel | R reset | T details"
                 .to_string(),
             complete: mission_state.is_complete(),
         })
@@ -4326,9 +4502,10 @@ impl WorldState {
             } else {
                 self.current_map_panel_label()
             };
-            if self.render_mode == MapRenderMode::OriginalMissionSceneProbe
-                && !self.original_control_trace.enabled
-                && let Some(summary) = self.original_play_hud_summary()
+            if original_control_compact_hud_enabled(
+                self.render_mode,
+                self.original_control_trace.enabled,
+            ) && let Some(summary) = self.original_play_hud_summary()
             {
                 draw_original_control_play_panel(&summary);
             } else {
@@ -4358,18 +4535,26 @@ impl WorldState {
             }
         }
 
-        let hud_order = self.selected_agent_hud_order();
-        ui::draw_hud(
-            &self.assets,
-            self.selected_agent_hud_name(),
-            &hud_order,
-            &self.combat_log,
-            &format!(
-                "{} | view {}",
-                self.sim_clock.label(),
-                self.render_mode.label()
-            ),
-        );
+        if original_control_compact_hud_enabled(
+            self.render_mode,
+            self.original_control_trace.enabled,
+        ) && let Some(summary) = self.original_play_hud_summary()
+        {
+            draw_original_control_status_strip(&summary);
+        } else {
+            let hud_order = self.selected_agent_hud_order();
+            ui::draw_hud(
+                &self.assets,
+                self.selected_agent_hud_name(),
+                &hud_order,
+                &self.combat_log,
+                &format!(
+                    "{} | view {}",
+                    self.sim_clock.label(),
+                    self.render_mode.label()
+                ),
+            );
+        }
     }
 }
 
@@ -4925,6 +5110,10 @@ fn initial_render_mode(
     }
 }
 
+fn original_control_compact_hud_enabled(render_mode: MapRenderMode, trace_enabled: bool) -> bool {
+    render_mode == MapRenderMode::OriginalMissionSceneProbe && !trace_enabled
+}
+
 fn env_flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|value| {
         matches!(
@@ -4936,6 +5125,67 @@ fn env_flag(name: &str) -> bool {
 
 fn compact_asset_label(label: &str) -> &str {
     label.rsplit('/').next().unwrap_or(label)
+}
+
+fn original_agent_play_status_row(agent: &OriginalDebugAgent, primary: bool) -> String {
+    let select = if primary {
+        ">"
+    } else if agent.selected {
+        "*"
+    } else {
+        " "
+    };
+    let weapon = agent
+        .selected_weapon()
+        .map(|weapon| weapon.label)
+        .unwrap_or("unarmed");
+    let hp = if agent.is_local_down() {
+        "DOWN".to_string()
+    } else {
+        format!("{}/{}", agent.local_hp, agent.local_max_hp)
+    };
+    let cooldown = if agent.weapon_cooldown > 0.05 {
+        format!("{:.1}s", agent.weapon_cooldown)
+    } else {
+        "ready".to_string()
+    };
+    let threat = if agent.local_threat_marks > 0 {
+        format!(" threat {}", agent.local_threat_marks)
+    } else {
+        String::new()
+    };
+    format!(
+        "{select} A{} {:<8} HP {:<7} {:<12} {cooldown}{threat}",
+        agent.slot + 1,
+        weapon,
+        hp,
+        agent.route_status.label()
+    )
+}
+
+fn original_compact_command_label(label: &str) -> String {
+    let cleaned = label
+        .replace("; demo gameplay active", "")
+        .replace("; demo gameplay available", "")
+        .replace("; local control only", "")
+        .replace("; local diagnostics only", "")
+        .replace("; movement/combat state remains local", "")
+        .replace("; source GAME data unchanged", "")
+        .replace("; full blocker/AI/mission semantics gated", "")
+        .replace("Original mission ", "")
+        .replace("Original ", "");
+    original_ascii_ellipsis(cleaned.trim(), 92)
+}
+
+fn original_ascii_ellipsis(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    let mut truncated = value.chars().take(keep).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn original_cursor_tile_panel_label(tile: Option<OriginalTilePoint>) -> String {
@@ -5391,8 +5641,8 @@ fn draw_minimap(agents: &[Agent]) {
 }
 
 fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
-    let panel_width = 430.0_f32.min(screen_width() - 44.0);
-    let panel_height = 142.0;
+    let panel_width = 452.0_f32.min(screen_width() - 44.0);
+    let panel_height = 214.0;
     let x = screen_width() - panel_width - 22.0;
     let y = 22.0;
     let accent = if summary.complete {
@@ -5408,12 +5658,44 @@ fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
         Color::new(0.0, 0.0, 0.0, 0.58),
     );
     draw_rectangle_lines(x, y, panel_width, panel_height, 2.0, accent);
-    draw_text("MISSION 1 LOCAL CONTROL", x + 14.0, y + 24.0, 16.0, accent);
+    draw_text("MISSION 1", x + 14.0, y + 24.0, 17.0, accent);
     draw_text(&summary.objective, x + 14.0, y + 48.0, 13.0, YELLOW);
     draw_text(&summary.squad, x + 14.0, y + 70.0, 12.0, LIGHTGRAY);
-    draw_text(&summary.combat, x + 14.0, y + 92.0, 12.0, ORANGE);
-    draw_text(&summary.interaction, x + 14.0, y + 114.0, 12.0, SKYBLUE);
-    draw_text(&summary.controls, x + 14.0, y + 134.0, 11.0, GRAY);
+    for (row_idx, row) in summary.agents.iter().take(4).enumerate() {
+        let color = if row.starts_with('>') {
+            YELLOW
+        } else if row.starts_with('*') {
+            SKYBLUE
+        } else {
+            LIGHTGRAY
+        };
+        draw_text(row, x + 18.0, y + 94.0 + row_idx as f32 * 18.0, 12.0, color);
+    }
+    draw_text(&summary.combat, x + 14.0, y + 170.0, 12.0, ORANGE);
+    draw_text(&summary.interaction, x + 14.0, y + 190.0, 12.0, SKYBLUE);
+    draw_text(&summary.controls, x + 14.0, y + 208.0, 10.5, GRAY);
+}
+
+fn draw_original_control_status_strip(summary: &OriginalPlayHudSummary) {
+    let width = (screen_width() - 44.0).clamp(320.0, 920.0);
+    let height = 54.0;
+    let x = 22.0;
+    let y = screen_height() - height - 22.0;
+    let accent = if summary.complete {
+        Color::new(0.2, 1.0, 0.25, 0.90)
+    } else {
+        Color::new(0.0, 0.85, 1.0, 0.84)
+    };
+    draw_rectangle(x, y, width, height, Color::new(0.0, 0.0, 0.0, 0.50));
+    draw_rectangle_lines(x, y, width, height, 1.5, accent);
+    draw_text(
+        &summary.command,
+        x + 12.0,
+        y + 22.0,
+        13.0,
+        if summary.complete { GREEN } else { WHITE },
+    );
+    draw_text(&summary.controls, x + 12.0, y + 43.0, 11.0, GRAY);
 }
 
 fn draw_map_diagnostic_panel(
@@ -6155,19 +6437,20 @@ mod tests {
         MapRenderMode, ORIGINAL_FORMATION_OFFSETS, OriginalCombatAttackResult,
         OriginalCombatFeedback, OriginalCombatPedState, OriginalCombatShotStatus,
         OriginalCombatTargetCandidate, OriginalCombatTargetRole, OriginalCombatWeaponProfile,
-        OriginalControlTrace, OriginalDebugActionStatus, OriginalDebugAgent,
-        OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn,
-        OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
-        OriginalPlaytestFirePosture, initial_render_mode,
+        OriginalControlTrace, OriginalDebugActionResolution, OriginalDebugActionStatus,
+        OriginalDebugAgent, OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus,
+        OriginalDebugAgentSpawn, OriginalLocalMissionState, OriginalMissionCombatRuntime,
+        OriginalMissionControlRuntime, OriginalPlaytestFirePosture, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
-        original_agent_focus_world_point_from_tile_size, original_agent_screen_needs_follow,
-        original_apply_local_route_gates, original_combat_shot_check,
-        original_flee_goal_from_threat, original_formation_goal_candidates,
-        original_formation_requested_tile, original_formation_start_delay,
-        original_hostile_return_fire_check, original_local_route_gate,
-        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
-        original_route_spacing_reservations, original_standoff_tile_toward,
-        range_tiles_from_freesynd_world_range,
+        original_agent_focus_world_point_from_tile_size, original_agent_play_status_row,
+        original_agent_screen_needs_follow, original_apply_local_route_gates,
+        original_combat_shot_check, original_compact_command_label,
+        original_control_compact_hud_enabled, original_flee_goal_from_threat,
+        original_formation_goal_candidates, original_formation_requested_tile,
+        original_formation_start_delay, original_hostile_return_fire_check,
+        original_local_route_gate, original_ped_candidate_role_style,
+        original_playtest_standoff_goal_candidates, original_route_spacing_reservations,
+        original_standoff_tile_toward, range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
         map_tiles::OriginalMapTiles,
@@ -6279,6 +6562,76 @@ mod tests {
         assert_eq!(agent.route_status, OriginalDebugAgentRouteStatus::Moving);
         assert_eq!(agent.route.first().copied(), Some(tile(4, 5, 0)));
         assert!(!agent.render_label().contains("00 00"));
+    }
+
+    #[test]
+    fn compact_original_control_hud_stays_behind_trace_toggle() {
+        assert!(original_control_compact_hud_enabled(
+            MapRenderMode::OriginalMissionSceneProbe,
+            false
+        ));
+        assert!(!original_control_compact_hud_enabled(
+            MapRenderMode::OriginalMissionSceneProbe,
+            true
+        ));
+        assert!(!original_control_compact_hud_enabled(
+            MapRenderMode::DemoCity,
+            false
+        ));
+    }
+
+    #[test]
+    fn original_play_status_rows_and_command_labels_stay_compact_without_bytes() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 7,
+                tile: tile(4, 5, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        agent.mark_under_fire(3);
+        agent.mark_fired(0.75);
+        let row = original_agent_play_status_row(&agent, true);
+        assert!(row.starts_with("> A1"));
+        assert!(row.contains("Pistol"));
+        assert!(row.contains("HP 21/24"));
+        assert!(row.contains("0.8s"));
+        assert!(!row.contains("00 00"));
+
+        let command = original_compact_command_label(
+            "Original mission movement order: selected 4, ready 4, blocked 0; demo gameplay active; full blocker/AI/mission semantics gated",
+        );
+        assert!(!command.contains("demo gameplay"));
+        assert!(!command.contains("semantics gated"));
+        assert!(command.chars().count() <= 92);
+        assert!(!command.contains("0x"));
+    }
+
+    #[test]
+    fn original_control_runtime_door_hint_opens_and_cancel_state_is_local_only() {
+        let mut runtime = OriginalMissionControlRuntime::default();
+        runtime.record_route_blocked_door_hint(Some(tile(12, 14, 1)));
+        assert_eq!(runtime.route_blocked_door_hint, Some(tile(12, 14, 1)));
+        assert!(runtime.panel_label().contains("route door hint 12,14,1"));
+
+        runtime.apply_resolution(OriginalDebugActionResolution {
+            agent_slot: 0,
+            focus: OriginalDebugInteractionFocus::DoorOpenCandidate,
+            target_tile: Some(tile(12, 14, 1)),
+            result_label: "door/open route gate opened locally".to_string(),
+        });
+        assert!(runtime.opened_door_tiles.contains(&tile(12, 14, 1)));
+        assert_eq!(runtime.route_blocked_door_hint, None);
+        assert!(runtime.panel_label().contains("door route overlay 1"));
+
+        runtime.record_route_cancel(3);
+        let label = runtime.panel_label();
+        assert!(label.contains("cancels 1"));
+        assert!(label.contains("cancelled local orders for 3"));
+        assert!(!label.contains("00 00"));
+        assert!(!label.contains("0x"));
     }
 
     #[test]
