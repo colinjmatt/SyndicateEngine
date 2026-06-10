@@ -714,6 +714,13 @@ impl OriginalMissionControlRuntime {
 
     fn interaction_overlays(&self) -> Vec<OriginalLocalInteractionOverlay> {
         let mut overlays = Vec::new();
+        if let Some(tile) = self.route_blocked_door_hint {
+            overlays.push(OriginalLocalInteractionOverlay {
+                tile,
+                label: "DOOR BLOCKED E",
+                ready: false,
+            });
+        }
         overlays.extend(self.opened_door_tiles.iter().take(8).map(|tile| {
             OriginalLocalInteractionOverlay {
                 tile: *tile,
@@ -3303,6 +3310,13 @@ impl WorldState {
         if idx >= self.original_debug_agents.len() {
             return false;
         }
+        if self.original_debug_agents[idx].is_local_down() {
+            let slot = self.original_debug_agents[idx].slot + 1;
+            self.ensure_original_debug_agent_selection();
+            self.combat_log =
+                format!("Agent {slot} is down-test; active command stays on movable agents");
+            return true;
+        }
         self.selected_original_debug_agent = idx;
         if extend {
             if let Some(agent) = self.original_debug_agents.get_mut(idx) {
@@ -3311,7 +3325,7 @@ impl WorldState {
             if !self
                 .original_debug_agents
                 .iter()
-                .any(|agent| agent.selected)
+                .any(|agent| agent.selected && !agent.is_local_down())
             {
                 if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                     agent.selected = true;
@@ -3326,7 +3340,7 @@ impl WorldState {
         let selected_count = self
             .original_debug_agents
             .iter()
-            .filter(|agent| agent.selected)
+            .filter(|agent| agent.selected && !agent.is_local_down())
             .count();
         self.combat_log = format!(
             "Selected original agent {}; selected set {}; original control is gated/local",
@@ -3340,15 +3354,27 @@ impl WorldState {
         if self.original_debug_agents.is_empty() {
             return;
         }
+        for agent in &mut self.original_debug_agents {
+            if agent.is_local_down() {
+                agent.selected = false;
+            }
+        }
+        let Some(primary) = original_primary_active_agent_index(
+            &self.original_debug_agents,
+            self.selected_original_debug_agent,
+        ) else {
+            self.selected_original_debug_agent = self
+                .selected_original_debug_agent
+                .min(self.original_debug_agents.len().saturating_sub(1));
+            return;
+        };
+        self.selected_original_debug_agent = primary;
         if !self
             .original_debug_agents
             .iter()
-            .any(|agent| agent.selected)
+            .any(|agent| agent.selected && !agent.is_local_down())
         {
-            if let Some(agent) = self
-                .original_debug_agents
-                .get_mut(self.selected_original_debug_agent)
-            {
+            if let Some(agent) = self.original_debug_agents.get_mut(primary) {
                 agent.selected = true;
             }
         }
@@ -3358,7 +3384,7 @@ impl WorldState {
         self.original_debug_agents
             .iter()
             .enumerate()
-            .filter_map(|(idx, agent)| agent.selected.then_some(idx))
+            .filter_map(|(idx, agent)| (agent.selected && !agent.is_local_down()).then_some(idx))
             .collect()
     }
 
@@ -3880,22 +3906,8 @@ impl WorldState {
                 }
             }
         }
-        if fired > 1
-            && feedback_detail
-                .as_deref()
-                .is_some_and(|label| label.starts_with("HIT "))
-        {
-            feedback_detail = Some(format!(
-                "VOLLEY {fired} {}",
-                feedback_impact.unwrap_or("HIT")
-            ));
-        } else if fired == 1
-            && feedback_detail
-                .as_deref()
-                .is_some_and(|label| label.starts_with("HIT "))
-        {
-            feedback_detail = Some(format!("{} HIT", feedback_impact.unwrap_or("SHOT")));
-        }
+        feedback_detail =
+            original_combat_feedback_detail_label(fired, feedback_detail, feedback_impact);
         self.combat_log = format!(
             "Original combat local: selected {} fired {} cooldown {} out {} blocked {} down {}; {}; full blocker/AI/mission semantics gated",
             selected_agents.len(),
@@ -4102,16 +4114,21 @@ impl WorldState {
             self.original_combat_runtime.hostile_pressure_steps(),
             self.original_combat_runtime.civilian_panics.len()
         );
-        let door_hint = self
-            .original_control_runtime
-            .route_blocked_door_hint
-            .map(original_tile_short_label);
+        let door_state = if let Some(hint) = self.original_control_runtime.route_blocked_door_hint {
+            format!(
+                "door blocked {} - E opens local gate",
+                original_tile_short_label(hint)
+            )
+        } else if !self.original_control_runtime.opened_door_tiles.is_empty() {
+            format!(
+                "doors open {}",
+                self.original_control_runtime.opened_door_tiles.len()
+            )
+        } else {
+            "doors ready".to_string()
+        };
         let interaction = format!(
-            "Action: doors {}{} | vehicles {} | pickups blocked {} | cancels {}",
-            self.original_control_runtime.opened_door_tiles.len(),
-            door_hint
-                .map(|hint| format!(" hint {hint}"))
-                .unwrap_or_default(),
+            "Action: {door_state} | vehicles {} | pickups blocked {} | cancels {}",
             self.original_control_runtime.vehicle_entry_tiles.len(),
             self.original_control_runtime.pickup_blocked_tiles.len(),
             self.original_control_runtime.route_cancel_count
@@ -5214,6 +5231,36 @@ fn env_flag(name: &str) -> bool {
 
 fn compact_asset_label(label: &str) -> &str {
     label.rsplit('/').next().unwrap_or(label)
+}
+
+fn original_primary_active_agent_index(
+    agents: &[OriginalDebugAgent],
+    preferred: usize,
+) -> Option<usize> {
+    agents
+        .get(preferred)
+        .filter(|agent| !agent.is_local_down())
+        .map(|_| preferred)
+        .or_else(|| agents.iter().position(|agent| !agent.is_local_down()))
+}
+
+fn original_combat_feedback_detail_label(
+    fired: usize,
+    detail: Option<String>,
+    impact: Option<&'static str>,
+) -> Option<String> {
+    let label = detail?;
+    if fired > 1 {
+        if label.starts_with("HIT ") {
+            return Some(format!("VOLLEY {fired} {}", impact.unwrap_or("HIT")));
+        }
+        if label == "OBJECTIVE DOWN" || label == "TARGET DOWN" {
+            return Some(format!("VOLLEY {fired} {label}"));
+        }
+    } else if fired == 1 && label.starts_with("HIT ") {
+        return Some(format!("{} HIT", impact.unwrap_or("SHOT")));
+    }
+    Some(label)
 }
 
 fn original_agent_play_status_row(agent: &OriginalDebugAgent, primary: bool) -> String {
@@ -6626,12 +6673,13 @@ mod tests {
         original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_agent_play_hud_row,
         original_agent_play_status_row, original_agent_screen_needs_follow,
-        original_apply_local_route_gates, original_combat_shot_check,
-        original_compact_command_label, original_control_compact_hud_enabled,
-        original_flee_goal_from_threat, original_formation_goal_candidates,
-        original_formation_requested_tile, original_formation_start_delay,
-        original_hostile_return_fire_check, original_local_route_gate,
-        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
+        original_apply_local_route_gates, original_combat_feedback_detail_label,
+        original_combat_shot_check, original_compact_command_label,
+        original_control_compact_hud_enabled, original_flee_goal_from_threat,
+        original_formation_goal_candidates, original_formation_requested_tile,
+        original_formation_start_delay, original_hostile_return_fire_check,
+        original_local_route_gate, original_ped_candidate_role_style,
+        original_playtest_standoff_goal_candidates, original_primary_active_agent_index,
         original_route_spacing_reservations, original_standoff_tile_toward,
         range_tiles_from_freesynd_world_range,
     };
@@ -6808,6 +6856,11 @@ mod tests {
         assert_eq!(runtime.route_blocked_goal, Some(tile(18, 20, 1)));
         assert!(runtime.panel_label().contains("route door hint 12,14,1"));
         assert!(runtime.panel_label().contains("route goal 18,20,1"));
+        let blocked_overlays = runtime.interaction_overlays();
+        assert_eq!(blocked_overlays.len(), 1);
+        assert_eq!(blocked_overlays[0].tile, tile(12, 14, 1));
+        assert_eq!(blocked_overlays[0].label, "DOOR BLOCKED E");
+        assert!(!blocked_overlays[0].ready);
 
         runtime.apply_resolution(OriginalDebugActionResolution {
             agent_slot: 0,
@@ -6819,6 +6872,10 @@ mod tests {
         assert_eq!(runtime.route_blocked_door_hint, None);
         assert_eq!(runtime.route_blocked_goal, None);
         assert!(runtime.panel_label().contains("door route overlay 1"));
+        let opened_overlays = runtime.interaction_overlays();
+        assert_eq!(opened_overlays.len(), 1);
+        assert_eq!(opened_overlays[0].label, "DOOR OPEN LOCAL");
+        assert!(opened_overlays[0].ready);
 
         runtime.record_route_cancel(3);
         let label = runtime.panel_label();
@@ -6826,6 +6883,70 @@ mod tests {
         assert!(label.contains("cancelled local orders for 3"));
         assert!(!label.contains("00 00"));
         assert!(!label.contains("0x"));
+    }
+
+    #[test]
+    fn original_control_active_selection_skips_local_down_agents_without_bytes() {
+        let mut agents = vec![
+            OriginalDebugAgent::from_spawn(
+                OriginalDebugAgentSpawn {
+                    slot: 0,
+                    record_index: 1,
+                    tile: tile(1, 1, 0),
+                    sprite_ready: true,
+                },
+                true,
+            ),
+            OriginalDebugAgent::from_spawn(
+                OriginalDebugAgentSpawn {
+                    slot: 1,
+                    record_index: 2,
+                    tile: tile(2, 1, 0),
+                    sprite_ready: true,
+                },
+                false,
+            ),
+            OriginalDebugAgent::from_spawn(
+                OriginalDebugAgentSpawn {
+                    slot: 2,
+                    record_index: 3,
+                    tile: tile(3, 1, 0),
+                    sprite_ready: true,
+                },
+                false,
+            ),
+        ];
+        agents[0].mark_under_fire(99);
+        agents[1].mark_under_fire(99);
+
+        assert_eq!(original_primary_active_agent_index(&agents, 0), Some(2));
+        assert_eq!(original_primary_active_agent_index(&agents, 1), Some(2));
+        assert_eq!(original_primary_active_agent_index(&agents, 2), Some(2));
+        assert!(!format!("{:?}", agents).contains("00 00"));
+    }
+
+    #[test]
+    fn original_combat_feedback_detail_labels_volley_down_states_without_bytes() {
+        assert_eq!(
+            original_combat_feedback_detail_label(3, Some("HIT 12 HP".to_string()), Some("PISTOL")),
+            Some("VOLLEY 3 PISTOL".to_string())
+        );
+        assert_eq!(
+            original_combat_feedback_detail_label(
+                2,
+                Some("OBJECTIVE DOWN".to_string()),
+                Some("PISTOL")
+            ),
+            Some("VOLLEY 2 OBJECTIVE DOWN".to_string())
+        );
+        assert_eq!(
+            original_combat_feedback_detail_label(2, Some("TARGET DOWN".to_string()), None),
+            Some("VOLLEY 2 TARGET DOWN".to_string())
+        );
+        assert_eq!(
+            original_combat_feedback_detail_label(1, Some("HIT 4 HP".to_string()), Some("LASER")),
+            Some("LASER HIT".to_string())
+        );
     }
 
     #[test]
