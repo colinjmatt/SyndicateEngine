@@ -921,10 +921,32 @@ impl TacticalMap {
                 tile_height,
             );
             draw_line(origin.x, origin.y, target.x, target.y, 2.0, color);
+            let projectile = origin.lerp(target, 0.68);
+            draw_circle(projectile.x, projectile.y, 3.2, color);
             draw_circle_lines(origin.x, origin.y, 7.0, 1.3, color);
         }
         let pulse = 15.0 + (1.0 - alpha) * 10.0;
         draw_circle_lines(target.x, target.y, pulse, 2.2, color);
+        draw_circle(target.x, target.y, 3.0, color);
+        if label.contains("DOWN") {
+            let cross = 8.0;
+            draw_line(
+                target.x - cross,
+                target.y - cross,
+                target.x + cross,
+                target.y + cross,
+                2.0,
+                color,
+            );
+            draw_line(
+                target.x - cross,
+                target.y + cross,
+                target.x + cross,
+                target.y - cross,
+                2.0,
+                color,
+            );
+        }
         draw_text(label, target.x + 12.0, target.y + 18.0, 11.0, color);
     }
 

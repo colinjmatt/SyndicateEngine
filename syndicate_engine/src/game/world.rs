@@ -91,6 +91,7 @@ const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
 const ORIGINAL_CONTROL_FORMATION_STEP_DELAY_SECS: f32 = 0.10;
 const ORIGINAL_CONTROL_FORMATION_RESERVED_TAIL: usize = 6;
+const ORIGINAL_CONTROL_FORMATION_SPACING_HOLD_SECS: f32 = 0.06;
 const ORIGINAL_FORMATION_OFFSETS: [(i16, i16); 8] = [
     (0, 0),
     (-1, 0),
@@ -177,6 +178,8 @@ struct OriginalMissionControlRuntime {
     scenario_trigger_tiles: BTreeSet<OriginalTilePoint>,
     route_blocked_door_hint: Option<OriginalTilePoint>,
     route_blocked_goal: Option<OriginalTilePoint>,
+    formation_spacing_holds: usize,
+    last_spacing_hold: Option<OriginalTilePoint>,
     route_cancel_count: usize,
     last_result: Option<String>,
 }
@@ -667,6 +670,11 @@ impl OriginalMissionControlRuntime {
         }
     }
 
+    fn record_formation_spacing_hold(&mut self, tile: OriginalTilePoint) {
+        self.formation_spacing_holds = self.formation_spacing_holds.saturating_add(1);
+        self.last_spacing_hold = Some(tile);
+    }
+
     fn clear_route_blocked_door_hint_if_open(&mut self) {
         if self.route_blocked_door_hint.is_some_and(|hint| {
             self.opened_door_tiles
@@ -765,7 +773,7 @@ impl OriginalMissionControlRuntime {
             .as_deref()
             .unwrap_or("no local action result yet");
         format!(
-            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; door route overlay {}, route door hint {}, route goal {}, cancels {}, pickup proof blockers {}; {last}",
+            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-link {} pickup-blocked {} objective-contact {}; door route overlay {}, route door hint {}, route goal {}, spacing holds {} last {}, cancels {}, pickup proof blockers {}; {last}",
             self.door_resolutions,
             self.weapon_pickup_resolutions,
             self.vehicle_entry_resolutions,
@@ -782,6 +790,10 @@ impl OriginalMissionControlRuntime {
                 .map(original_tile_short_label)
                 .unwrap_or_else(|| "none".to_string()),
             self.route_blocked_goal
+                .map(original_tile_short_label)
+                .unwrap_or_else(|| "none".to_string()),
+            self.formation_spacing_holds,
+            self.last_spacing_hold
                 .map(original_tile_short_label)
                 .unwrap_or_else(|| "none".to_string()),
             self.route_cancel_count,
@@ -2725,9 +2737,36 @@ impl WorldState {
         self.ensure_original_debug_agents();
         let mut resolutions = Vec::new();
         let movement_dt = real_dt.clamp(0.0, ORIGINAL_DEBUG_AGENT_MAX_STEP_DT);
-        for agent in &mut self.original_debug_agents {
-            if let Some(resolution) = agent.update(movement_dt) {
+        let mut occupied = original_agent_spacing_tile_counts(&self.original_debug_agents);
+        for idx in 0..self.original_debug_agents.len() {
+            if self.original_debug_agents[idx].is_spacing_participant() {
+                let current_key =
+                    original_tile_cell_key(self.original_debug_agents[idx].current_tile());
+                decrement_tile_count(&mut occupied, current_key);
+            }
+            let spacing_target =
+                self.original_debug_agents[idx].route_spacing_target_tile(movement_dt);
+            let spacing_blocked = spacing_target.is_some_and(|target| {
+                occupied
+                    .get(&original_tile_cell_key(target))
+                    .copied()
+                    .unwrap_or(0)
+                    > 0
+            });
+            if spacing_blocked {
+                if let Some(target) = spacing_target {
+                    self.original_control_runtime
+                        .record_formation_spacing_hold(target);
+                }
+                self.original_debug_agents[idx].hold_route_for_spacing(movement_dt);
+            } else if let Some(resolution) = self.original_debug_agents[idx].update(movement_dt) {
                 resolutions.push(resolution);
+            }
+            if self.original_debug_agents[idx].is_spacing_participant() {
+                increment_tile_count(
+                    &mut occupied,
+                    original_tile_cell_key(self.original_debug_agents[idx].current_tile()),
+                );
             }
         }
         for resolution in resolutions {
@@ -2766,9 +2805,9 @@ impl WorldState {
             self.original_combat_feedback = Some(
                 OriginalCombatFeedback::new(vec![event.origin], event.target, event.status)
                     .with_detail_label(format!(
-                        "RETURN -{} HP A{}",
-                        event.local_damage,
-                        event.target_agent_slot + 1
+                        "A{} UNDER FIRE -{} HP",
+                        event.target_agent_slot + 1,
+                        event.local_damage
                     )),
             );
             self.combat_log = event.label;
@@ -2817,14 +2856,15 @@ impl WorldState {
                 let hits = self.original_combat_runtime.hits;
                 let hostile_return = self.original_combat_runtime.hostile_return_fire;
                 let pressure = self.original_combat_runtime.hostile_pressure_steps();
+                let spacing_holds = self.original_control_runtime.formation_spacing_holds;
                 let agents_down = self
                     .original_debug_agents
                     .iter()
                     .filter(|agent| agent.is_local_down())
                     .count();
                 println!(
-                    "[original-control] playtest final state shots={} hits={} hostile_return={} pressure={} agents_down={} interaction={}",
-                    shots, hits, hostile_return, pressure, agents_down, interaction
+                    "[original-control] playtest final state shots={} hits={} hostile_return={} pressure={} spacing_holds={} agents_down={} interaction={}",
+                    shots, hits, hostile_return, pressure, spacing_holds, agents_down, interaction
                 );
                 let reset_ok = self.reset_original_local_playtest_state();
                 let reset_state = self
@@ -4057,11 +4097,7 @@ impl WorldState {
                 }
             })
             .unwrap_or_else(|| "Objective: candidate target pending".to_string());
-        let selected = self
-            .original_debug_agents
-            .iter()
-            .filter(|agent| agent.selected)
-            .count();
+        let selected = self.selected_original_debug_agent_indices().len();
         let moving = self
             .original_debug_agents
             .iter()
@@ -4093,9 +4129,14 @@ impl WorldState {
                 )
             })
             .unwrap_or_else(|| "A? unavailable".to_string());
+        let spacing = self
+            .original_control_runtime
+            .last_spacing_hold
+            .map(|tile| format!(" | spacing hold {}", original_tile_short_label(tile)))
+            .unwrap_or_default();
         let squad = format!(
-            "Squad: selected {} | moving {} queued {} down {} | {}",
-            selected, moving, queued, down, primary
+            "Squad: selected {} | moving {} queued {} down {} | {}{}",
+            selected, moving, queued, down, primary, spacing
         );
         let agents = self
             .original_debug_agents
@@ -4115,17 +4156,14 @@ impl WorldState {
             self.original_combat_runtime.civilian_panics.len()
         );
         let door_state = if let Some(hint) = self.original_control_runtime.route_blocked_door_hint {
-            format!(
-                "door blocked {} - E opens local gate",
-                original_tile_short_label(hint)
-            )
+            format!("press E: open door {}", original_tile_short_label(hint))
         } else if !self.original_control_runtime.opened_door_tiles.is_empty() {
             format!(
-                "doors open {}",
+                "door route open {}",
                 self.original_control_runtime.opened_door_tiles.len()
             )
         } else {
-            "doors ready".to_string()
+            "doors clear".to_string()
         };
         let interaction = format!(
             "Action: {door_state} | vehicles {} | pickups blocked {} | cancels {}",
@@ -4829,8 +4867,7 @@ impl OriginalDebugAgent {
     }
 
     fn update(&mut self, real_dt: f32) -> Option<OriginalDebugActionResolution> {
-        self.weapon_cooldown = (self.weapon_cooldown - real_dt.max(0.0)).max(0.0);
-        self.under_fire_remaining = (self.under_fire_remaining - real_dt.max(0.0)).max(0.0);
+        self.tick_local_timers(real_dt);
         if self.local_down_test {
             self.route.clear();
             self.route_progress = 0.0;
@@ -4873,6 +4910,28 @@ impl OriginalDebugAgent {
             .and_then(|action| action.update(real_dt, self.slot))
     }
 
+    fn tick_local_timers(&mut self, real_dt: f32) {
+        self.weapon_cooldown = (self.weapon_cooldown - real_dt.max(0.0)).max(0.0);
+        self.under_fire_remaining = (self.under_fire_remaining - real_dt.max(0.0)).max(0.0);
+    }
+
+    fn hold_route_for_spacing(&mut self, real_dt: f32) {
+        self.tick_local_timers(real_dt);
+        if self.local_down_test {
+            self.route.clear();
+            self.route_progress = 0.0;
+            self.route_start_delay = 0.0;
+            self.route_status = OriginalDebugAgentRouteStatus::Blocked;
+            return;
+        }
+        if self.route.len() >= 2 {
+            self.route_status = OriginalDebugAgentRouteStatus::Queued;
+            self.route_start_delay = self
+                .route_start_delay
+                .max(ORIGINAL_CONTROL_FORMATION_SPACING_HOLD_SECS);
+        }
+    }
+
     fn can_fire(&self) -> bool {
         self.weapon_cooldown <= 0.0 && !self.local_down_test
     }
@@ -4913,6 +4972,12 @@ impl OriginalDebugAgent {
         self.local_down_test
     }
 
+    fn is_spacing_participant(&self) -> bool {
+        !self.local_down_test
+            && !self.route.is_empty()
+            && self.route_status != OriginalDebugAgentRouteStatus::Idle
+    }
+
     fn combat_overlay_label(&self) -> Option<&'static str> {
         if self.local_down_test {
             Some("LOCAL DOWN")
@@ -4942,11 +5007,28 @@ impl OriginalDebugAgent {
         if self.route.is_empty() {
             return self.tile;
         }
-        let index = self
-            .route_progress
+        self.route_tile_at_progress(self.route_progress)
+    }
+
+    fn route_tile_at_progress(&self, progress: f32) -> OriginalTilePoint {
+        if self.route.is_empty() {
+            return self.tile;
+        }
+        let index = progress
             .floor()
             .clamp(0.0, self.route.len().saturating_sub(1) as f32) as usize;
         self.route[index]
+    }
+
+    fn route_spacing_target_tile(&self, real_dt: f32) -> Option<OriginalTilePoint> {
+        if self.local_down_test || self.route_start_delay > 0.0 || self.route.len() < 2 {
+            return None;
+        }
+        let current = self.current_tile();
+        let max_progress = (self.route.len() - 1) as f32;
+        let next_progress = (self.route_progress + real_dt.max(0.0) * 4.0).min(max_progress);
+        let next = self.route_tile_at_progress(next_progress);
+        (original_tile_cell_key(next) != original_tile_cell_key(current)).then_some(next)
     }
 
     fn route_anchor_tile(&self) -> OriginalTilePoint {
@@ -5640,6 +5722,33 @@ fn original_tile_dedupe_key(tile: OriginalTilePoint) -> (u16, u16, u16, u8, u8) 
         tile.off_x,
         tile.off_y,
     )
+}
+
+fn original_tile_cell_key(tile: OriginalTilePoint) -> (u16, u16, u16) {
+    (tile.tile_x, tile.tile_y, tile.tile_z)
+}
+
+fn original_agent_spacing_tile_counts(
+    agents: &[OriginalDebugAgent],
+) -> BTreeMap<(u16, u16, u16), usize> {
+    let mut counts = BTreeMap::new();
+    for agent in agents.iter().filter(|agent| agent.is_spacing_participant()) {
+        increment_tile_count(&mut counts, original_tile_cell_key(agent.current_tile()));
+    }
+    counts
+}
+
+fn increment_tile_count(counts: &mut BTreeMap<(u16, u16, u16), usize>, key: (u16, u16, u16)) {
+    *counts.entry(key).or_insert(0) += 1;
+}
+
+fn decrement_tile_count(counts: &mut BTreeMap<(u16, u16, u16), usize>, key: (u16, u16, u16)) {
+    if let Some(count) = counts.get_mut(&key) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            counts.remove(&key);
+        }
+    }
 }
 
 fn original_tile_distance(a: OriginalTilePoint, b: OriginalTilePoint) -> u16 {
@@ -6680,7 +6789,7 @@ mod tests {
         original_formation_start_delay, original_hostile_return_fire_check,
         original_local_route_gate, original_ped_candidate_role_style,
         original_playtest_standoff_goal_candidates, original_primary_active_agent_index,
-        original_route_spacing_reservations, original_standoff_tile_toward,
+        original_route_spacing_reservations, original_standoff_tile_toward, original_tile_cell_key,
         range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
@@ -6878,8 +6987,11 @@ mod tests {
         assert!(opened_overlays[0].ready);
 
         runtime.record_route_cancel(3);
+        runtime.record_formation_spacing_hold(tile(9, 10, 1));
         let label = runtime.panel_label();
         assert!(label.contains("cancels 1"));
+        assert!(label.contains("spacing holds 1"));
+        assert!(label.contains("last 9,10,1"));
         assert!(label.contains("cancelled local orders for 3"));
         assert!(!label.contains("00 00"));
         assert!(!label.contains("0x"));
@@ -6977,6 +7089,58 @@ mod tests {
         assert_eq!(agent.route.first().copied(), Some(tile(4, 5, 1)));
         assert!(!agent.route.contains(&tile(4, 5, 2)));
         assert_eq!(agent.route.len(), 3);
+    }
+
+    #[test]
+    fn original_agent_spacing_hold_delays_occupied_next_tile_without_bytes() {
+        let mut follower = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        follower.assign_route(vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)], false);
+        let mut leader = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 1,
+                record_index: 1,
+                tile: tile(2, 1, 0),
+                sprite_ready: true,
+            },
+            false,
+        );
+        let idle_counts =
+            super::original_agent_spacing_tile_counts(&[follower.clone(), leader.clone()]);
+        let spacing_target = follower.route_spacing_target_tile(0.30).unwrap();
+        assert_eq!(
+            idle_counts
+                .get(&original_tile_cell_key(spacing_target))
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+
+        leader.assign_route(vec![tile(2, 1, 0), tile(3, 1, 0)], false);
+        let counts = super::original_agent_spacing_tile_counts(&[follower.clone(), leader]);
+
+        assert_eq!(spacing_target, tile(2, 1, 0));
+        assert_eq!(
+            counts
+                .get(&original_tile_cell_key(spacing_target))
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+
+        follower.hold_route_for_spacing(0.30);
+
+        assert_eq!(follower.current_tile(), tile(1, 1, 0));
+        assert_eq!(follower.route_status, OriginalDebugAgentRouteStatus::Queued);
+        assert!(follower.route_start_delay >= super::ORIGINAL_CONTROL_FORMATION_SPACING_HOLD_SECS);
+        assert!(!format!("{:?}", follower.route).contains("00 00"));
     }
 
     #[test]
@@ -7932,6 +8096,12 @@ mod tests {
             OriginalCombatShotStatus::HostileReturn,
         );
         assert_eq!(hostile_return.label(), "RETURN");
+        assert_eq!(
+            hostile_return
+                .with_detail_label("A2 UNDER FIRE -3 HP")
+                .label(),
+            "A2 UNDER FIRE -3 HP"
+        );
     }
 
     #[test]
