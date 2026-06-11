@@ -558,6 +558,40 @@ pub struct OriginalDebugAgentWeaponHint {
     pub weapon_record_index: Option<u16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginalScenarioRuntimeAction {
+    pub record_index: u16,
+    pub kind: OriginalScenarioRuntimeActionKind,
+    pub next_index: Option<u16>,
+    pub target: OriginalScenarioRuntimeTarget,
+    pub invalid_next: bool,
+    pub self_loop: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalScenarioRuntimeActionKind {
+    WalkOrDrive,
+    UseVehicle,
+    Unknown,
+    Escape,
+    Trigger,
+    Reset,
+    TrainWait,
+    ProtectedTargetReached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalScenarioRuntimeTarget {
+    None,
+    Tile(OriginalTilePoint),
+    Object {
+        kind: OriginalMissionObjectKind,
+        record_index: u16,
+        tile: Option<OriginalTilePoint>,
+    },
+    UnknownObject,
+}
+
 impl OriginalDebugAgentWeaponHint {
     pub fn player_fallback_pistol() -> Self {
         Self {
@@ -871,6 +905,7 @@ struct OriginalMissionScriptProbe {
 struct OriginalObjectiveScenarioModel {
     objectives: Vec<OriginalObjectiveCandidateRecord>,
     scenarios: Vec<OriginalScenarioCandidateRecord>,
+    ped_scenario_starts: BTreeMap<u16, u16>,
     ped_scenario_start_candidates: usize,
     scenario_chain_link_candidates: usize,
     scenario_loop_candidates: usize,
@@ -1253,7 +1288,7 @@ impl OriginalMissionScene {
 
     pub fn interaction_objective_report_label(&self) -> String {
         format!(
-            "{}; {}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective lifecycle, formation-spaced route orders with fallback diagnostics, local spacing holds, and wider destination-tail reservations, staggered squad starts, cancellable selected local orders that clear stale door prompts, closed-door threshold approach routes with explicit threshold-arrival prompts, route-blocked door hints with visible local overlays and runtime-only door-open route gates that can immediately retry stored movement goals and persist for later route gates, local down/defeated dynamic route blockers, active command selection excluding and repairing local down-test agents, controlled-agent and route-backed NPC sprite draw-order participation, manual selected-agent camera focus/reset with automated trace follow only, left-side normal tactical HUD with per-agent HP/cooldown bars and decoder diagnostics hidden until trace, aligned route probe labels, firing-position cooldown holds, projectile/impact markers, facing/impact/volley/down labels, direction-aware equipped-weapon glyph overlays from guarded loadout hints, persistent door-open route/vehicle/pickup-proof overlays, route-backed NPC wander and mission-target-to-vehicle candidate state, civilian panic/flee/fled markers, hostile alert/pressure/fire/held overlays, hostile return-fire plus route-gated hostile/civilian pressure markers, clearer local under-fire/down-test feedback with selection-repair counters, runtime shot/impact/vehicle/UI/music-candidate audio-event hooks without original playback, verified automated local mission-complete/final-state/reset/interaction-gate playtest traces including hostile-held, civilian-flee, selection-repair, NPC route, vehicle boarding, audio hook, door/open threshold, and route-gate proof or precise blocker, and dropped-pickup blockers without mutating source GAME data, doors, inventory, vehicles, AI, sound/music, or final mission results",
+            "{}; {}; {}; {}; {}; debug action resolution gate ready for local control labels only; static scene report remains aggregate-only; gated world runtime may attach local movement/combat/objective lifecycle, formation-spaced route orders with fallback diagnostics, local spacing holds, and wider destination-tail reservations, staggered squad starts, cancellable selected local orders that clear stale door prompts, closed-door threshold approach routes with explicit threshold-arrival prompts, route-blocked door hints with visible local overlays and runtime-only door-open route gates that can immediately retry stored movement goals and persist for later route gates, local down/defeated dynamic route blockers, active command selection excluding and repairing local down-test agents, controlled-agent and route-backed NPC sprite draw-order participation, scenario-chain-backed non-squad NPC routes before limited local roam fallback, mission-target-to-vehicle candidate boarding that suppresses boarded ped sprites and moves a runtime vehicle along a local scenario/fallback route, local controlled-agent vehicle passenger markers, manual selected-agent camera focus/reset with automated trace follow only, left-side original-style normal tactical sidebar using documented selector/weapon sprite ranges when local HSPR assets are available, aligned route probe labels, firing-position cooldown holds, projectile/impact markers, facing/impact/volley/down labels, direction-aware equipped-weapon glyph overlays from guarded loadout hints, local dropped-weapon candidates that render through guarded original weapon records where proof passes and can be picked up without source GAME mutation, persistent door-open route/vehicle/pickup overlays, civilian panic/flee/fled markers, hostile alert/pressure/fire/held overlays, hostile return-fire plus route-gated hostile/civilian pressure markers, clearer local under-fire/down-test feedback with selection-repair counters, runtime SOUND-0/1 and XMI catalog proof plus in-memory VOC-to-WAV playback for loaded pistol/Uzi/door/menu/mission-complete event samples while XMI music and full mixer semantics remain gated, verified automated local mission-complete/final-state/reset/interaction-gate playtest traces including hostile-held, civilian-flee, selection-repair, NPC route, vehicle boarding/driving, audio playback hook, door/open threshold, and route-gate proof or precise blocker, and explicit blockers without mutating source GAME data, doors, final inventory, final vehicle traffic, AI, XMI music, or final mission results",
             self.interaction_probe.report_label(),
             self.objective_debug_probe.report_label(),
             self.weapon_loadout_probe.report_label(),
@@ -1397,6 +1432,44 @@ impl OriginalMissionScene {
     ) -> Vec<OriginalDebugAgentWeaponHint> {
         self.weapon_loadout_probe
             .hints_for_debug_agent(ped_record_index)
+    }
+
+    pub fn weapon_object_candidate_for_kind(
+        &self,
+        kind: OriginalWeaponKind,
+    ) -> Option<OriginalMissionObjectCandidate> {
+        self.objects
+            .iter()
+            .find(|object| {
+                object.kind == OriginalMissionObjectKind::Weapon
+                    && object
+                        .subtype_value
+                        .and_then(OriginalWeaponKind::from_game_subtype)
+                        == Some(kind)
+            })
+            .cloned()
+    }
+
+    pub fn scenario_action_plan_for_ped(
+        &self,
+        ped_record_index: u16,
+        max_steps: usize,
+    ) -> Vec<OriginalScenarioRuntimeAction> {
+        self.objective_model.scenario_action_plan_for_ped(
+            ped_record_index,
+            &self.objects,
+            max_steps,
+        )
+    }
+
+    pub fn scenario_plan_panel_label(&self) -> String {
+        format!(
+            "scenario chains {} peds; links {}; loops {}; invalid next {}; runtime uses chains before local roam",
+            self.objective_model.ped_scenario_start_candidates,
+            self.objective_model.scenario_chain_link_candidates,
+            self.objective_model.scenario_loop_candidates,
+            self.objective_model.scenario_invalid_next_candidates
+        )
     }
 
     pub fn original_combat_line_probe_between(
@@ -4142,13 +4215,15 @@ impl OriginalObjectiveScenarioModel {
                 OriginalScenarioCandidateRecord::from_record(record_index as u16, record)
             })
             .collect::<Vec<_>>();
-        let ped_scenario_starts = ped_scenario_start_indices(decoded);
+        let ped_scenario_starts = ped_scenario_start_map(decoded);
+        let ped_scenario_start_count = ped_scenario_starts.len();
+        let ped_scenario_start_indices = ped_scenario_starts.values().copied().collect::<Vec<_>>();
         let scenario_chain_link_candidates = scenarios
             .iter()
             .filter(|record| record.next_index.is_some())
             .count();
         let scenario_loop_candidates =
-            count_scenario_loop_candidates(&scenarios, &ped_scenario_starts);
+            count_scenario_loop_candidates(&scenarios, &ped_scenario_start_indices);
         let scenario_invalid_next_candidates = scenarios
             .iter()
             .filter(|record| record.invalid_next)
@@ -4163,7 +4238,8 @@ impl OriginalObjectiveScenarioModel {
         Self {
             objectives,
             scenarios,
-            ped_scenario_start_candidates: ped_scenario_starts.len(),
+            ped_scenario_starts,
+            ped_scenario_start_candidates: ped_scenario_start_count,
             scenario_chain_link_candidates,
             scenario_loop_candidates,
             scenario_invalid_next_candidates,
@@ -4274,6 +4350,35 @@ impl OriginalObjectiveScenarioModel {
                         })
             })
             .count()
+    }
+
+    fn scenario_action_plan_for_ped(
+        &self,
+        ped_record_index: u16,
+        objects: &[OriginalMissionObjectCandidate],
+        max_steps: usize,
+    ) -> Vec<OriginalScenarioRuntimeAction> {
+        let Some(mut cursor) = self.ped_scenario_starts.get(&ped_record_index).copied() else {
+            return Vec::new();
+        };
+        let by_index = self
+            .scenarios
+            .iter()
+            .map(|record| (record.record_index, record))
+            .collect::<BTreeMap<_, _>>();
+        let mut visited = BTreeSet::new();
+        let mut actions = Vec::new();
+        while actions.len() < max_steps && visited.insert(cursor) {
+            let Some(record) = by_index.get(&cursor).copied() else {
+                break;
+            };
+            actions.push(record.runtime_action(objects));
+            let Some(next) = record.next_index else {
+                break;
+            };
+            cursor = next;
+        }
+        actions
     }
 }
 
@@ -4507,6 +4612,34 @@ impl OriginalScenarioCandidateRecord {
             .and_then(|target| target.tile_from_objects(objects))
             .is_some_and(|tile| tile_near(tile, target_tile, 1, 1))
     }
+
+    fn runtime_action(
+        &self,
+        objects: &[OriginalMissionObjectCandidate],
+    ) -> OriginalScenarioRuntimeAction {
+        let target = if let Some(tile) = self.tile {
+            OriginalScenarioRuntimeTarget::Tile(tile)
+        } else if let Some(object_target) = self.object_target {
+            match object_target.object_reference() {
+                Some((kind, record_index)) => OriginalScenarioRuntimeTarget::Object {
+                    kind,
+                    record_index,
+                    tile: object_target.tile_from_objects(objects),
+                },
+                None => OriginalScenarioRuntimeTarget::UnknownObject,
+            }
+        } else {
+            OriginalScenarioRuntimeTarget::None
+        };
+        OriginalScenarioRuntimeAction {
+            record_index: self.record_index,
+            kind: self.kind.into(),
+            next_index: self.next_index,
+            target,
+            invalid_next: self.invalid_next,
+            self_loop: self.self_loop,
+        }
+    }
 }
 
 impl OriginalScenarioCandidateKind {
@@ -4552,6 +4685,72 @@ impl OriginalObjectOffsetTarget {
             .iter()
             .find(|object| object.kind == kind && object.record_index == record_index)
             .and_then(|object| object.tile)
+    }
+
+    fn object_reference(self) -> Option<(OriginalMissionObjectKind, u16)> {
+        match self {
+            Self::Ped(record_index) => Some((OriginalMissionObjectKind::Ped, record_index)),
+            Self::Vehicle(record_index) => Some((OriginalMissionObjectKind::Vehicle, record_index)),
+            Self::Static(record_index) => Some((OriginalMissionObjectKind::Static, record_index)),
+            Self::Weapon(record_index) => Some((OriginalMissionObjectKind::Weapon, record_index)),
+            Self::Unknown => None,
+        }
+    }
+}
+
+impl From<OriginalScenarioCandidateKind> for OriginalScenarioRuntimeActionKind {
+    fn from(kind: OriginalScenarioCandidateKind) -> Self {
+        match kind {
+            OriginalScenarioCandidateKind::WalkOrDrive => Self::WalkOrDrive,
+            OriginalScenarioCandidateKind::UseVehicle => Self::UseVehicle,
+            OriginalScenarioCandidateKind::Unknown => Self::Unknown,
+            OriginalScenarioCandidateKind::Escape => Self::Escape,
+            OriginalScenarioCandidateKind::Trigger => Self::Trigger,
+            OriginalScenarioCandidateKind::Reset => Self::Reset,
+            OriginalScenarioCandidateKind::TrainWait => Self::TrainWait,
+            OriginalScenarioCandidateKind::ProtectedTargetReached => Self::ProtectedTargetReached,
+        }
+    }
+}
+
+impl OriginalScenarioRuntimeActionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::WalkOrDrive => "walk/drive",
+            Self::UseVehicle => "use vehicle",
+            Self::Unknown => "unknown action",
+            Self::Escape => "escape",
+            Self::Trigger => "trigger",
+            Self::Reset => "reset",
+            Self::TrainWait => "train wait",
+            Self::ProtectedTargetReached => "protected target reached",
+        }
+    }
+
+    pub fn is_route_candidate(self) -> bool {
+        matches!(
+            self,
+            Self::WalkOrDrive | Self::UseVehicle | Self::Escape | Self::ProtectedTargetReached
+        )
+    }
+}
+
+impl OriginalScenarioRuntimeTarget {
+    pub fn tile(self) -> Option<OriginalTilePoint> {
+        match self {
+            Self::Tile(tile) => Some(tile),
+            Self::Object { tile, .. } => tile,
+            Self::None | Self::UnknownObject => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "no target",
+            Self::Tile(_) => "tile target",
+            Self::Object { kind, .. } => kind.label(),
+            Self::UnknownObject => "unknown object target",
+        }
     }
 }
 
@@ -5474,12 +5673,16 @@ fn strided_object_index(offset: u16, base: u16, end: u16, stride: usize) -> Opti
     (delta % stride == 0).then_some((delta / stride) as u16)
 }
 
-fn ped_scenario_start_indices(decoded: &[u8]) -> Vec<u16> {
+fn ped_scenario_start_map(decoded: &[u8]) -> BTreeMap<u16, u16> {
     let tail = decoded.get(PEOPLE_OFFSET..).unwrap_or(&[]);
     let len = tail.len().min(256 * PEOPLE_RECORD_BYTES);
     tail[..len]
         .chunks_exact(PEOPLE_RECORD_BYTES)
-        .filter_map(|record| scenario_offset_to_index(read_le_u16(record, 40)))
+        .enumerate()
+        .filter_map(|(ped_index, record)| {
+            scenario_offset_to_index(read_le_u16(record, 40))
+                .map(|scenario_index| (ped_index as u16, scenario_index))
+        })
         .collect()
 }
 
@@ -5591,8 +5794,9 @@ mod tests {
         OriginalCombatLineStatus, OriginalDebugAgentWeaponSource, OriginalDebugInteractionFocus,
         OriginalDebugInteractionIntentStatus, OriginalDebugInteractionStatus, OriginalDrawStage,
         OriginalMissionObjectKind, OriginalMissionScene, OriginalMissionScriptProbe,
-        OriginalMissionSelection, OriginalSpriteBankSupport, OriginalWeaponKind, PEOPLE_OFFSET,
-        SCENARIOS_OFFSET, STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
+        OriginalMissionSelection, OriginalScenarioRuntimeActionKind, OriginalScenarioRuntimeTarget,
+        OriginalSpriteBankSupport, OriginalWeaponKind, PEOPLE_OFFSET, SCENARIOS_OFFSET,
+        STATICS_OFFSET, WEAPONS_OFFSET, collect_candidate_objects,
         format_mission_scene_report_rows, summarize_sprite_tab_bank,
     };
     use crate::engine::{
@@ -5901,6 +6105,72 @@ mod tests {
                 .contains("no previews")
         );
         assert!(!scene.static_render_proof.report_label().contains("00 00"));
+    }
+
+    #[test]
+    fn scenario_action_plan_follows_ped_chain_before_runtime_roam() {
+        let mut decoded = vec![0u8; SCENARIOS_OFFSET + 32];
+        write_record(
+            &mut decoded[PEOPLE_OFFSET..PEOPLE_OFFSET + 92],
+            4,
+            4,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        decoded[PEOPLE_OFFSET + 40..PEOPLE_OFFSET + 42].copy_from_slice(&8u16.to_le_bytes());
+        write_record(
+            &mut decoded[CARS_OFFSET..CARS_OFFSET + 42],
+            12,
+            14,
+            0,
+            0,
+            0,
+            0,
+            0x04,
+        );
+        let scenario_1 = SCENARIOS_OFFSET + 8;
+        decoded[scenario_1..scenario_1 + 2].copy_from_slice(&16u16.to_le_bytes());
+        decoded[scenario_1 + 4] = 20;
+        decoded[scenario_1 + 5] = 22;
+        decoded[scenario_1 + 6] = 1;
+        decoded[scenario_1 + 7] = 0x01;
+        let scenario_2 = SCENARIOS_OFFSET + 16;
+        decoded[scenario_2 + 2..scenario_2 + 4]
+            .copy_from_slice(&OBJECT_OFFSET_VEHICLES_BASE.to_le_bytes());
+        decoded[scenario_2 + 7] = 0x02;
+        let objects = collect_candidate_objects(&decoded);
+        let scene = OriginalMissionScene::from_parts(
+            &selection(),
+            "synthetic/GAME01.DAT".to_string(),
+            &decoded,
+            objects,
+            OriginalSpriteBankSupport::from_primary_counts(4, 4),
+            synthetic_catalog(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let plan = scene.scenario_action_plan_for_ped(0, 8);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].kind, OriginalScenarioRuntimeActionKind::WalkOrDrive);
+        assert!(
+            matches!(plan[0].target, OriginalScenarioRuntimeTarget::Tile(tile) if tile.tile_x == 10 && tile.tile_y == 11 && tile.tile_z == 1)
+        );
+        assert_eq!(plan[1].kind, OriginalScenarioRuntimeActionKind::UseVehicle);
+        assert!(
+            matches!(plan[1].target, OriginalScenarioRuntimeTarget::Object { kind: OriginalMissionObjectKind::Vehicle, record_index: 0, tile: Some(tile) } if tile.tile_x == 12 && tile.tile_y == 14)
+        );
+        assert!(
+            scene
+                .scenario_plan_panel_label()
+                .contains("runtime uses chains")
+        );
+        assert!(!scene.scenario_plan_panel_label().contains("00 00"));
     }
 
     #[test]

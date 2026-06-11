@@ -102,6 +102,30 @@ impl RuntimeOriginalObjectGraphics {
 
         drew_any
     }
+
+    pub fn draw_sprite_id(&self, sprite_id: usize, top_left: Vec2, scale: f32) -> bool {
+        let Some(rect) = self.assets.sprite_atlas.source_rect(sprite_id) else {
+            return false;
+        };
+        let scale = scale.max(0.1);
+        draw_texture_ex(
+            &self.texture,
+            top_left.x,
+            top_left.y,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(rect.width as f32 * scale, rect.height as f32 * scale)),
+                source: Some(Rect::new(
+                    rect.x as f32,
+                    rect.y as f32,
+                    rect.width as f32,
+                    rect.height as f32,
+                )),
+                ..Default::default()
+            },
+        );
+        true
+    }
 }
 
 fn object_screen_base(

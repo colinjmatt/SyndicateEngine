@@ -12,7 +12,7 @@ use syndicate_engine::{
 #[macroquad::main(window_conf)]
 async fn main() {
     let asset_index = AssetIndex::discover("../original_assets");
-    let mut world = WorldState::new(asset_index);
+    let mut world = WorldState::new(asset_index).await;
     let visual_diagnostic_frame = std::env::var("SYNDICATE_VISUAL_DIAGNOSTIC_FRAMES")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())

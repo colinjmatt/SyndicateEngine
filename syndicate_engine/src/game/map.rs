@@ -419,6 +419,7 @@ impl TacticalMap {
         object_graphics: Option<&RuntimeOriginalObjectGraphics>,
         object_animation_frame: u16,
         controlled_ped_record_indices: &[u16],
+        controlled_vehicle_record_indices: &[u16],
         controlled_agent_draws: &[OriginalControlledAgentDraw],
     ) {
         let tile_size = vec2(
@@ -459,9 +460,10 @@ impl TacticalMap {
                         item.y as u16,
                         object_z as u16,
                     ) {
-                        if original_object_hidden_by_controlled_agent(
+                        if original_object_hidden_by_runtime_draw(
                             object,
                             controlled_ped_record_indices,
+                            controlled_vehicle_record_indices,
                         ) {
                             continue;
                         }
@@ -1091,12 +1093,20 @@ fn original_candidates_for_tile(
         .collect()
 }
 
-fn original_object_hidden_by_controlled_agent(
+fn original_object_hidden_by_runtime_draw(
     object: &OriginalMissionObjectCandidate,
     controlled_ped_record_indices: &[u16],
+    controlled_vehicle_record_indices: &[u16],
 ) -> bool {
-    object.kind == OriginalMissionObjectKind::Ped
-        && controlled_ped_record_indices.contains(&object.record_index)
+    match object.kind {
+        OriginalMissionObjectKind::Ped => {
+            controlled_ped_record_indices.contains(&object.record_index)
+        }
+        OriginalMissionObjectKind::Vehicle => {
+            controlled_vehicle_record_indices.contains(&object.record_index)
+        }
+        _ => false,
+    }
 }
 
 fn original_route_progress_sample(
@@ -1497,7 +1507,7 @@ mod tests {
     use super::{
         OriginalMapDrawPlan, OriginalMapViewport, TacticalMap, is_renderable_original_tile,
         original_map_tile_index, original_map_tile_world_top_left,
-        original_object_hidden_by_controlled_agent, original_screen_to_tile,
+        original_object_hidden_by_runtime_draw, original_screen_to_tile,
         original_screen_to_tile_at_z, original_tile_local_marker_world,
     };
     use crate::engine::mission_scene::{
@@ -1525,17 +1535,25 @@ mod tests {
         let other_ped = synthetic_object(OriginalMissionObjectKind::Ped, 4);
         let static_object = synthetic_object(OriginalMissionObjectKind::Static, 0);
 
-        assert!(original_object_hidden_by_controlled_agent(
+        assert!(original_object_hidden_by_runtime_draw(
             &controlled_ped,
-            &controlled
+            &controlled,
+            &[]
         ));
-        assert!(!original_object_hidden_by_controlled_agent(
+        assert!(!original_object_hidden_by_runtime_draw(
             &other_ped,
-            &controlled
+            &controlled,
+            &[]
         ));
-        assert!(!original_object_hidden_by_controlled_agent(
+        assert!(!original_object_hidden_by_runtime_draw(
             &static_object,
-            &controlled
+            &controlled,
+            &[]
+        ));
+        assert!(original_object_hidden_by_runtime_draw(
+            &synthetic_object(OriginalMissionObjectKind::Vehicle, 2),
+            &controlled,
+            &[2]
         ));
     }
 

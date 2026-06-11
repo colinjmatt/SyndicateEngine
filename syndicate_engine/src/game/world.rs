@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     engine::{
@@ -18,9 +18,11 @@ use crate::{
             OriginalDebugInteractionProbe, OriginalMissionObjectCandidate,
             OriginalMissionObjectKind, OriginalMissionScene, OriginalObjectRenderDecision,
             OriginalObjectiveRuntimeTarget, OriginalRuntimeRouteProbe, OriginalRuntimeRouteStatus,
+            OriginalScenarioRuntimeAction, OriginalScenarioRuntimeActionKind,
             OriginalStaticRenderDecision, OriginalTilePoint, OriginalWeaponKind,
         },
         mission_source::OriginalMissionSelection,
+        original_audio::{OriginalAudioCatalog, OriginalAudioSampleBank},
     },
     game::{
         agent::Agent,
@@ -66,6 +68,8 @@ pub struct WorldState {
     original_control_runtime: OriginalMissionControlRuntime,
     original_combat_runtime: OriginalMissionCombatRuntime,
     original_audio_runtime: OriginalAudioRuntime,
+    original_audio_catalog: OriginalAudioCatalog,
+    original_audio_samples: OriginalAudioSampleBank,
     original_combat_feedback: Option<OriginalCombatFeedback>,
     original_hover_target: Option<OriginalCombatTargetCandidate>,
     original_control_trace: OriginalControlTrace,
@@ -90,6 +94,7 @@ const ORIGINAL_CONTROL_CIVILIAN_FLEE_RADIUS: u16 = 6;
 const ORIGINAL_CONTROL_NPC_WANDER_SECS: f32 = 2.40;
 const ORIGINAL_CONTROL_NPC_ROUTE_SPEED: f32 = 2.4;
 const ORIGINAL_CONTROL_TARGET_CAR_DELAY_SECS: f32 = 7.5;
+const ORIGINAL_CONTROL_VEHICLE_ROUTE_SPEED: f32 = 4.8;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
@@ -140,6 +145,7 @@ struct OriginalDebugAgent {
     local_hp: i32,
     local_max_hp: i32,
     local_down_test: bool,
+    vehicle_link: Option<OriginalTilePoint>,
     route_partial_door_gate: Option<OriginalTilePoint>,
     interaction_intent: Option<OriginalDebugInteractionIntent>,
     action_state: Option<OriginalDebugActionState>,
@@ -221,6 +227,7 @@ struct OriginalMissionCombatRuntime {
     npc_routes: BTreeMap<u16, OriginalNpcRouteState>,
     target_vehicle: Option<OriginalVehicleBoardingState>,
     dropped_weapon_blockers: BTreeSet<OriginalTilePoint>,
+    dropped_weapons: Vec<OriginalDroppedWeaponState>,
     last_result: Option<String>,
 }
 
@@ -261,7 +268,11 @@ struct OriginalCivilianPanicState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OriginalNpcRouteMode {
-    Wander,
+    Idle,
+    ScriptedWalk,
+    ScriptedUseVehicle,
+    ScriptedEscape,
+    LocalRoam,
     ObjectiveToVehicle,
 }
 
@@ -274,6 +285,8 @@ struct OriginalNpcRouteState {
     route_progress: f32,
     goal: Option<OriginalTilePoint>,
     mode: OriginalNpcRouteMode,
+    script_plan: VecDeque<OriginalScenarioRuntimeAction>,
+    current_script_action: Option<OriginalScenarioRuntimeAction>,
     next_decision_secs: f32,
     route_steps: usize,
     blocked: usize,
@@ -284,17 +297,31 @@ enum OriginalVehicleBoardingPhase {
     Waiting,
     Approaching,
     Boarded,
+    Driving,
+    Escaped,
     Blocked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct OriginalVehicleBoardingState {
     target_record_index: u16,
     vehicle_record_index: u16,
     vehicle_tile: OriginalTilePoint,
     phase: OriginalVehicleBoardingPhase,
+    drive_route: Vec<OriginalTilePoint>,
+    drive_progress: f32,
+    drive_goal: Option<OriginalTilePoint>,
     route_nodes: usize,
+    drive_steps: usize,
     elapsed_secs: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OriginalDroppedWeaponState {
+    source_ped_record_index: u16,
+    tile: OriginalTilePoint,
+    kind: Option<OriginalWeaponKind>,
+    picked_up: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -481,11 +508,22 @@ impl OriginalNpcRouteState {
             route: Vec::new(),
             route_progress: 0.0,
             goal: None,
-            mode: OriginalNpcRouteMode::Wander,
+            mode: OriginalNpcRouteMode::Idle,
+            script_plan: VecDeque::new(),
+            current_script_action: None,
             next_decision_secs: 0.35 + (record_index % 7) as f32 * 0.21,
             route_steps: 0,
             blocked: 0,
         }
+    }
+
+    fn with_script_plan(mut self, plan: Vec<OriginalScenarioRuntimeAction>) -> Self {
+        self.script_plan = plan.into();
+        if !self.script_plan.is_empty() {
+            self.mode = OriginalNpcRouteMode::Idle;
+            self.next_decision_secs = self.next_decision_secs.min(0.6);
+        }
+        self
     }
 
     fn assign_route(&mut self, path: Vec<OriginalTilePoint>, mode: OriginalNpcRouteMode) {
@@ -521,9 +559,21 @@ impl OriginalNpcRouteState {
             self.tile = self.route.last().copied().unwrap_or(self.tile);
             self.route.clear();
             self.route_progress = 0.0;
+            if matches!(
+                self.mode,
+                OriginalNpcRouteMode::ScriptedWalk
+                    | OriginalNpcRouteMode::ScriptedUseVehicle
+                    | OriginalNpcRouteMode::ScriptedEscape
+            ) {
+                self.current_script_action = None;
+            }
             self.next_decision_secs = match self.mode {
-                OriginalNpcRouteMode::Wander => ORIGINAL_CONTROL_NPC_WANDER_SECS,
+                OriginalNpcRouteMode::ScriptedWalk
+                | OriginalNpcRouteMode::ScriptedUseVehicle
+                | OriginalNpcRouteMode::ScriptedEscape => 0.25,
+                OriginalNpcRouteMode::LocalRoam => ORIGINAL_CONTROL_NPC_WANDER_SECS,
                 OriginalNpcRouteMode::ObjectiveToVehicle => 0.0,
+                OriginalNpcRouteMode::Idle => ORIGINAL_CONTROL_NPC_WANDER_SECS,
             };
         }
         moved
@@ -561,30 +611,96 @@ impl OriginalNpcRouteState {
         match self.mode {
             OriginalNpcRouteMode::ObjectiveToVehicle if self.is_moving() => "TO CAR".to_string(),
             OriginalNpcRouteMode::ObjectiveToVehicle => "CAR PLAN".to_string(),
-            OriginalNpcRouteMode::Wander if self.is_moving() => {
-                format!("WANDER {}", self.role.overlay_label())
+            OriginalNpcRouteMode::ScriptedUseVehicle if self.is_moving() => "USE CAR".to_string(),
+            OriginalNpcRouteMode::ScriptedUseVehicle => "CAR SCRIPT".to_string(),
+            OriginalNpcRouteMode::ScriptedWalk | OriginalNpcRouteMode::ScriptedEscape
+                if self.is_moving() =>
+            {
+                let action = self
+                    .current_script_action
+                    .as_ref()
+                    .map(|action| action.kind.label())
+                    .unwrap_or("script");
+                format!("SCRIPT {action}")
             }
-            OriginalNpcRouteMode::Wander => self.role.overlay_label().to_string(),
+            OriginalNpcRouteMode::ScriptedWalk | OriginalNpcRouteMode::ScriptedEscape => {
+                "SCRIPT WAIT".to_string()
+            }
+            OriginalNpcRouteMode::LocalRoam if self.is_moving() => {
+                format!("ROAM {}", self.role.overlay_label())
+            }
+            OriginalNpcRouteMode::LocalRoam | OriginalNpcRouteMode::Idle => {
+                self.role.overlay_label().to_string()
+            }
         }
     }
 }
 
 impl OriginalVehicleBoardingState {
-    fn panel_label(self) -> String {
+    fn panel_label(&self) -> String {
         let phase = match self.phase {
             OriginalVehicleBoardingPhase::Waiting => "waiting",
             OriginalVehicleBoardingPhase::Approaching => "target moving to car",
             OriginalVehicleBoardingPhase::Boarded => "target in car",
+            OriginalVehicleBoardingPhase::Driving => "target car driving",
+            OriginalVehicleBoardingPhase::Escaped => "target car escaped",
             OriginalVehicleBoardingPhase::Blocked => "target car route blocked",
         };
+        let drive = self
+            .drive_goal
+            .map(|goal| {
+                format!(
+                    "; drive {}/{} to {}",
+                    self.drive_steps,
+                    self.drive_route.len().saturating_sub(1),
+                    original_tile_short_label(goal)
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "target vehicle {} rec {} at {}; route nodes {}; {}",
+            "target vehicle {} rec {} at {}; route nodes {}; {}{}",
             self.target_record_index,
             self.vehicle_record_index,
             original_tile_short_label(self.vehicle_tile),
             self.route_nodes,
-            phase
+            phase,
+            drive
         )
+    }
+
+    fn target_is_inside(&self) -> bool {
+        matches!(
+            self.phase,
+            OriginalVehicleBoardingPhase::Boarded
+                | OriginalVehicleBoardingPhase::Driving
+                | OriginalVehicleBoardingPhase::Escaped
+        )
+    }
+
+    fn route_anchor_tile(&self) -> OriginalTilePoint {
+        if self.drive_route.is_empty() {
+            self.vehicle_tile
+        } else {
+            let max_index = self.drive_route.len().saturating_sub(1);
+            self.drive_route[self.drive_progress.floor().clamp(0.0, max_index as f32) as usize]
+        }
+    }
+
+    fn advance_drive(&mut self, real_dt: f32) -> bool {
+        if self.phase != OriginalVehicleBoardingPhase::Driving || self.drive_route.len() <= 1 {
+            return false;
+        }
+        let previous_tile = self.route_anchor_tile();
+        let max_progress = self.drive_route.len().saturating_sub(1) as f32;
+        self.drive_progress = (self.drive_progress
+            + real_dt.max(0.0) * ORIGINAL_CONTROL_VEHICLE_ROUTE_SPEED)
+            .min(max_progress);
+        self.drive_steps = self.drive_progress.floor() as usize;
+        self.vehicle_tile = self.route_anchor_tile();
+        if self.drive_progress >= max_progress {
+            self.phase = OriginalVehicleBoardingPhase::Escaped;
+        }
+        previous_tile != self.vehicle_tile || self.phase == OriginalVehicleBoardingPhase::Escaped
     }
 }
 
@@ -620,18 +736,18 @@ impl OriginalAudioRuntime {
         }
     }
 
-    fn panel_label(&self) -> String {
+    fn panel_label_with_catalog(&self, catalog: &OriginalAudioCatalog) -> String {
         let music = match self.music_state {
-            OriginalMusicState::RuntimeOnlyPending => "music runtime hook pending",
-            OriginalMusicState::MissionLoopCandidate => "mission music loop candidate",
+            OriginalMusicState::RuntimeOnlyPending => "music hook pending",
+            OriginalMusicState::MissionLoopCandidate => "mission loop candidate",
         };
         let recent = self
             .events
             .last()
-            .map(|event| event.label.as_str())
-            .unwrap_or("no runtime audio events yet");
+            .map(|event| catalog.event_status_label(&event.label))
+            .unwrap_or_else(|| catalog.status_label());
         format!(
-            "audio hooks shots {} impacts {} vehicles {} ui {}; {}; recent {}",
+            "audio events shot {} impact {} vehicle {} ui {}; {}; {}",
             self.shot_events,
             self.impact_events,
             self.vehicle_events,
@@ -837,6 +953,7 @@ struct OriginalPlayHudSummary {
 #[derive(Debug, Clone, PartialEq)]
 struct OriginalPlayHudAgentRow {
     text: String,
+    weapon_kind: Option<OriginalWeaponKind>,
     hp_fraction: f32,
     cooldown_fraction: f32,
     primary: bool,
@@ -902,11 +1019,19 @@ impl OriginalMissionControlRuntime {
             OriginalDebugInteractionFocus::WeaponPickupCandidate => {
                 self.weapon_pickup_resolutions += 1;
                 if let Some(tile) = resolution.target_tile {
-                    self.pickup_blocked_tiles.insert(tile);
+                    if !result_label.contains("picked up local dropped") {
+                        self.pickup_blocked_tiles.insert(tile);
+                    }
                 }
-                result_label.push_str(
-                    "; pickup remains blocked until source/drop/inventory ownership proof is available",
-                );
+                if result_label.contains("picked up local dropped") {
+                    result_label.push_str(
+                        "; local dropped-weapon inventory mutation active, source GAME data unchanged",
+                    );
+                } else {
+                    result_label.push_str(
+                        "; pickup remains blocked until source/drop/inventory ownership proof is available",
+                    );
+                }
             }
             OriginalDebugInteractionFocus::VehicleEntryCandidate => {
                 self.vehicle_entry_resolutions += 1;
@@ -1217,10 +1342,14 @@ impl OriginalMissionCombatRuntime {
             });
             let role = OriginalCombatTargetRole::from_ped_object(object, objective);
             runtime.ensure_ped_state(object.record_index, tile, objective);
+            let scenario_plan = scene_model.scenario_action_plan_for_ped(object.record_index, 12);
             runtime
                 .npc_routes
                 .entry(object.record_index)
-                .or_insert_with(|| OriginalNpcRouteState::new(object.record_index, role, tile));
+                .or_insert_with(|| {
+                    OriginalNpcRouteState::new(object.record_index, role, tile)
+                        .with_script_plan(scenario_plan)
+                });
         }
         if let Some(target) = objective_target
             && target.target_kind == Some(OriginalMissionObjectKind::Ped)
@@ -1234,7 +1363,11 @@ impl OriginalMissionCombatRuntime {
                 vehicle_record_index,
                 vehicle_tile,
                 phase: OriginalVehicleBoardingPhase::Waiting,
+                drive_route: Vec::new(),
+                drive_progress: 0.0,
+                drive_goal: None,
                 route_nodes: 0,
+                drive_steps: 0,
                 elapsed_secs: 0.0,
             });
         }
@@ -1418,11 +1551,17 @@ impl OriginalMissionCombatRuntime {
     }
 
     fn npc_route_label(&self, record_index: u16) -> Option<String> {
-        if self.target_vehicle.is_some_and(|vehicle| {
-            vehicle.target_record_index == record_index
-                && vehicle.phase == OriginalVehicleBoardingPhase::Boarded
+        if let Some(vehicle) = self.target_vehicle.as_ref().filter(|vehicle| {
+            vehicle.target_record_index == record_index && vehicle.target_is_inside()
         }) {
-            return Some("IN CAR".to_string());
+            return Some(
+                match vehicle.phase {
+                    OriginalVehicleBoardingPhase::Driving => "IN CAR MOVING",
+                    OriginalVehicleBoardingPhase::Escaped => "IN CAR GONE",
+                    _ => "IN CAR",
+                }
+                .to_string(),
+            );
         }
         self.npc_routes
             .get(&record_index)
@@ -1430,8 +1569,15 @@ impl OriginalMissionCombatRuntime {
             .map(OriginalNpcRouteState::overlay_label)
     }
 
+    fn ped_in_vehicle(&self, record_index: u16) -> bool {
+        self.target_vehicle.as_ref().is_some_and(|vehicle| {
+            vehicle.target_record_index == record_index && vehicle.target_is_inside()
+        })
+    }
+
     fn vehicle_boarding_label(&self) -> String {
         self.target_vehicle
+            .as_ref()
             .map(OriginalVehicleBoardingState::panel_label)
             .unwrap_or_else(|| "target vehicle set piece unavailable".to_string())
     }
@@ -1490,11 +1636,9 @@ impl OriginalMissionCombatRuntime {
         record_index: u16,
         fallback: OriginalTilePoint,
     ) -> OriginalTilePoint {
-        if self.target_vehicle.is_some_and(|vehicle| {
-            vehicle.target_record_index == record_index
-                && vehicle.phase == OriginalVehicleBoardingPhase::Boarded
-        }) && let Some(vehicle) = self.target_vehicle
-        {
+        if let Some(vehicle) = self.target_vehicle.as_ref().filter(|vehicle| {
+            vehicle.target_record_index == record_index && vehicle.target_is_inside()
+        }) {
             return vehicle.vehicle_tile;
         }
         self.hostile_reactions
@@ -1557,6 +1701,9 @@ impl OriginalMissionCombatRuntime {
         self.runtime_ped_record_indices()
             .into_iter()
             .filter_map(|record_index| {
+                if self.ped_in_vehicle(record_index) {
+                    return None;
+                }
                 let object = scene_model.objects.iter().find(|object| {
                     object.kind == OriginalMissionObjectKind::Ped
                         && object.record_index == record_index
@@ -1604,15 +1751,119 @@ impl OriginalMissionCombatRuntime {
     }
 
     fn dropped_weapon_blocker_overlays(&self) -> Vec<OriginalLocalInteractionOverlay> {
-        self.dropped_weapon_blockers
+        let mut overlays = self
+            .dropped_weapons
             .iter()
+            .filter(|drop| !drop.picked_up)
             .take(8)
-            .map(|tile| OriginalLocalInteractionOverlay {
+            .map(|drop| OriginalLocalInteractionOverlay {
+                tile: drop.tile,
+                label: if drop.kind.is_some() {
+                    "DROPPED WEAPON"
+                } else {
+                    "DROP PROOF BLOCKED"
+                },
+                ready: drop.kind.is_some(),
+            })
+            .collect::<Vec<_>>();
+        overlays.extend(self.dropped_weapon_blockers.iter().take(8).map(|tile| {
+            OriginalLocalInteractionOverlay {
                 tile: *tile,
                 label: "DROP PROOF BLOCKED",
                 ready: false,
+            }
+        }));
+        overlays
+    }
+
+    fn record_dropped_weapon_candidate(
+        &mut self,
+        target: OriginalCombatTargetCandidate,
+        scene_model: &OriginalMissionScene,
+    ) {
+        if self
+            .dropped_weapons
+            .iter()
+            .any(|drop| drop.source_ped_record_index == target.record_index)
+        {
+            return;
+        }
+        let kind = scene_model
+            .debug_agent_weapon_hints(target.record_index)
+            .into_iter()
+            .find_map(|hint| hint.kind.filter(|kind| kind.is_shooting_candidate()));
+        if kind.is_none() {
+            self.dropped_weapon_blockers.insert(target.tile);
+        }
+        self.dropped_weapons.push(OriginalDroppedWeaponState {
+            source_ped_record_index: target.record_index,
+            tile: target.tile,
+            kind,
+            picked_up: false,
+        });
+    }
+
+    fn runtime_dropped_weapon_draws(
+        &self,
+        scene_model: &OriginalMissionScene,
+    ) -> Vec<OriginalControlledAgentDraw> {
+        self.dropped_weapons
+            .iter()
+            .filter(|drop| !drop.picked_up)
+            .filter_map(|drop| {
+                let kind = drop.kind?;
+                let mut object = scene_model.weapon_object_candidate_for_kind(kind)?;
+                object.tile = Some(drop.tile);
+                object.queue_tile = Some(drop.tile);
+                object.candidate_draw = true;
+                object.candidate_record = true;
+                object.draw_stage = Some(crate::engine::mission_scene::OriginalDrawStage::Weapons);
+                Some(OriginalControlledAgentDraw {
+                    object,
+                    anchor_tile: drop.tile,
+                    route: Vec::new(),
+                    progress: 0.0,
+                    animation_frame: 0,
+                })
             })
             .collect()
+    }
+
+    fn runtime_vehicle_draws(
+        &self,
+        scene_model: &OriginalMissionScene,
+    ) -> Vec<OriginalControlledAgentDraw> {
+        let Some(vehicle) = self.target_vehicle.as_ref() else {
+            return Vec::new();
+        };
+        if !vehicle.target_is_inside() {
+            return Vec::new();
+        }
+        let Some(object) = scene_model.objects.iter().find(|object| {
+            object.kind == OriginalMissionObjectKind::Vehicle
+                && object.record_index == vehicle.vehicle_record_index
+                && object.candidate_draw
+        }) else {
+            return Vec::new();
+        };
+        let mut object = object.clone();
+        object.tile = Some(vehicle.vehicle_tile);
+        object.queue_tile = Some(vehicle.vehicle_tile);
+        vec![OriginalControlledAgentDraw {
+            object,
+            anchor_tile: vehicle.route_anchor_tile(),
+            route: vehicle.drive_route.clone(),
+            progress: vehicle.drive_progress,
+            animation_frame: vehicle.drive_steps as u16,
+        }]
+    }
+
+    fn runtime_controlled_vehicle_record_indices(&self) -> Vec<u16> {
+        self.target_vehicle
+            .as_ref()
+            .filter(|vehicle| vehicle.target_is_inside())
+            .map(|vehicle| vec![vehicle.vehicle_record_index])
+            .unwrap_or_default()
     }
 
     fn mark_target_candidate(&mut self, target: OriginalCombatTargetCandidate) {
@@ -2088,7 +2339,7 @@ impl OriginalMissionCombatRuntime {
             }
         }
 
-        let target_vehicle = self.target_vehicle;
+        let target_vehicle = self.target_vehicle.take();
         if let Some(mut target_vehicle) = target_vehicle
             && !self.objective_completed
             && !self
@@ -2112,12 +2363,8 @@ impl OriginalMissionCombatRuntime {
                     .unwrap_or(target_vehicle.vehicle_tile);
                 let route_probe = scene_model
                     .original_route_debug_probe_between(start, target_vehicle.vehicle_tile);
-                let (route_probe, gate) = original_apply_local_route_gates(
-                    route_probe,
-                    door_tiles,
-                    opened_doors,
-                    dynamic_blockers,
-                );
+                let (route_probe, gate) =
+                    original_apply_scripted_route_gates(route_probe, dynamic_blockers);
                 if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
                     && route_probe.path.len() > 1
                 {
@@ -2176,6 +2423,66 @@ impl OriginalMissionCombatRuntime {
                     ));
                 }
             }
+            if target_vehicle.phase == OriginalVehicleBoardingPhase::Boarded {
+                let mut drive_blocker = None;
+                for (goal, goal_label) in original_target_vehicle_drive_goal_candidates(
+                    scene_model,
+                    target_vehicle.target_record_index,
+                    target_vehicle.vehicle_tile,
+                ) {
+                    let route_probe = scene_model
+                        .original_route_debug_probe_between(target_vehicle.vehicle_tile, goal);
+                    let (route_probe, gate) =
+                        original_apply_scripted_route_gates(route_probe, dynamic_blockers);
+                    if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+                        && route_probe.path.len() > 1
+                    {
+                        target_vehicle.phase = OriginalVehicleBoardingPhase::Driving;
+                        target_vehicle.drive_route = route_probe.path;
+                        target_vehicle.drive_progress = 0.0;
+                        target_vehicle.drive_goal = Some(goal);
+                        target_vehicle.route_nodes = target_vehicle.drive_route.len();
+                        target_vehicle.drive_steps = 0;
+                        labels.push(format!(
+                            "objective target vehicle {} started local drive toward {}; {}; final vehicle driving/traffic semantics gated",
+                            target_vehicle.vehicle_record_index,
+                            original_tile_short_label(goal),
+                            goal_label
+                        ));
+                        break;
+                    }
+                    drive_blocker = Some(
+                        gate.closed_door
+                            .map(original_tile_short_label)
+                            .unwrap_or(route_probe.message),
+                    );
+                }
+                if target_vehicle.phase == OriginalVehicleBoardingPhase::Boarded {
+                    target_vehicle.phase = OriginalVehicleBoardingPhase::Blocked;
+                    labels.push(format!(
+                        "objective target vehicle drive blocked {}; final vehicle driving/traffic semantics gated",
+                        drive_blocker.unwrap_or_else(|| "no routeable scenario/fallback goal".to_string())
+                    ));
+                }
+            }
+            if target_vehicle.phase == OriginalVehicleBoardingPhase::Driving
+                && target_vehicle.advance_drive(real_dt)
+            {
+                if let Some(state) = self.peds.get_mut(&target_vehicle.target_record_index) {
+                    state.tile = target_vehicle.vehicle_tile;
+                }
+                if target_vehicle.phase == OriginalVehicleBoardingPhase::Escaped
+                    || target_vehicle.drive_steps % 4 == 0
+                {
+                    labels.push(format!(
+                        "objective target vehicle {} moved to {}; local drive route {}/{}",
+                        target_vehicle.vehicle_record_index,
+                        original_tile_short_label(target_vehicle.vehicle_tile),
+                        target_vehicle.drive_steps,
+                        target_vehicle.drive_route.len().saturating_sub(1)
+                    ));
+                }
+            }
             self.target_vehicle = Some(target_vehicle);
         }
 
@@ -2195,8 +2502,70 @@ impl OriginalMissionCombatRuntime {
             }
             if self
                 .target_vehicle
+                .as_ref()
                 .is_some_and(|vehicle| vehicle.target_record_index == key)
             {
+                continue;
+            }
+            let script_action = {
+                if route.current_script_action.is_none() {
+                    route.current_script_action = route.script_plan.pop_front();
+                }
+                route.current_script_action
+            };
+            if let Some(action) = script_action {
+                let Some(goal) = original_script_action_route_goal(action) else {
+                    route.current_script_action = None;
+                    route.next_decision_secs = 0.25;
+                    if action.kind.is_route_candidate() && route.blocked <= 2 {
+                        labels.push(format!(
+                            "{} ped candidate {} script {} has no routeable {}; final scenario semantics gated",
+                            route.role.label(),
+                            route.record_index,
+                            action.kind.label(),
+                            action.target.label()
+                        ));
+                    }
+                    continue;
+                };
+                let route_probe = scene_model.original_route_debug_probe_between(route.tile, goal);
+                let (route_probe, gate) =
+                    original_apply_scripted_route_gates(route_probe, dynamic_blockers);
+                if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+                    && route_probe.path.len() > 1
+                {
+                    let mode = original_script_action_route_mode(action);
+                    route.assign_route(route_probe.path, mode);
+                    route.current_script_action = Some(action);
+                    labels.push(format!(
+                        "{} ped candidate {} following scenario {} toward {}; local AI uses GAME action chain",
+                        route.role.label(),
+                        route.record_index,
+                        action.kind.label(),
+                        original_tile_short_label(goal)
+                    ));
+                    continue;
+                }
+                route.blocked = route.blocked.saturating_add(1);
+                route.next_decision_secs = ORIGINAL_CONTROL_NPC_WANDER_SECS;
+                if route.blocked <= 2 {
+                    labels.push(format!(
+                        "{} ped candidate {} scenario {} blocked {}; local AI held",
+                        route.role.label(),
+                        route.record_index,
+                        action.kind.label(),
+                        gate.closed_door
+                            .map(original_tile_short_label)
+                            .unwrap_or(route_probe.message)
+                    ));
+                }
+                continue;
+            }
+            if !matches!(
+                route.role,
+                OriginalCombatTargetRole::Civilian | OriginalCombatTargetRole::Unknown
+            ) {
+                route.next_decision_secs = ORIGINAL_CONTROL_NPC_WANDER_SECS;
                 continue;
             }
             let goal = original_npc_wander_goal(route.tile, route.record_index, route.route_steps);
@@ -2210,13 +2579,13 @@ impl OriginalMissionCombatRuntime {
             if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
                 && route_probe.path.len() > 1
             {
-                route.assign_route(route_probe.path, OriginalNpcRouteMode::Wander);
+                route.assign_route(route_probe.path, OriginalNpcRouteMode::LocalRoam);
             } else {
                 route.blocked = route.blocked.saturating_add(1);
                 route.next_decision_secs = ORIGINAL_CONTROL_NPC_WANDER_SECS;
                 if route.blocked <= 2 {
                     labels.push(format!(
-                        "{} ped candidate {} local wander blocked {}; final AI gated",
+                        "{} ped candidate {} local roam fallback blocked {}; final AI gated",
                         route.role.label(),
                         route.record_index,
                         gate.closed_door
@@ -2598,7 +2967,7 @@ impl MapRenderMode {
 }
 
 impl WorldState {
-    pub fn new(assets: AssetIndex) -> Self {
+    pub async fn new(assets: AssetIndex) -> Self {
         let original_mission = OriginalMissionSelection::from_root(assets.root_path()).ok();
         let original_mission_scene = original_mission.as_ref().and_then(|selection| {
             OriginalMissionScene::from_root(assets.root_path(), selection).ok()
@@ -2621,6 +2990,8 @@ impl WorldState {
         let original_map_tiles =
             OriginalMapTiles::from_root_for_map_id(assets.root_path(), selected_map_id).ok();
         let original_tile_types = OriginalTileTypes::from_root(assets.root_path()).ok();
+        let original_audio_catalog = OriginalAudioCatalog::from_root(assets.root_path());
+        let original_audio_samples = OriginalAudioSampleBank::from_root(assets.root_path()).await;
         let original_map_view =
             if let (Some(map_tiles), Some(graphics)) = (&original_map_tiles, &original_graphics) {
                 Some(OriginalMapViewState::from_runtime_assets(
@@ -2722,6 +3093,8 @@ impl WorldState {
             original_control_runtime: OriginalMissionControlRuntime::default(),
             original_combat_runtime,
             original_audio_runtime: OriginalAudioRuntime::default(),
+            original_audio_catalog,
+            original_audio_samples,
             original_combat_feedback: None,
             original_hover_target: None,
             original_control_trace: OriginalControlTrace::from_env(),
@@ -2830,6 +3203,21 @@ impl WorldState {
         for hostile in &mut self.hostiles {
             hostile.tick(dt);
         }
+    }
+
+    fn record_original_audio_event(&mut self, label: impl Into<String>) {
+        let label = label.into();
+        let _ = self.original_audio_samples.play_event(&label);
+        self.original_audio_runtime.record(label);
+    }
+
+    fn original_audio_panel_label(&self) -> String {
+        format!(
+            "{}; {}",
+            self.original_audio_samples.status_label(),
+            self.original_audio_runtime
+                .panel_label_with_catalog(&self.original_audio_catalog)
+        )
     }
 
     fn update_render_controls(&mut self) {
@@ -3368,6 +3756,9 @@ impl WorldState {
         if self.try_resolve_route_blocked_door_gate(&selected_agents) {
             return true;
         }
+        if self.try_resolve_local_dropped_weapon_pickup(&selected_agents) {
+            return true;
+        }
         let (probe, intents) = {
             let scene_model = self.original_mission_scene.as_ref().expect("checked above");
             let probe = scene_model.original_debug_interaction_probe_between(
@@ -3424,6 +3815,80 @@ impl WorldState {
         true
     }
 
+    fn try_resolve_local_dropped_weapon_pickup(
+        &mut self,
+        selected_agents: &[(usize, OriginalTilePoint)],
+    ) -> bool {
+        let Some(target_tile) = self.original_cursor_tile else {
+            return false;
+        };
+        let Some((drop_idx, drop_tile, kind)) = self
+            .original_combat_runtime
+            .dropped_weapons
+            .iter()
+            .enumerate()
+            .find_map(|(idx, drop)| {
+                let kind = drop.kind?;
+                (!drop.picked_up && original_tile_near(drop.tile, target_tile, 1, 1))
+                    .then_some((idx, drop.tile, kind))
+            })
+        else {
+            return false;
+        };
+        let Some((agent_idx, _)) = selected_agents
+            .iter()
+            .filter(|(_, tile)| original_tile_near(*tile, drop_tile, 1, 1))
+            .min_by_key(|(_, tile)| original_tile_distance(*tile, drop_tile))
+            .copied()
+        else {
+            self.combat_log = format!(
+                "Pickup: selected agent must stand by dropped {} at {}; route closer then press E",
+                kind.label(),
+                original_tile_short_label(drop_tile)
+            );
+            return true;
+        };
+        let Some(profile) = OriginalCombatWeaponProfile::from_kind(kind) else {
+            self.combat_log = format!(
+                "Pickup blocked: dropped {} has no local weapon profile proof",
+                kind.label()
+            );
+            return true;
+        };
+        let Some(agent) = self.original_debug_agents.get_mut(agent_idx) else {
+            return false;
+        };
+        if !agent.weapons.iter().any(|weapon| weapon.kind == kind) {
+            agent.weapons.push(profile);
+            agent.selected_weapon_index = agent.weapons.len().saturating_sub(1);
+        }
+        if let Some(drop) = self
+            .original_combat_runtime
+            .dropped_weapons
+            .get_mut(drop_idx)
+        {
+            drop.picked_up = true;
+        }
+        self.original_audio_runtime
+            .record(format!("ui pickup {}", kind.label()));
+        self.original_control_runtime
+            .apply_resolution(OriginalDebugActionResolution {
+                agent_slot: agent.slot,
+                focus: OriginalDebugInteractionFocus::WeaponPickupCandidate,
+                target_tile: Some(drop_tile),
+                result_label: format!(
+                    "picked up local dropped {}; final inventory semantics remain gated",
+                    kind.label()
+                ),
+            });
+        self.combat_log = format!(
+            "Agent {} picked up local dropped {}; weapon selected; source GAME inventory unchanged",
+            agent.slot + 1,
+            kind.label()
+        );
+        true
+    }
+
     fn try_resolve_route_blocked_door_gate(
         &mut self,
         selected_agents: &[(usize, OriginalTilePoint)],
@@ -3473,7 +3938,7 @@ impl WorldState {
                 target_tile: Some(door_tile),
                 result_label: "door/open route gate opened locally from last blocked route; FreeSynd door blocking reference, final door animation/lock semantics gated".to_string(),
             });
-        self.original_audio_runtime.record(format!(
+        self.record_original_audio_event(format!(
             "door ui open {}",
             original_tile_short_label(door_tile)
         ));
@@ -3554,6 +4019,15 @@ impl WorldState {
         for resolution in resolutions {
             self.original_audio_runtime
                 .record(format!("ui action {}", resolution.focus.label()));
+            if resolution.focus == OriginalDebugInteractionFocus::VehicleEntryCandidate
+                && let Some(vehicle_tile) = resolution.target_tile
+                && let Some(agent) = self
+                    .original_debug_agents
+                    .iter_mut()
+                    .find(|agent| agent.slot == resolution.agent_slot)
+            {
+                agent.enter_vehicle(vehicle_tile);
+            }
             self.original_control_runtime.apply_resolution(resolution);
         }
     }
@@ -3586,11 +4060,11 @@ impl WorldState {
             &dynamic_blockers,
         );
         for label in npc_labels {
-            self.original_audio_runtime.record(label);
+            self.record_original_audio_event(label);
         }
         let mut repair_selection = false;
         for event in events {
-            self.original_audio_runtime.record(format!(
+            self.record_original_audio_event(format!(
                 "hostile return fire {}",
                 original_tile_short_label(event.origin)
             ));
@@ -4127,8 +4601,8 @@ impl WorldState {
             })
             .unwrap_or_else(|| "unknown".to_string());
         let vehicle =
-            original_ascii_ellipsis(&self.original_combat_runtime.vehicle_boarding_label(), 64);
-        let audio = original_ascii_ellipsis(&self.original_audio_runtime.panel_label(), 64);
+            original_ascii_ellipsis(&self.original_combat_runtime.vehicle_boarding_label(), 112);
+        let audio = original_ascii_ellipsis(&self.original_audio_panel_label(), 64);
         let agents = self
             .original_debug_agents
             .iter()
@@ -4394,6 +4868,14 @@ impl WorldState {
                 })
             })
             .chain(self.runtime_original_ped_draws(scene_model))
+            .chain(
+                self.original_combat_runtime
+                    .runtime_vehicle_draws(scene_model),
+            )
+            .chain(
+                self.original_combat_runtime
+                    .runtime_dropped_weapon_draws(scene_model),
+            )
             .collect()
     }
 
@@ -4740,7 +5222,7 @@ impl WorldState {
         self.original_combat_runtime =
             OriginalMissionCombatRuntime::from_scene(self.original_mission_scene.as_ref());
         self.original_audio_runtime = OriginalAudioRuntime::default();
-        self.original_audio_runtime.record("ui reset local mission");
+        self.record_original_audio_event("ui reset local mission");
         self.original_combat_feedback = None;
         self.original_route_probe = None;
         self.original_interaction_probe = None;
@@ -4845,12 +5327,17 @@ impl WorldState {
                     if let Some(agent) = self.original_debug_agents.get_mut(idx) {
                         agent.mark_fired_at(target.tile, weapon.cooldown_secs);
                     }
-                    self.original_audio_runtime
-                        .record(format!("weapon shot {}", weapon.label));
+                    let shot_label = format!("weapon shot {}", weapon.label);
+                    let _ = self.original_audio_samples.play_event(&shot_label);
+                    self.original_audio_runtime.record(shot_label);
                     feedback_impact.get_or_insert(weapon.impact_label());
                     let result = self
                         .original_combat_runtime
                         .apply_hit(target, weapon.local_damage);
+                    if matches!(result, OriginalCombatAttackResult::Defeated { .. }) {
+                        self.original_combat_runtime
+                            .record_dropped_weapon_candidate(target, scene_model);
+                    }
                     feedback_detail.get_or_insert_with(|| match result {
                         OriginalCombatAttackResult::Hit { remaining_hp } => {
                             format!("HIT {} HP", remaining_hp)
@@ -4864,11 +5351,13 @@ impl WorldState {
                         OriginalCombatAttackResult::AlreadyDown => "ALREADY DOWN".to_string(),
                     });
                     let label = self.original_combat_runtime.record_result(target, result);
-                    self.original_audio_runtime.record(format!(
+                    let impact_label = format!(
                         "weapon impact {} {}",
                         weapon.impact_label(),
                         original_tile_short_label(target.tile)
-                    ));
+                    );
+                    let _ = self.original_audio_samples.play_event(&impact_label);
+                    self.original_audio_runtime.record(impact_label);
                     let reaction = self
                         .original_combat_runtime
                         .record_npc_reaction(target, Some(agent_tile));
@@ -5169,13 +5658,13 @@ impl WorldState {
             "Action: {door_state} | {} | pickups blocked {} | {}",
             self.original_combat_runtime.vehicle_boarding_label(),
             self.original_control_runtime.pickup_blocked_tiles.len(),
-            self.original_audio_runtime.panel_label()
+            self.original_audio_panel_label()
         );
         let interaction = original_ascii_ellipsis(&interaction, 118);
         let command = format!(
             "{} | {}",
             original_compact_command_label(&self.combat_log),
-            original_ascii_ellipsis(&self.original_audio_runtime.panel_label(), 54)
+            original_ascii_ellipsis(&self.original_audio_panel_label(), 54)
         );
         let command = original_ascii_ellipsis(&command, 118);
         let _legacy_counts = (
@@ -5591,6 +6080,9 @@ impl WorldState {
                     };
                     let controlled_ped_record_indices =
                         self.controlled_original_ped_record_indices();
+                    let controlled_vehicle_record_indices = self
+                        .original_combat_runtime
+                        .runtime_controlled_vehicle_record_indices();
                     let controlled_agent_draws =
                         if object_graphics.is_some() && self.original_navigation_debug_enabled {
                             self.controlled_original_agent_draws(scene_model)
@@ -5606,6 +6098,7 @@ impl WorldState {
                         object_graphics,
                         self.original_object_animation_frame(),
                         &controlled_ped_record_indices,
+                        &controlled_vehicle_record_indices,
                         &controlled_agent_draws,
                     );
                     self.draw_original_ped_candidate_role_overlays(
@@ -5773,7 +6266,7 @@ impl WorldState {
                 self.original_control_trace.enabled,
             ) && let Some(summary) = self.original_play_hud_summary()
             {
-                draw_original_control_play_panel(&summary);
+                draw_original_control_play_panel(&summary, self.original_object_graphics.as_ref());
             } else {
                 let original_debug_agent_label = self.original_debug_agent_panel_label();
                 draw_map_diagnostic_panel(
@@ -5862,6 +6355,7 @@ impl OriginalDebugAgent {
             local_hp: ORIGINAL_CONTROL_AGENT_LOCAL_HP,
             local_max_hp: ORIGINAL_CONTROL_AGENT_LOCAL_HP,
             local_down_test: false,
+            vehicle_link: None,
             route_partial_door_gate: None,
             interaction_intent: None,
             action_state: None,
@@ -6025,7 +6519,8 @@ impl OriginalDebugAgent {
             self.route_status = OriginalDebugAgentRouteStatus::Moving;
             let previous_tile = self.current_tile();
             let max_progress = (self.route.len() - 1) as f32;
-            self.route_progress = (self.route_progress + real_dt.max(0.0) * 4.0).min(max_progress);
+            self.route_progress =
+                (self.route_progress + real_dt.max(0.0) * self.route_speed()).min(max_progress);
             let next_tile = self.current_tile();
             if previous_tile != next_tile {
                 self.direction = OriginalDebugAgentDirection::from_step(previous_tile, next_tile);
@@ -6033,6 +6528,9 @@ impl OriginalDebugAgent {
             if self.route_progress >= max_progress {
                 if let Some(last) = self.route.last().copied() {
                     self.tile = last;
+                    if self.vehicle_link.is_some() {
+                        self.vehicle_link = Some(last);
+                    }
                 }
                 self.route_start_delay = 0.0;
                 self.route_status = OriginalDebugAgentRouteStatus::Arrived;
@@ -6072,7 +6570,7 @@ impl OriginalDebugAgent {
     }
 
     fn can_fire(&self) -> bool {
-        self.weapon_cooldown <= 0.0 && !self.local_down_test
+        self.weapon_cooldown <= 0.0 && !self.local_down_test && self.vehicle_link.is_none()
     }
 
     fn mark_fired(&mut self, cooldown_secs: f32) {
@@ -6118,6 +6616,25 @@ impl OriginalDebugAgent {
         !self.local_down_test
             && !self.route.is_empty()
             && self.route_status != OriginalDebugAgentRouteStatus::Idle
+    }
+
+    fn is_in_vehicle(&self) -> bool {
+        self.vehicle_link.is_some()
+    }
+
+    fn enter_vehicle(&mut self, vehicle_tile: OriginalTilePoint) {
+        self.tile = vehicle_tile;
+        self.vehicle_link = Some(vehicle_tile);
+        self.route.clear();
+        self.route_progress = 0.0;
+        self.route_start_delay = 0.0;
+        self.route_status = OriginalDebugAgentRouteStatus::Arrived;
+        self.route_partial_door_gate = None;
+        self.clear_interaction_intent();
+    }
+
+    fn route_speed(&self) -> f32 {
+        if self.is_in_vehicle() { 6.0 } else { 4.0 }
     }
 
     fn combat_overlay_label(&self) -> Option<&'static str> {
@@ -6174,7 +6691,8 @@ impl OriginalDebugAgent {
         }
         let current = self.current_tile();
         let max_progress = (self.route.len() - 1) as f32;
-        let next_progress = (self.route_progress + real_dt.max(0.0) * 4.0).min(max_progress);
+        let next_progress =
+            (self.route_progress + real_dt.max(0.0) * self.route_speed()).min(max_progress);
         let next = self.route_tile_at_progress(next_progress);
         (original_tile_cell_key(next) != original_tile_cell_key(current)).then_some(next)
     }
@@ -6244,6 +6762,11 @@ impl OriginalDebugAgent {
 
     fn map_label(&self) -> String {
         let selected = if self.selected { "selected" } else { "debug" };
+        let vehicle = if self.is_in_vehicle() {
+            " in vehicle"
+        } else {
+            ""
+        };
         let weapon = self
             .selected_weapon()
             .map(|weapon| weapon.label)
@@ -6257,10 +6780,11 @@ impl OriginalDebugAgent {
             })
             .unwrap_or_else(|| self.route_status.label().to_string());
         format!(
-            "{selected} agent {} {} {}{}{}",
+            "{selected} agent {} {} {}{}{}{}",
             self.slot + 1,
             route_label,
             weapon,
+            vehicle,
             self.combat_overlay_label()
                 .map(|label| format!(" {label}"))
                 .unwrap_or_default(),
@@ -6292,6 +6816,9 @@ impl OriginalDebugAgent {
         &self,
         object: Option<&OriginalMissionObjectCandidate>,
     ) -> Option<OriginalMissionObjectCandidate> {
+        if self.is_in_vehicle() {
+            return None;
+        }
         object.cloned().map(|mut object| {
             object.tile = Some(self.render_anchor_tile());
             object.orientation = Some(self.direction.orientation_byte());
@@ -6591,6 +7118,7 @@ fn original_agent_play_hud_row(
         .unwrap_or(0.0);
     OriginalPlayHudAgentRow {
         text: original_agent_play_status_row(agent, primary),
+        weapon_kind: agent.selected_weapon().map(|weapon| weapon.kind),
         hp_fraction,
         cooldown_fraction,
         primary,
@@ -6598,6 +7126,26 @@ fn original_agent_play_hud_row(
         down: agent.is_local_down(),
         under_fire: agent.is_under_fire(),
     }
+}
+
+fn original_sidebar_weapon_sprite_id(kind: OriginalWeaponKind) -> Option<usize> {
+    let icon_index = match kind {
+        OriginalWeaponKind::Persuadatron => 0,
+        OriginalWeaponKind::Pistol => 1,
+        OriginalWeaponKind::GaussGun => 2,
+        OriginalWeaponKind::Shotgun => 3,
+        OriginalWeaponKind::Uzi => 4,
+        OriginalWeaponKind::Minigun => 5,
+        OriginalWeaponKind::Laser => 6,
+        OriginalWeaponKind::Flamer => 7,
+        OriginalWeaponKind::LongRange => 8,
+        OriginalWeaponKind::Scanner => 9,
+        OriginalWeaponKind::MediKit => 10,
+        OriginalWeaponKind::TimeBomb => 11,
+        OriginalWeaponKind::AccessCard => 12,
+        OriginalWeaponKind::EnergyShield => 16,
+    };
+    Some(1621 + icon_index)
 }
 
 fn original_door_action_summary(
@@ -6791,6 +7339,53 @@ fn nearest_vehicle_candidate(
         .min_by_key(|(_, tile)| original_tile_distance(from, *tile))
 }
 
+fn original_target_vehicle_drive_goal_candidates(
+    scene_model: &OriginalMissionScene,
+    target_record_index: u16,
+    current: OriginalTilePoint,
+) -> Vec<(OriginalTilePoint, String)> {
+    let mut candidates = Vec::new();
+    let mut after_vehicle_action = false;
+    for action in scene_model.scenario_action_plan_for_ped(target_record_index, 16) {
+        if action.kind == OriginalScenarioRuntimeActionKind::UseVehicle {
+            after_vehicle_action = true;
+            continue;
+        }
+        if after_vehicle_action
+            && matches!(
+                action.kind,
+                OriginalScenarioRuntimeActionKind::WalkOrDrive
+                    | OriginalScenarioRuntimeActionKind::Escape
+                    | OriginalScenarioRuntimeActionKind::ProtectedTargetReached
+            )
+            && let Some(tile) = action.target.tile()
+            && original_tile_distance(current, tile) > 2
+        {
+            candidates.push((
+                tile,
+                format!(
+                    "scenario {} action {}",
+                    action.record_index,
+                    action.kind.label()
+                ),
+            ));
+        }
+    }
+    for (dx, dy) in [(-10, 0), (0, -10), (-8, -4), (8, 0), (0, 8)] {
+        candidates.push((
+            OriginalTilePoint {
+                tile_x: (current.tile_x as i32 + dx).clamp(0, u16::MAX as i32) as u16,
+                tile_y: (current.tile_y as i32 + dy).clamp(0, u16::MAX as i32) as u16,
+                ..current
+            },
+            "local fallback escape vector".to_string(),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    candidates.retain(|(tile, _)| seen.insert(original_tile_dedupe_key(*tile)));
+    candidates
+}
+
 fn original_npc_wander_goal(
     origin: OriginalTilePoint,
     record_index: u16,
@@ -6812,6 +7407,38 @@ fn original_npc_wander_goal(
         tile_x: (origin.tile_x as i32 + dx as i32).clamp(0, u16::MAX as i32) as u16,
         tile_y: (origin.tile_y as i32 + dy as i32).clamp(0, u16::MAX as i32) as u16,
         ..origin
+    }
+}
+
+fn original_script_action_route_goal(
+    action: OriginalScenarioRuntimeAction,
+) -> Option<OriginalTilePoint> {
+    match action.kind {
+        OriginalScenarioRuntimeActionKind::WalkOrDrive
+        | OriginalScenarioRuntimeActionKind::UseVehicle
+        | OriginalScenarioRuntimeActionKind::Escape
+        | OriginalScenarioRuntimeActionKind::ProtectedTargetReached => action.target.tile(),
+        OriginalScenarioRuntimeActionKind::Unknown
+        | OriginalScenarioRuntimeActionKind::Trigger
+        | OriginalScenarioRuntimeActionKind::Reset
+        | OriginalScenarioRuntimeActionKind::TrainWait => None,
+    }
+}
+
+fn original_script_action_route_mode(
+    action: OriginalScenarioRuntimeAction,
+) -> OriginalNpcRouteMode {
+    match action.kind {
+        OriginalScenarioRuntimeActionKind::UseVehicle => OriginalNpcRouteMode::ScriptedUseVehicle,
+        OriginalScenarioRuntimeActionKind::Escape => OriginalNpcRouteMode::ScriptedEscape,
+        OriginalScenarioRuntimeActionKind::WalkOrDrive
+        | OriginalScenarioRuntimeActionKind::ProtectedTargetReached => {
+            OriginalNpcRouteMode::ScriptedWalk
+        }
+        OriginalScenarioRuntimeActionKind::Unknown
+        | OriginalScenarioRuntimeActionKind::Trigger
+        | OriginalScenarioRuntimeActionKind::Reset
+        | OriginalScenarioRuntimeActionKind::TrainWait => OriginalNpcRouteMode::Idle,
     }
 }
 
@@ -6848,6 +7475,13 @@ fn original_apply_local_route_gates(
         );
     }
     (probe, gate)
+}
+
+fn original_apply_scripted_route_gates(
+    probe: OriginalRuntimeRouteProbe,
+    dynamic_blockers: &[OriginalTilePoint],
+) -> (OriginalRuntimeRouteProbe, OriginalLocalRouteGate) {
+    original_apply_local_route_gates(probe, &[], &BTreeSet::new(), dynamic_blockers)
 }
 
 fn original_local_route_gate(
@@ -7213,11 +7847,14 @@ fn draw_minimap(agents: &[Agent]) {
     }
 }
 
-fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
-    let panel_width = 318.0_f32.min(screen_width() * 0.38).max(258.0);
-    let panel_height = (screen_height() - 116.0).clamp(248.0, 520.0);
-    let x = 12.0;
-    let y = 18.0;
+fn draw_original_control_play_panel(
+    summary: &OriginalPlayHudSummary,
+    object_graphics: Option<&RuntimeOriginalObjectGraphics>,
+) {
+    let panel_width = 129.0;
+    let panel_height = screen_height();
+    let x = 0.0;
+    let y = 0.0;
     let accent = if summary.complete {
         Color::new(0.2, 1.0, 0.25, 0.92)
     } else {
@@ -7228,27 +7865,31 @@ fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
         y,
         panel_width,
         panel_height,
-        Color::new(0.0, 0.0, 0.0, 0.58),
+        Color::new(0.0, 0.0, 0.0, 0.84),
     );
-    draw_rectangle_lines(x, y, panel_width, panel_height, 2.0, accent);
-    draw_text("SYNDICATE", x + 14.0, y + 24.0, 18.0, accent);
-    draw_text("MISSION 1", x + 14.0, y + 46.0, 14.0, YELLOW);
+    draw_rectangle_lines(
+        x + 1.0,
+        y + 1.0,
+        panel_width - 2.0,
+        panel_height - 2.0,
+        1.0,
+        accent,
+    );
+    draw_text("SYND", x + 12.0, y + 18.0, 17.0, accent);
+    draw_text("M1", x + 82.0, y + 18.0, 15.0, YELLOW);
     draw_text(
-        &original_ascii_ellipsis(&summary.objective, 44),
-        x + 14.0,
-        y + 68.0,
+        if summary.complete {
+            "COMPLETE"
+        } else {
+            "ACTIVE"
+        },
+        x + 12.0,
+        y + 38.0,
         12.0,
         YELLOW,
     );
-    draw_text(
-        &original_ascii_ellipsis(&summary.squad, 46),
-        x + 14.0,
-        y + 88.0,
-        11.0,
-        LIGHTGRAY,
-    );
     for (row_idx, row) in summary.agents.iter().take(4).enumerate() {
-        let row_y = y + 116.0 + row_idx as f32 * 26.0;
+        let row_y = y + 60.0 + row_idx as f32 * 54.0;
         let color = if row.down {
             RED
         } else if row.under_fire {
@@ -7260,45 +7901,69 @@ fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
         } else {
             LIGHTGRAY
         };
-        draw_rectangle(
-            x + 10.0,
-            row_y - 17.0,
-            panel_width - 20.0,
-            21.0,
-            if row.primary {
-                Color::new(0.05, 0.12, 0.14, 0.72)
-            } else {
-                Color::new(0.02, 0.04, 0.05, 0.52)
-            },
-        );
-        draw_text(
-            &original_ascii_ellipsis(&row.text, 34),
-            x + 18.0,
-            row_y,
-            11.0,
-            color,
-        );
-        let bar_x = x + panel_width - 112.0;
-        let hp_y = row_y - 10.0;
-        draw_rectangle(bar_x, hp_y, 45.0, 4.0, Color::new(0.08, 0.08, 0.08, 0.82));
+        let selector_sprite = if row.selected { 1772 } else { 1748 } + row_idx;
+        let drew_selector = object_graphics.is_some_and(|graphics| {
+            graphics.draw_sprite_id(selector_sprite, vec2(x + 8.0, row_y), 1.0)
+        });
+        if !drew_selector {
+            draw_rectangle(
+                x + 8.0,
+                row_y,
+                48.0,
+                38.0,
+                if row.primary {
+                    Color::new(0.05, 0.22, 0.24, 0.82)
+                } else {
+                    Color::new(0.03, 0.05, 0.06, 0.70)
+                },
+            );
+            draw_rectangle_lines(x + 8.0, row_y, 48.0, 38.0, 1.0, color);
+            draw_text(
+                &format!("A{}", row_idx + 1),
+                x + 22.0,
+                row_y + 23.0,
+                15.0,
+                color,
+            );
+        }
+        let weapon_icon = row.weapon_kind.and_then(original_sidebar_weapon_sprite_id);
+        let drew_weapon = weapon_icon.is_some_and(|sprite| {
+            object_graphics.is_some_and(|graphics| {
+                graphics.draw_sprite_id(sprite, vec2(x + 72.0, row_y + 2.0), 1.0)
+            })
+        });
+        if !drew_weapon {
+            draw_rectangle(
+                x + 72.0,
+                row_y + 2.0,
+                34.0,
+                30.0,
+                Color::new(0.02, 0.04, 0.05, 0.74),
+            );
+            draw_rectangle_lines(x + 72.0, row_y + 2.0, 34.0, 30.0, 1.0, color);
+            draw_text("W", x + 84.0, row_y + 22.0, 14.0, color);
+        }
+        let bar_x = x + 10.0;
+        let hp_y = row_y + 42.0;
+        draw_rectangle(bar_x, hp_y, 50.0, 4.0, Color::new(0.08, 0.08, 0.08, 0.82));
         draw_rectangle(
             bar_x,
             hp_y,
-            45.0 * row.hp_fraction,
+            50.0 * row.hp_fraction,
             4.0,
             if row.down { RED } else { GREEN },
         );
         draw_rectangle(
-            bar_x + 52.0,
+            bar_x + 60.0,
             hp_y,
-            38.0,
+            46.0,
             4.0,
             Color::new(0.08, 0.08, 0.08, 0.82),
         );
         draw_rectangle(
-            bar_x + 52.0,
+            bar_x + 60.0,
             hp_y,
-            38.0 * (1.0 - row.cooldown_fraction),
+            46.0 * (1.0 - row.cooldown_fraction),
             4.0,
             if row.cooldown_fraction > 0.01 {
                 ORANGE
@@ -7307,25 +7972,32 @@ fn draw_original_control_play_panel(summary: &OriginalPlayHudSummary) {
             },
         );
     }
-    let info_y = y + 232.0;
+    let info_y = panel_height - 126.0;
     draw_text(
-        &original_ascii_ellipsis(&summary.combat, 48),
-        x + 14.0,
+        &original_ascii_ellipsis(&summary.objective, 18),
+        x + 9.0,
         info_y,
-        11.0,
+        10.0,
+        YELLOW,
+    );
+    draw_text(
+        &original_ascii_ellipsis(&summary.combat, 19),
+        x + 9.0,
+        info_y + 18.0,
+        10.0,
         ORANGE,
     );
     draw_text(
-        &original_ascii_ellipsis(&summary.interaction, 48),
-        x + 14.0,
-        info_y + 20.0,
-        11.0,
+        &original_ascii_ellipsis(&summary.interaction, 19),
+        x + 9.0,
+        info_y + 36.0,
+        10.0,
         SKYBLUE,
     );
     draw_text(
-        &summary.controls,
-        x + 14.0,
-        y + panel_height - 18.0,
+        "T diag  R reset",
+        x + 9.0,
+        y + panel_height - 14.0,
         10.0,
         GRAY,
     );
@@ -8094,22 +8766,23 @@ mod tests {
         OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatTargetRole,
         OriginalCombatWeaponProfile, OriginalControlTrace, OriginalDebugActionResolution,
         OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
-        OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalLocalMissionState,
-        OriginalMissionCombatRuntime, OriginalMissionControlRuntime, OriginalNpcRouteMode,
-        OriginalNpcRouteState, OriginalPlaytestFirePosture, OriginalVehicleBoardingPhase,
-        OriginalVehicleBoardingState, initial_render_mode,
+        OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalDroppedWeaponState,
+        OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
+        OriginalNpcRouteMode, OriginalNpcRouteState, OriginalPlaytestFirePosture,
+        OriginalVehicleBoardingPhase, OriginalVehicleBoardingState, initial_render_mode,
         original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_agent_play_hud_row,
         original_agent_play_status_row, original_agent_screen_needs_follow,
-        original_apply_local_route_gates, original_combat_feedback_detail_label,
-        original_combat_shot_check, original_compact_command_label,
-        original_control_compact_hud_enabled, original_door_action_summary,
-        original_flee_goal_from_threat, original_formation_goal_candidates,
-        original_formation_requested_tile, original_formation_start_delay,
-        original_hostile_return_fire_check, original_local_route_gate,
-        original_ped_candidate_role_style, original_playtest_standoff_goal_candidates,
-        original_primary_active_agent_index, original_route_prefix_before_gate,
-        original_route_spacing_reservations, original_standoff_tile_toward, original_tile_cell_key,
+        original_apply_local_route_gates, original_apply_scripted_route_gates,
+        original_combat_feedback_detail_label, original_combat_shot_check,
+        original_compact_command_label, original_control_compact_hud_enabled,
+        original_door_action_summary, original_flee_goal_from_threat,
+        original_formation_goal_candidates, original_formation_requested_tile,
+        original_formation_start_delay, original_hostile_return_fire_check,
+        original_local_route_gate, original_ped_candidate_role_style,
+        original_playtest_standoff_goal_candidates, original_primary_active_agent_index,
+        original_route_prefix_before_gate, original_route_spacing_reservations,
+        original_standoff_tile_toward, original_tile_cell_key,
         range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
@@ -8121,8 +8794,11 @@ mod tests {
             OriginalDebugInteractionIntentStatus, OriginalDrawStage,
             OriginalMissionObjectCandidate, OriginalMissionObjectKind,
             OriginalObjectiveRuntimeTarget, OriginalRouteTransitionKind, OriginalRuntimeRouteProbe,
-            OriginalRuntimeRouteStatus, OriginalTilePoint, OriginalWeaponKind,
+            OriginalRuntimeRouteStatus, OriginalScenarioRuntimeAction,
+            OriginalScenarioRuntimeActionKind, OriginalScenarioRuntimeTarget, OriginalTilePoint,
+            OriginalWeaponKind,
         },
+        original_audio::OriginalAudioCatalog,
     };
     use macroquad::prelude::*;
 
@@ -8957,6 +9633,31 @@ mod tests {
     }
 
     #[test]
+    fn original_scripted_route_gates_ignore_player_door_gates_without_bytes() {
+        let route_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 0)),
+            goal_tile: Some(tile(3, 1, 0)),
+            requested_goal_tile: Some(tile(3, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0)],
+            message: "synthetic scripted route ready".to_string(),
+        };
+
+        let (scripted_probe, scripted_gate) =
+            original_apply_scripted_route_gates(route_probe, &[tile(9, 9, 0)]);
+
+        assert_eq!(
+            scripted_probe.status,
+            OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert_eq!(scripted_gate.closed_door, None);
+        assert!(!scripted_probe.message.contains("00 00"));
+        assert!(!format!("{scripted_gate:?}").contains("00 00"));
+    }
+
+    #[test]
     fn original_route_prefix_before_gate_stops_at_threshold_without_bytes() {
         let path = vec![tile(1, 1, 0), tile(2, 1, 0), tile(3, 1, 0), tile(4, 1, 0)];
 
@@ -9372,16 +10073,109 @@ mod tests {
         let mut route = OriginalNpcRouteState::new(9, OriginalCombatTargetRole::Guard, start_tile);
         route.assign_route(
             vec![start_tile, tile(7, 7, 0), tile(8, 7, 0)],
-            OriginalNpcRouteMode::Wander,
+            OriginalNpcRouteMode::LocalRoam,
         );
 
         assert!(route.is_moving());
         assert!(route.update(0.45));
         assert_eq!(route.current_tile(), tile(7, 7, 0));
         assert_eq!(route.direction(), OriginalDebugAgentDirection::East);
-        assert_eq!(route.overlay_label(), "WANDER GUARD");
+        assert_eq!(route.overlay_label(), "ROAM GUARD");
         assert_eq!(route.route_steps, 1);
         assert!(!format!("{route:?}").contains("00 00"));
+    }
+
+    #[test]
+    fn original_npc_route_state_prefers_script_chain_labels() {
+        let start_tile = tile(6, 7, 0);
+        let mut route = OriginalNpcRouteState::new(9, OriginalCombatTargetRole::Guard, start_tile)
+            .with_script_plan(vec![OriginalScenarioRuntimeAction {
+                record_index: 4,
+                kind: OriginalScenarioRuntimeActionKind::WalkOrDrive,
+                next_index: None,
+                target: OriginalScenarioRuntimeTarget::Tile(tile(8, 7, 0)),
+                invalid_next: false,
+                self_loop: false,
+            }]);
+        let action = route.script_plan.pop_front().expect("script action");
+        route.assign_route(
+            vec![start_tile, tile(7, 7, 0), tile(8, 7, 0)],
+            OriginalNpcRouteMode::ScriptedWalk,
+        );
+        route.current_script_action = Some(action);
+
+        assert_eq!(route.overlay_label(), "SCRIPT walk/drive");
+        assert!(route.update(0.45));
+        assert_eq!(route.direction(), OriginalDebugAgentDirection::East);
+        assert!(!format!("{route:?}").contains("00 00"));
+    }
+
+    #[test]
+    fn original_debug_agent_vehicle_entry_hides_ped_sprite_and_moves_faster() {
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(1, 1, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        agent.enter_vehicle(tile(4, 4, 0));
+        assert!(agent.is_in_vehicle());
+        assert!(agent.render_object_candidate(None).is_none());
+        agent.assign_route(vec![tile(4, 4, 0), tile(5, 4, 0), tile(6, 4, 0)], false);
+        assert!(agent.update(0.2).is_none());
+        assert!(agent.route_progress > 1.0);
+        assert!(!agent.map_label().contains("00 00"));
+    }
+
+    #[test]
+    fn dropped_weapon_pickup_updates_agent_loadout_without_asset_bytes() {
+        let mut runtime = OriginalMissionCombatRuntime::default();
+        runtime.dropped_weapons.push(OriginalDroppedWeaponState {
+            source_ped_record_index: 8,
+            tile: tile(4, 4, 0),
+            kind: Some(OriginalWeaponKind::Uzi),
+            picked_up: false,
+        });
+        let mut agent = OriginalDebugAgent::from_spawn(
+            OriginalDebugAgentSpawn {
+                slot: 0,
+                record_index: 0,
+                tile: tile(4, 4, 0),
+                sprite_ready: true,
+            },
+            true,
+        );
+        let drop = runtime
+            .dropped_weapons
+            .iter_mut()
+            .find(|drop| !drop.picked_up)
+            .expect("dropped weapon");
+        let profile = OriginalCombatWeaponProfile::from_kind(drop.kind.unwrap()).unwrap();
+        agent.weapons.push(profile);
+        agent.selected_weapon_index = agent.weapons.len() - 1;
+        drop.picked_up = true;
+
+        assert_eq!(
+            agent.selected_weapon().map(|weapon| weapon.kind),
+            Some(OriginalWeaponKind::Uzi)
+        );
+        assert!(runtime.dropped_weapon_blocker_overlays().is_empty());
+        assert!(!format!("{runtime:?}").contains("00 00"));
+    }
+
+    #[test]
+    fn original_sidebar_weapon_icons_use_freesynd_ranges_without_bytes() {
+        assert_eq!(
+            super::original_sidebar_weapon_sprite_id(OriginalWeaponKind::Pistol),
+            Some(1622)
+        );
+        assert_eq!(
+            super::original_sidebar_weapon_sprite_id(OriginalWeaponKind::MediKit),
+            Some(1631)
+        );
     }
 
     #[test]
@@ -9391,7 +10185,11 @@ mod tests {
             vehicle_record_index: 0,
             vehicle_tile: tile(20, 21, 1),
             phase: OriginalVehicleBoardingPhase::Boarded,
+            drive_route: Vec::new(),
+            drive_progress: 0.0,
+            drive_goal: None,
             route_nodes: 12,
+            drive_steps: 0,
             elapsed_secs: 8.0,
         };
         let label = vehicle.panel_label();
@@ -9403,12 +10201,37 @@ mod tests {
         let mut audio = OriginalAudioRuntime::default();
         audio.record("weapon shot Pistol");
         audio.record("vehicle target boarded car");
-        let audio_label = audio.panel_label();
-        assert!(audio_label.contains("shots 1"));
-        assert!(audio_label.contains("vehicles 1"));
-        assert!(audio_label.contains("mission music loop candidate"));
+        let audio_label = audio.panel_label_with_catalog(&OriginalAudioCatalog::default());
+        assert!(audio_label.contains("shot 1"));
+        assert!(audio_label.contains("vehicle 1"));
+        assert!(audio_label.contains("mission loop candidate"));
         assert!(!audio_label.contains("0x"));
         assert!(!audio_label.contains("00 00"));
+    }
+
+    #[test]
+    fn original_target_vehicle_drive_state_advances_without_ped_ghost() {
+        let route = vec![tile(20, 21, 1), tile(19, 21, 1), tile(18, 21, 1)];
+        let mut vehicle = OriginalVehicleBoardingState {
+            target_record_index: 8,
+            vehicle_record_index: 0,
+            vehicle_tile: route[0],
+            phase: OriginalVehicleBoardingPhase::Driving,
+            drive_route: route,
+            drive_progress: 0.0,
+            drive_goal: Some(tile(18, 21, 1)),
+            route_nodes: 3,
+            drive_steps: 0,
+            elapsed_secs: 8.0,
+        };
+        assert!(vehicle.target_is_inside());
+        assert!(vehicle.advance_drive(0.5));
+        assert_eq!(vehicle.vehicle_tile, tile(18, 21, 1));
+        assert_eq!(vehicle.phase, OriginalVehicleBoardingPhase::Escaped);
+        let label = vehicle.panel_label();
+        assert!(label.contains("target car escaped"));
+        assert!(!label.contains("0x"));
+        assert!(!label.contains("00 00"));
     }
 
     #[test]
