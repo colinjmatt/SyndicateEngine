@@ -454,27 +454,6 @@ impl TacticalMap {
 
             if let Some(object_graphics) = object_graphics {
                 if let Some(object_z) = item.z.checked_sub(1) {
-                    for object in original_candidates_for_tile(
-                        scene_model,
-                        item.x as u16,
-                        item.y as u16,
-                        object_z as u16,
-                    ) {
-                        if original_object_hidden_by_runtime_draw(
-                            object,
-                            controlled_ped_record_indices,
-                            controlled_vehicle_record_indices,
-                        ) {
-                            continue;
-                        }
-                        object_graphics.draw_mission_object(
-                            object,
-                            top_left,
-                            tile_size,
-                            camera.zoom,
-                            object_animation_frame,
-                        );
-                    }
                     for controlled in controlled_agent_draws.iter().filter(|controlled| {
                         let (current, _, _) = original_route_progress_sample(
                             controlled.anchor_tile,
@@ -514,6 +493,27 @@ impl TacticalMap {
                             tile_size,
                             camera.zoom,
                             controlled.animation_frame,
+                        );
+                    }
+                    for object in original_candidates_for_tile(
+                        scene_model,
+                        item.x as u16,
+                        item.y as u16,
+                        object_z as u16,
+                    ) {
+                        if original_object_hidden_by_runtime_draw(
+                            object,
+                            controlled_ped_record_indices,
+                            controlled_vehicle_record_indices,
+                        ) {
+                            continue;
+                        }
+                        object_graphics.draw_mission_object(
+                            object,
+                            top_left,
+                            tile_size,
+                            camera.zoom,
+                            object_animation_frame,
                         );
                     }
                 }

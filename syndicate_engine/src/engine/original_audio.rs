@@ -44,12 +44,17 @@ pub enum OriginalAudioSampleKey {
     MissionComplete,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OriginalAudioSampleBank {
     sounds: BTreeMap<OriginalAudioSampleKey, Sound>,
     attempted_samples: usize,
     loaded_samples: usize,
     missing_samples: usize,
+    volume: f32,
+    muted: bool,
+    music_attempted: bool,
+    music_decoder_accepted: bool,
+    music_blocker: Option<String>,
 }
 
 impl OriginalAudioCatalog {
@@ -184,6 +189,30 @@ impl OriginalAudioSampleBank {
                 }
             }
         }
+        if let Some(path) = first_existing(root.as_ref(), "SYNGAME.XMI") {
+            bank.music_attempted = true;
+            match fs::read(path) {
+                Ok(bytes) => {
+                    bank.music_decoder_accepted = false;
+                    let looks_like_xmi = bytes.starts_with(b"FORM")
+                        || bytes.windows(4).take(32).any(|chunk| chunk == b"XDIR")
+                        || bytes.windows(4).take(32).any(|chunk| chunk == b"XMID");
+                    bank.music_blocker = Some(if looks_like_xmi {
+                        "SYNGAME.XMI present and recognized as an XMI/MIDI-family stream; an XMI/MIDI sequencer is still needed"
+                            .to_string()
+                    } else {
+                        "SYNGAME.XMI present but not handed to the sample decoder; XMI/MIDI sequencing is still needed"
+                            .to_string()
+                    });
+                }
+                Err(_) => {
+                    bank.music_blocker =
+                        Some("SYNGAME.XMI present but could not be read locally".to_string());
+                }
+            }
+        } else {
+            bank.music_blocker = Some("SYNGAME.XMI missing from local original assets".to_string());
+        }
         bank
     }
 
@@ -194,10 +223,29 @@ impl OriginalAudioSampleBank {
             sound,
             PlaySoundParams {
                 looped: false,
-                volume: 0.55,
+                volume: if self.muted { 0.0 } else { self.volume },
             },
         );
         Some(key)
+    }
+
+    pub fn adjust_volume(&mut self, delta: f32) {
+        self.volume = (self.volume + delta).clamp(0.0, 1.0);
+        if self.volume > 0.0 {
+            self.muted = false;
+        }
+    }
+
+    pub fn toggle_mute(&mut self) {
+        self.muted = !self.muted;
+    }
+
+    pub fn volume_label(&self) -> String {
+        if self.muted {
+            format!("muted (vol {:.0}%)", self.volume * 100.0)
+        } else {
+            format!("vol {:.0}%", self.volume * 100.0)
+        }
     }
 
     pub fn status_label(&self) -> String {
@@ -212,10 +260,39 @@ impl OriginalAudioSampleBank {
         } else {
             loaded
         };
+        let music = if self.music_decoder_accepted {
+            "SYNGAME.XMI decoder accepted; sequenced music playback still gated".to_string()
+        } else if self.music_attempted {
+            self.music_blocker
+                .clone()
+                .unwrap_or_else(|| "SYNGAME.XMI attempted; music playback still gated".to_string())
+        } else {
+            self.music_blocker
+                .clone()
+                .unwrap_or_else(|| "music/XMI playback still gated".to_string())
+        };
         format!(
-            "runtime sound playback samples {}/{} loaded ({loaded}); music/XMI playback still gated",
-            self.loaded_samples, self.attempted_samples
+            "runtime sound playback samples {}/{} loaded ({loaded}), {}; {music}",
+            self.loaded_samples,
+            self.attempted_samples,
+            self.volume_label()
         )
+    }
+}
+
+impl Default for OriginalAudioSampleBank {
+    fn default() -> Self {
+        Self {
+            sounds: BTreeMap::new(),
+            attempted_samples: 0,
+            loaded_samples: 0,
+            missing_samples: 0,
+            volume: 0.55,
+            muted: false,
+            music_attempted: false,
+            music_decoder_accepted: false,
+            music_blocker: None,
+        }
     }
 }
 
@@ -465,6 +542,20 @@ mod tests {
                 .status_label()
                 .contains("00 00")
         );
+    }
+
+    #[test]
+    fn runtime_audio_volume_and_xmi_status_stay_asset_safe() {
+        let mut bank = OriginalAudioSampleBank::default();
+        assert_eq!(bank.volume_label(), "vol 55%");
+        bank.adjust_volume(0.60);
+        assert_eq!(bank.volume_label(), "vol 100%");
+        bank.toggle_mute();
+        assert_eq!(bank.volume_label(), "muted (vol 100%)");
+        let label = bank.status_label();
+        assert!(label.contains("muted"));
+        assert!(label.contains("music/XMI playback still gated"));
+        assert!(!label.contains("00 00"));
     }
 
     #[test]
