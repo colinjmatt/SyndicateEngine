@@ -37,11 +37,23 @@ pub struct OriginalMusicCatalog {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OriginalAudioSampleKey {
+    Shotgun,
     Pistol,
+    Laser,
+    Explosion,
     Uzi,
+    MiniGun,
+    Persuade,
+    SpeechSelected,
+    GaussGun,
+    MissionFailed,
     Door,
+    TimeBomb,
+    PutDownWeapon,
     Menu,
     MissionComplete,
+    BigExplosion,
+    MenuAfterMission,
 }
 
 #[derive(Debug, Clone)]
@@ -120,37 +132,97 @@ impl OriginalAudioSampleKey {
     fn sample_index(self) -> usize {
         match self {
             // FreeSynd's `InGameSample` enum is an index into the loaded game sample vector.
+            Self::Shotgun => 0,
             Self::Pistol => 1,
+            Self::Laser => 2,
+            Self::Explosion => 6,
             Self::Uzi => 7,
+            Self::MiniGun => 9,
+            Self::Persuade => 10,
+            Self::SpeechSelected => 12,
+            Self::GaussGun => 13,
             Self::MissionComplete => 14,
+            Self::MissionFailed => 15,
             Self::Door => 16,
+            Self::TimeBomb => 17,
+            Self::PutDownWeapon => 19,
             Self::Menu => 20,
+            Self::BigExplosion => 29,
+            Self::MenuAfterMission => 30,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
+            Self::Shotgun => "shotgun",
             Self::Pistol => "pistol",
+            Self::Laser => "laser",
+            Self::Explosion => "explosion",
             Self::Uzi => "uzi",
+            Self::MiniGun => "minigun",
+            Self::Persuade => "persuade",
+            Self::SpeechSelected => "selected",
+            Self::GaussGun => "gauss",
+            Self::MissionFailed => "mission failed",
             Self::Door => "door",
+            Self::TimeBomb => "time bomb",
+            Self::PutDownWeapon => "put down weapon",
             Self::Menu => "menu",
             Self::MissionComplete => "mission complete",
+            Self::BigExplosion => "big explosion",
+            Self::MenuAfterMission => "after mission",
         }
     }
 
     pub fn for_event_label(label: &str) -> Option<Self> {
         let lower = label.to_ascii_lowercase();
+        if lower.contains("mission failed") || lower.contains("target escaped") {
+            return Some(Self::MissionFailed);
+        }
         if lower.contains("mission complete") || lower.contains("objective down") {
             return Some(Self::MissionComplete);
         }
+        if lower.contains("putdown") || lower.contains("put down") || lower.contains("pickup") {
+            return Some(Self::PutDownWeapon);
+        }
+        if lower.contains("time bomb") || lower.contains("timebomb") {
+            return Some(Self::TimeBomb);
+        }
+        if lower.contains("explosion big") || lower.contains("big explosion") {
+            return Some(Self::BigExplosion);
+        }
+        if lower.contains("explosion") || lower.contains("blast") {
+            return Some(Self::Explosion);
+        }
+        if lower.contains("persuade") {
+            return Some(Self::Persuade);
+        }
         if lower.contains("door") || lower.contains("open") {
             return Some(Self::Door);
+        }
+        if lower.contains("selected") {
+            return Some(Self::SpeechSelected);
+        }
+        if lower.contains("after mission") {
+            return Some(Self::MenuAfterMission);
         }
         if lower.contains("ui") || lower.contains("select") || lower.contains("reset") {
             return Some(Self::Menu);
         }
         if lower.contains("uzi") || lower.contains("machine") {
             return Some(Self::Uzi);
+        }
+        if lower.contains("shotgun") {
+            return Some(Self::Shotgun);
+        }
+        if lower.contains("minigun") {
+            return Some(Self::MiniGun);
+        }
+        if lower.contains("gauss") {
+            return Some(Self::GaussGun);
+        }
+        if lower.contains("laser") {
+            return Some(Self::Laser);
         }
         if lower.contains("shot") || lower.contains("fire") || lower.contains("weapon") {
             return Some(Self::Pistol);
@@ -164,11 +236,23 @@ impl OriginalAudioSampleBank {
         let game_samples = load_game_sound_samples(root.as_ref());
         let mut bank = Self::default();
         for key in [
+            OriginalAudioSampleKey::Shotgun,
             OriginalAudioSampleKey::Pistol,
+            OriginalAudioSampleKey::Laser,
+            OriginalAudioSampleKey::Explosion,
             OriginalAudioSampleKey::Uzi,
+            OriginalAudioSampleKey::MiniGun,
+            OriginalAudioSampleKey::Persuade,
+            OriginalAudioSampleKey::SpeechSelected,
+            OriginalAudioSampleKey::GaussGun,
+            OriginalAudioSampleKey::MissionFailed,
             OriginalAudioSampleKey::Door,
+            OriginalAudioSampleKey::TimeBomb,
+            OriginalAudioSampleKey::PutDownWeapon,
             OriginalAudioSampleKey::Menu,
             OriginalAudioSampleKey::MissionComplete,
+            OriginalAudioSampleKey::BigExplosion,
+            OriginalAudioSampleKey::MenuAfterMission,
         ] {
             bank.attempted_samples += 1;
             let Some(sample) = game_samples.get(key.sample_index()) else {
@@ -536,7 +620,26 @@ mod tests {
             OriginalAudioSampleKey::for_event_label("door ui open"),
             Some(OriginalAudioSampleKey::Door)
         );
+        assert_eq!(
+            OriginalAudioSampleKey::for_event_label("target escaped local mission failed"),
+            Some(OriginalAudioSampleKey::MissionFailed)
+        );
+        assert_eq!(
+            OriginalAudioSampleKey::for_event_label("pickup local dropped weapon"),
+            Some(OriginalAudioSampleKey::PutDownWeapon)
+        );
+        assert_eq!(
+            OriginalAudioSampleKey::for_event_label("persuade accessory intent"),
+            Some(OriginalAudioSampleKey::Persuade)
+        );
+        assert_eq!(
+            OriginalAudioSampleKey::for_event_label("time bomb placed"),
+            Some(OriginalAudioSampleKey::TimeBomb)
+        );
         assert_eq!(OriginalAudioSampleKey::Uzi.sample_index(), 7);
+        assert_eq!(OriginalAudioSampleKey::MissionFailed.sample_index(), 15);
+        assert_eq!(OriginalAudioSampleKey::PutDownWeapon.sample_index(), 19);
+        assert_eq!(OriginalAudioSampleKey::BigExplosion.sample_index(), 29);
         assert!(
             !OriginalAudioSampleBank::default()
                 .status_label()

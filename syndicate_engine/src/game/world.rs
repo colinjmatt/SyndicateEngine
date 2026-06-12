@@ -94,8 +94,9 @@ const ORIGINAL_CONTROL_CIVILIAN_PANIC_STEPS: usize = 5;
 const ORIGINAL_CONTROL_CIVILIAN_FLEE_RADIUS: u16 = 6;
 const ORIGINAL_CONTROL_NPC_WANDER_SECS: f32 = 2.40;
 const ORIGINAL_CONTROL_NPC_ROUTE_SPEED: f32 = 2.4;
-const ORIGINAL_CONTROL_TARGET_CAR_DELAY_SECS: f32 = 7.5;
+const ORIGINAL_CONTROL_TARGET_CAR_DELAY_SECS: f32 = 34.0;
 const ORIGINAL_CONTROL_VEHICLE_ROUTE_SPEED: f32 = 4.8;
+const ORIGINAL_CONTROL_VEHICLE_ROAD_SNAP_RADIUS: u16 = 8;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
@@ -194,6 +195,10 @@ struct OriginalMissionControlRuntime {
     vehicle_entry_tiles: BTreeSet<OriginalTilePoint>,
     local_vehicle_tiles: BTreeMap<u16, OriginalTilePoint>,
     local_vehicle_exits: usize,
+    local_vehicle_drive_orders: usize,
+    local_vehicle_drive_blocked: usize,
+    last_vehicle_drive_goal: Option<OriginalTilePoint>,
+    last_vehicle_drive_blocker: Option<String>,
     pickup_blocked_tiles: BTreeSet<OriginalTilePoint>,
     objective_contact_tiles: BTreeSet<OriginalTilePoint>,
     scenario_trigger_tiles: BTreeSet<OriginalTilePoint>,
@@ -1046,6 +1051,7 @@ enum OriginalLocalMissionState {
     Active,
     TargetDown,
     LocalComplete,
+    TargetEscaped,
     AgentsDownTest,
 }
 
@@ -1056,12 +1062,17 @@ impl OriginalLocalMissionState {
             Self::Active => "active",
             Self::TargetDown => "target down",
             Self::LocalComplete => "local complete",
+            Self::TargetEscaped => "target escaped",
             Self::AgentsDownTest => "agents down-test",
         }
     }
 
     fn is_complete(self) -> bool {
         self == Self::LocalComplete
+    }
+
+    fn is_terminal_failure(self) -> bool {
+        matches!(self, Self::TargetEscaped | Self::AgentsDownTest)
     }
 }
 
@@ -1241,6 +1252,40 @@ impl OriginalMissionControlRuntime {
         ));
     }
 
+    fn record_vehicle_drive_order(
+        &mut self,
+        goal: OriginalTilePoint,
+        ready: usize,
+        blocked: usize,
+    ) {
+        self.local_vehicle_drive_orders = self.local_vehicle_drive_orders.saturating_add(ready);
+        self.local_vehicle_drive_blocked = self.local_vehicle_drive_blocked.saturating_add(blocked);
+        self.last_vehicle_drive_goal = Some(goal);
+        self.last_vehicle_drive_blocker = (blocked > 0).then(|| {
+            format!(
+                "{blocked} local vehicle drive order(s) blocked before {}",
+                original_tile_short_label(goal)
+            )
+        });
+        self.last_result = Some(format!(
+            "vehicle drive local order to {}; ready {} blocked {}; FreeSynd-style enter/drive chain, road/traffic semantics still gated",
+            original_tile_short_label(goal),
+            ready,
+            blocked
+        ));
+    }
+
+    fn record_vehicle_drive_blocker(&mut self, requested: OriginalTilePoint, blocker: String) {
+        self.local_vehicle_drive_blocked = self.local_vehicle_drive_blocked.saturating_add(1);
+        self.last_vehicle_drive_goal = Some(requested);
+        self.last_vehicle_drive_blocker = Some(blocker.clone());
+        self.last_result = Some(format!(
+            "vehicle drive blocked near {}; {}; road snapping/traffic semantics remain proof-gated",
+            original_tile_short_label(requested),
+            blocker
+        ));
+    }
+
     fn record_combat_probe(
         &mut self,
         record_index: u16,
@@ -1327,7 +1372,7 @@ impl OriginalMissionControlRuntime {
             .as_deref()
             .unwrap_or("no local action result yet");
         format!(
-            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-local {} parked {} exits {} pickup-blocked {} objective-contact {}; door route overlay {}, approaches {}, threshold arrivals {} last threshold {}, threshold agent {}, retries {} ready {}, last open {}, retry goal {}, route door hint {}, route goal {}, spacing holds {} last {}, cancels {}, pickup proof blockers {}; {last}",
+            "control runtime local results door {} pickup {} vehicle {} objective {} scenario {} combat probes {} hits {}; local state open {} vehicle-local {} parked {} exits {} vehicle drives {} blocked {} last drive {} last drive blocker {}; pickup-blocked {} objective-contact {}; door route overlay {}, approaches {}, threshold arrivals {} last threshold {}, threshold agent {}, retries {} ready {}, last open {}, retry goal {}, route door hint {}, route goal {}, spacing holds {} last {}, cancels {}, pickup proof blockers {}; {last}",
             self.door_resolutions,
             self.weapon_pickup_resolutions,
             self.vehicle_entry_resolutions,
@@ -1339,6 +1384,12 @@ impl OriginalMissionControlRuntime {
             self.vehicle_entry_tiles.len(),
             self.local_vehicle_tiles.len(),
             self.local_vehicle_exits,
+            self.local_vehicle_drive_orders,
+            self.local_vehicle_drive_blocked,
+            self.last_vehicle_drive_goal
+                .map(original_tile_short_label)
+                .unwrap_or_else(|| "none".to_string()),
+            self.last_vehicle_drive_blocker.as_deref().unwrap_or("none"),
             self.pickup_blocked_tiles.len(),
             self.objective_contact_tiles.len(),
             self.opened_door_tiles.len(),
@@ -1542,6 +1593,11 @@ impl OriginalMissionCombatRuntime {
             target.objective_kind_label, target.target_bucket_label, record
         );
         let state_label = self.local_mission_state().label();
+        if self.target_vehicle_escaped() && !self.objective_completed {
+            return format!(
+                "LOCAL MISSION FAILED: {target_label} escaped in candidate vehicle; state {state_label}; final mission failure semantics gated"
+            );
+        }
         match self.objective_target_state() {
             Some(_state) if self.objective_completed => format!(
                 "LOCAL MISSION COMPLETE: {target_label} down; state {state_label}; debug-gated local objective state"
@@ -1567,6 +1623,9 @@ impl OriginalMissionCombatRuntime {
         }
         if self.objective_completed {
             return OriginalLocalMissionState::LocalComplete;
+        }
+        if self.target_vehicle_escaped() {
+            return OriginalLocalMissionState::TargetEscaped;
         }
         if self
             .objective_target_state()
@@ -1601,6 +1660,10 @@ impl OriginalMissionCombatRuntime {
                 "LOCAL MISSION COMPLETE - {} target down",
                 target.objective_kind_label
             ),
+            OriginalLocalMissionState::TargetEscaped => format!(
+                "LOCAL MISSION FAILED - {} target escaped",
+                target.objective_kind_label
+            ),
             OriginalLocalMissionState::TargetDown => {
                 "OBJECTIVE TARGET DOWN - local completion gate pending".to_string()
             }
@@ -1615,6 +1678,12 @@ impl OriginalMissionCombatRuntime {
             },
         };
         Some((label, mission_state.is_complete()))
+    }
+
+    fn target_vehicle_escaped(&self) -> bool {
+        self.target_vehicle
+            .as_ref()
+            .is_some_and(|vehicle| vehicle.phase == OriginalVehicleBoardingPhase::Escaped)
     }
 
     fn hostile_alert_active(&self, record_index: u16) -> bool {
@@ -3593,6 +3662,11 @@ impl WorldState {
                 self.original_route_probe = None;
                 return true;
             }
+            if let Some(handled) =
+                self.try_original_vehicle_drive_order(goal, &selected_agents, append_order)
+            {
+                return handled;
+            }
             let (door_tiles, opened_doors, dynamic_blockers, route_probes) = {
                 let scene = self.original_mission_scene.as_ref().expect("checked above");
                 let door_tiles = original_route_door_candidate_tiles(scene);
@@ -3739,6 +3813,134 @@ impl WorldState {
         true
     }
 
+    fn try_original_vehicle_drive_order(
+        &mut self,
+        requested_goal: OriginalTilePoint,
+        selected_agents: &[(usize, OriginalTilePoint)],
+        append_order: bool,
+    ) -> Option<bool> {
+        let vehicle_agents = selected_agents
+            .iter()
+            .filter_map(|(idx, _)| {
+                self.original_debug_agents
+                    .get(*idx)
+                    .and_then(|agent| agent.vehicle_state().map(|vehicle| (*idx, vehicle)))
+            })
+            .collect::<Vec<_>>();
+        if vehicle_agents.is_empty() {
+            return None;
+        }
+
+        let (Some(scene_model), Some(map_tiles), Some(tile_types)) = (
+            self.original_mission_scene.as_ref(),
+            self.original_map_tiles.as_ref(),
+            self.original_tile_types.as_ref(),
+        ) else {
+            self.original_control_runtime.record_vehicle_drive_blocker(
+                requested_goal,
+                "missing map/tile-type proof for local vehicle driving".to_string(),
+            );
+            self.combat_log =
+                "Vehicle drive blocked: original map/tile-type proof unavailable".to_string();
+            return Some(true);
+        };
+
+        let Some((drive_goal, snap_distance)) =
+            original_vehicle_drive_goal_near(map_tiles, tile_types, requested_goal)
+        else {
+            self.original_control_runtime.record_vehicle_drive_blocker(
+                requested_goal,
+                format!(
+                    "no candidate road/ped-crossing tile within {} tiles",
+                    ORIGINAL_CONTROL_VEHICLE_ROAD_SNAP_RADIUS
+                ),
+            );
+            self.combat_log = format!(
+                "Vehicle drive blocked: no road-like candidate near {}; final road connection semantics gated",
+                original_tile_short_label(requested_goal)
+            );
+            self.original_route_probe = None;
+            return Some(true);
+        };
+
+        let selected_set = selected_agents
+            .iter()
+            .map(|(idx, _)| *idx)
+            .collect::<BTreeSet<_>>();
+        let door_tiles = original_route_door_candidate_tiles(scene_model);
+        let opened_doors = self.original_control_runtime.opened_door_tiles.clone();
+        let mut dynamic_blockers = self.local_route_dynamic_blocker_tiles(&selected_set);
+        for (_, vehicle) in &vehicle_agents {
+            dynamic_blockers.retain(|tile| !original_tile_same_cell(*tile, vehicle.tile));
+        }
+
+        let mut ready = 0;
+        let mut blocked = 0;
+        let mut display_probe = None;
+        let mut blocker_label = None;
+        for (idx, vehicle) in vehicle_agents {
+            let route_probe =
+                scene_model.original_route_debug_probe_between(vehicle.tile, drive_goal);
+            let (route_probe, gate) = original_apply_local_route_gates(
+                route_probe,
+                &door_tiles,
+                &opened_doors,
+                &dynamic_blockers,
+            );
+            if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
+                && route_probe.path.len() > 1
+            {
+                ready += 1;
+                if display_probe.is_none() {
+                    display_probe = Some(route_probe.clone());
+                }
+                if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                    agent.clear_interaction_intent();
+                    agent.assign_route_from_probe(&route_probe, append_order);
+                    agent.set_route_start_delay(0.0);
+                }
+            } else {
+                blocked += 1;
+                if display_probe.is_none() {
+                    display_probe = Some(route_probe.clone());
+                }
+                blocker_label = Some(
+                    gate.closed_door
+                        .map(original_tile_short_label)
+                        .or_else(|| gate.dynamic_blocker.map(original_tile_short_label))
+                        .unwrap_or(route_probe.message),
+                );
+                if let Some(agent) = self.original_debug_agents.get_mut(idx) {
+                    agent.block_route();
+                }
+            }
+        }
+        self.original_route_probe = display_probe;
+        self.original_control_runtime
+            .record_vehicle_drive_order(drive_goal, ready, blocked);
+        self.record_original_audio_event(format!(
+            "vehicle drive order ready {ready} blocked {blocked}"
+        ));
+        let snap_label = if snap_distance == 0 {
+            "clicked road candidate".to_string()
+        } else {
+            format!("snapped {} tiles to road candidate", snap_distance)
+        };
+        self.combat_log = if ready > 0 {
+            format!(
+                "Vehicle drive order: ready {ready}, blocked {blocked}; {snap_label}; destination {}; FreeSynd-style enter/drive chain, final road masks/traffic gated",
+                original_tile_short_label(drive_goal)
+            )
+        } else {
+            format!(
+                "Vehicle drive blocked: {}; requested {}; {snap_label}; final vehicle path semantics gated",
+                blocker_label.unwrap_or_else(|| "no routeable road-biased path".to_string()),
+                original_tile_short_label(requested_goal)
+            )
+        };
+        Some(true)
+    }
+
     fn local_route_occupied_tiles(
         &self,
         selected_indices: &BTreeSet<usize>,
@@ -3768,6 +3970,26 @@ impl WorldState {
                 .values()
                 .filter(|state| state.defeated)
                 .map(|state| state.tile),
+        );
+        blockers.extend(
+            self.original_control_runtime
+                .local_vehicle_tiles
+                .values()
+                .copied(),
+        );
+        blockers.extend(
+            self.original_combat_runtime
+                .target_vehicle
+                .as_ref()
+                .filter(|vehicle| {
+                    matches!(
+                        vehicle.phase,
+                        OriginalVehicleBoardingPhase::Boarded
+                            | OriginalVehicleBoardingPhase::Driving
+                            | OriginalVehicleBoardingPhase::Escaped
+                    )
+                })
+                .map(|vehicle| vehicle.vehicle_tile),
         );
         blockers
     }
@@ -4477,6 +4699,17 @@ impl WorldState {
         let mission_state = self
             .original_combat_runtime
             .local_mission_state_with_agents(&self.original_debug_agents);
+        if self.original_control_trace.playtest
+            && self.original_control_trace.require_completion
+            && mission_state.is_terminal_failure()
+        {
+            println!(
+                "[original-control] playtest verification failed after {} frames; terminal state {}",
+                self.original_control_trace.frame,
+                mission_state.label()
+            );
+            std::process::exit(2);
+        }
         if self.original_control_trace.playtest && mission_state.is_complete() {
             if self.original_control_trace.require_completion {
                 println!(
@@ -4706,6 +4939,16 @@ impl WorldState {
         if self.original_combat_runtime.objective_completed {
             self.combat_log =
                 "Original playtest local complete: objective target is down".to_string();
+            return true;
+        }
+        let mission_state = self
+            .original_combat_runtime
+            .local_mission_state_with_agents(&self.original_debug_agents);
+        if mission_state.is_terminal_failure() {
+            self.combat_log = format!(
+                "Original playtest {trigger}: terminal local state {}; reset or restart to retry",
+                mission_state.label()
+            );
             return true;
         }
         if self
@@ -6110,7 +6353,7 @@ impl WorldState {
             agents,
             weapon_slots,
             controls:
-                "RMB move | LMB select/fire | E action/open/exit | Q weapon | V/Z/X audio | T details"
+                "RMB move/drive | LMB select/fire | E action/open/exit | Q weapon | V/Z/X audio | T details"
                     .to_string(),
             complete: mission_state.is_complete(),
         })
@@ -7850,6 +8093,84 @@ fn original_vehicle_candidate_near(
         .or_else(|| nearest_vehicle_candidate(scene_model, from))
 }
 
+fn original_vehicle_drive_goal_near(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    requested: OriginalTilePoint,
+) -> Option<(OriginalTilePoint, u16)> {
+    let mut seen = BTreeSet::new();
+    for radius in 0..=ORIGINAL_CONTROL_VEHICLE_ROAD_SNAP_RADIUS {
+        let radius_i = radius as i32;
+        for dx in -radius_i..=radius_i {
+            for dy in -radius_i..=radius_i {
+                if dx.abs() + dy.abs() != radius_i {
+                    continue;
+                }
+                let Some(tile_x) = (requested.tile_x as i32)
+                    .checked_add(dx)
+                    .filter(|value| *value >= 0)
+                    .map(|value| value as u16)
+                else {
+                    continue;
+                };
+                let Some(tile_y) = (requested.tile_y as i32)
+                    .checked_add(dy)
+                    .filter(|value| *value >= 0)
+                    .map(|value| value as u16)
+                else {
+                    continue;
+                };
+                let z_candidates = [
+                    requested.tile_z,
+                    requested.tile_z.saturating_add(1),
+                    requested.tile_z.saturating_sub(1),
+                ];
+                for tile_z in z_candidates {
+                    let candidate = OriginalTilePoint {
+                        tile_x,
+                        tile_y,
+                        tile_z,
+                        off_x: 128,
+                        off_y: 128,
+                        off_z: 0,
+                    };
+                    if !seen.insert((candidate.tile_x, candidate.tile_y, candidate.tile_z)) {
+                        continue;
+                    }
+                    if original_vehicle_visual_tile_is_road_candidate(
+                        map_tiles, tile_types, candidate,
+                    ) {
+                        return Some((candidate, radius));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn original_vehicle_visual_tile_is_road_candidate(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    visual_tile: OriginalTilePoint,
+) -> bool {
+    if visual_tile.tile_z == 0 {
+        return false;
+    }
+    let road_z = visual_tile.tile_z as usize - 1;
+    let Some(tile_index) = map_tiles.tile_at(
+        visual_tile.tile_x as usize,
+        visual_tile.tile_y as usize,
+        road_z,
+    ) else {
+        return false;
+    };
+    matches!(
+        tile_types.tile_type(tile_index),
+        0x06..=0x09 | 0x0b | 0x0e | 0x0f
+    )
+}
+
 fn original_target_vehicle_drive_goal_candidates(
     scene_model: &OriginalMissionScene,
     target_record_index: u16,
@@ -9337,11 +9658,11 @@ mod tests {
         original_play_hud_weapon_slots, original_playtest_standoff_goal_candidates,
         original_primary_active_agent_index, original_route_prefix_before_gate,
         original_route_spacing_reservations, original_sidebar_weapon_short_label,
-        original_standoff_tile_toward, original_tile_cell_key,
-        range_tiles_from_freesynd_world_range,
+        original_standoff_tile_toward, original_tile_cell_key, original_vehicle_drive_goal_near,
+        original_vehicle_visual_tile_is_road_candidate, range_tiles_from_freesynd_world_range,
     };
     use crate::engine::{
-        map_tiles::OriginalMapTiles,
+        map_tiles::{OriginalMapTiles, OriginalTileTypes},
         mission_scene::{
             OriginalAnimationRefs, OriginalCombatLineProbe, OriginalCombatLineStatus,
             OriginalDebugAgentWeaponHint, OriginalDebugAgentWeaponSource,
@@ -9556,6 +9877,108 @@ mod tests {
         assert_eq!(runtime.last_door_threshold, None);
         assert!(!label.contains("00 00"));
         assert!(!label.contains("0x"));
+    }
+
+    #[test]
+    fn original_vehicle_drive_goal_snaps_to_road_surface_without_asset_bytes() {
+        let mut stacks = vec![[0u8, 0u8]; 16];
+        stacks[1 * 4 + 2] = [42, 0];
+        let map_tiles = synthetic_original_map_tiles_with_stacks(4, 4, 2, &stacks);
+        let tile_types = synthetic_original_tile_types(&[(42, 0x06)]);
+
+        let requested = tile(1, 1, 1);
+        let (snapped, distance) =
+            original_vehicle_drive_goal_near(&map_tiles, &tile_types, requested)
+                .expect("road-like visual tile should be found");
+
+        assert_eq!(snapped, tile(2, 1, 1));
+        assert_eq!(distance, 1);
+        assert!(original_vehicle_visual_tile_is_road_candidate(
+            &map_tiles,
+            &tile_types,
+            snapped
+        ));
+        assert!(!original_vehicle_visual_tile_is_road_candidate(
+            &map_tiles,
+            &tile_types,
+            tile(2, 1, 0)
+        ));
+        assert!(!format!("{snapped:?}").contains("00 00"));
+    }
+
+    #[test]
+    fn original_vehicle_drive_panel_labels_orders_and_blockers_without_bytes() {
+        let mut runtime = OriginalMissionControlRuntime::default();
+        runtime.record_vehicle_drive_order(tile(22, 23, 1), 1, 0);
+        let label = runtime.panel_label();
+        assert!(label.contains("vehicle drives 1"));
+        assert!(label.contains("last drive 22,23,1"));
+        assert!(label.contains("vehicle drive local order"));
+
+        runtime.record_vehicle_drive_blocker(
+            tile(25, 26, 1),
+            "no candidate road/ped-crossing tile within local snap radius".to_string(),
+        );
+        let label = runtime.panel_label();
+        assert!(label.contains("vehicle drives 1"));
+        assert!(label.contains("blocked 1"));
+        assert!(label.contains("last drive 25,26,1"));
+        assert!(label.contains("last drive blocker no candidate road"));
+        assert!(!label.contains("00 00"));
+        assert!(!label.contains("0x"));
+    }
+
+    #[test]
+    fn target_vehicle_escape_becomes_terminal_local_failure_without_bytes() {
+        let mut runtime = OriginalMissionCombatRuntime {
+            objective_target: Some(OriginalObjectiveRuntimeTarget {
+                objective_index: 0,
+                objective_kind_label: "assassinate",
+                target_bucket_label: "target ped",
+                target_kind: Some(OriginalMissionObjectKind::Ped),
+                target_record_index: Some(7),
+                target_tile: Some(tile(8, 9, 1)),
+            }),
+            ..Default::default()
+        };
+        runtime.peds.insert(
+            7,
+            OriginalCombatPedState {
+                record_index: 7,
+                tile: tile(8, 9, 1),
+                hp: 18,
+                max_hp: 18,
+                objective_target: true,
+                defeated: false,
+            },
+        );
+        runtime.target_vehicle = Some(OriginalVehicleBoardingState {
+            target_record_index: 7,
+            vehicle_record_index: 3,
+            vehicle_tile: tile(40, 41, 1),
+            phase: OriginalVehicleBoardingPhase::Escaped,
+            drive_route: vec![tile(40, 41, 1), tile(41, 42, 1)],
+            drive_progress: 1.0,
+            drive_goal: Some(tile(41, 42, 1)),
+            route_nodes: 2,
+            drive_steps: 2,
+            elapsed_secs: 35.0,
+        });
+
+        assert!(runtime.target_vehicle_escaped());
+        assert_eq!(
+            runtime.local_mission_state(),
+            OriginalLocalMissionState::TargetEscaped
+        );
+        assert!(runtime.local_mission_state().is_terminal_failure());
+        let status = runtime.objective_status_label();
+        assert!(status.contains("LOCAL MISSION FAILED"));
+        assert!(status.contains("escaped in candidate vehicle"));
+        let overlay = runtime.mission_status_overlay(&[]).unwrap();
+        assert!(overlay.0.contains("LOCAL MISSION FAILED"));
+        assert!(!overlay.1);
+        assert!(!status.contains("00 00"));
+        assert!(!status.contains("0x"));
     }
 
     #[test]
@@ -11312,5 +11735,37 @@ mod tests {
         }
         decoded.extend_from_slice(&stack);
         OriginalMapTiles::from_decoded_bytes("synthetic/MAP01.DAT".to_string(), &decoded).unwrap()
+    }
+
+    fn synthetic_original_map_tiles_with_stacks(
+        width: u32,
+        depth: u32,
+        height: u32,
+        stacks: &[[u8; 2]],
+    ) -> OriginalMapTiles {
+        assert_eq!(height, 2);
+        assert_eq!(stacks.len(), (width * depth) as usize);
+        let column_count = (width * depth) as usize;
+        let offset_table_bytes = column_count * 4;
+        let mut decoded = Vec::new();
+        decoded.extend_from_slice(&width.to_le_bytes());
+        decoded.extend_from_slice(&depth.to_le_bytes());
+        decoded.extend_from_slice(&height.to_le_bytes());
+        let mut stack_payload = Vec::new();
+        for stack in stacks {
+            let offset_from_byte_12 = (offset_table_bytes + stack_payload.len()) as u32;
+            decoded.extend_from_slice(&offset_from_byte_12.to_le_bytes());
+            stack_payload.extend_from_slice(stack);
+        }
+        decoded.extend_from_slice(&stack_payload);
+        OriginalMapTiles::from_decoded_bytes("synthetic/MAP01.DAT".to_string(), &decoded).unwrap()
+    }
+
+    fn synthetic_original_tile_types(entries: &[(u8, u8)]) -> OriginalTileTypes {
+        let mut decoded = vec![0u8; 256];
+        for (tile_index, tile_type) in entries {
+            decoded[*tile_index as usize] = *tile_type;
+        }
+        OriginalTileTypes::from_decoded_bytes("synthetic/COL01.DAT".to_string(), &decoded).unwrap()
     }
 }
