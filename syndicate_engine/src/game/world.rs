@@ -77,6 +77,7 @@ pub struct WorldState {
 
 const QUICK_SAVE_PATH: &str = "../saves/quicksave.json";
 const ORIGINAL_DEBUG_AGENT_MAX_STEP_DT: f32 = 0.05;
+const ORIGINAL_CONTROL_MAX_FRAME_DT: f32 = 0.10;
 const ORIGINAL_CONTROL_SHOOT_REACTION_SECS: f32 = 0.20;
 const ORIGINAL_CONTROL_TARGET_HP: i32 = 50;
 const ORIGINAL_CONTROL_COMBAT_FEEDBACK_SECS: f32 = 0.58;
@@ -99,6 +100,8 @@ const ORIGINAL_CONTROL_VEHICLE_ROUTE_SPEED: f32 = 4.8;
 const ORIGINAL_CONTROL_VEHICLE_ROAD_SNAP_RADIUS: u16 = 8;
 const ORIGINAL_COMBAT_TARGET_PICK_RADIUS: u16 = 2;
 const ORIGINAL_CONTROL_PLAYTEST_STEP_SECS: f32 = 0.42;
+const ORIGINAL_CONTROL_TRACE_EMIT_SECS: f32 = 0.50;
+const ORIGINAL_CONTROL_PLAYTEST_TRACE_EMIT_SECS: f32 = 2.00;
 const ORIGINAL_CONTROL_PLAYTEST_STANDOFF_RADIUS: u16 = 4;
 const ORIGINAL_CONTROL_FORMATION_STEP_DELAY_SECS: f32 = 0.10;
 const ORIGINAL_CONTROL_FORMATION_RESERVED_TAIL: usize = 6;
@@ -113,6 +116,14 @@ const ORIGINAL_FORMATION_OFFSETS: [(i16, i16); 8] = [
     (1, -1),
     (-1, 1),
 ];
+
+fn original_control_frame_dt(real_dt: f32) -> f32 {
+    if real_dt.is_finite() {
+        real_dt.clamp(0.0, ORIGINAL_CONTROL_MAX_FRAME_DT)
+    } else {
+        0.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapRenderMode {
@@ -1014,6 +1025,20 @@ struct OriginalLocalRouteGate {
     dynamic_blocker: Option<OriginalTilePoint>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OriginalVehicleRouteGate {
+    off_road_tile: Option<OriginalTilePoint>,
+    disconnected_step: Option<(OriginalTilePoint, OriginalTilePoint)>,
+    checked_nodes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OriginalPedestrianSurfaceRouteGate {
+    blocked_tile: Option<OriginalTilePoint>,
+    blocked_surface: Option<&'static str>,
+    checked_nodes: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct OriginalPlayHudSummary {
     objective: String,
@@ -1025,6 +1050,7 @@ struct OriginalPlayHudSummary {
     weapon_slots: Vec<OriginalPlayHudWeaponSlot>,
     controls: String,
     complete: bool,
+    failed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2467,6 +2493,7 @@ impl OriginalMissionCombatRuntime {
         door_tiles: &[OriginalTilePoint],
         opened_doors: &BTreeSet<OriginalTilePoint>,
         dynamic_blockers: &[OriginalTilePoint],
+        vehicle_surface: Option<(&OriginalMapTiles, &OriginalTileTypes)>,
     ) -> Vec<String> {
         let mut labels = Vec::new();
         let keys = self.npc_routes.keys().copied().collect::<Vec<_>>();
@@ -2590,6 +2617,8 @@ impl OriginalMissionCombatRuntime {
                         .original_route_debug_probe_between(target_vehicle.vehicle_tile, goal);
                     let (route_probe, gate) =
                         original_apply_scripted_route_gates(route_probe, dynamic_blockers);
+                    let (route_probe, vehicle_gate) =
+                        original_apply_vehicle_route_gates(route_probe, vehicle_surface);
                     if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
                         && route_probe.path.len() > 1
                     {
@@ -2610,6 +2639,21 @@ impl OriginalMissionCombatRuntime {
                     drive_blocker = Some(
                         gate.closed_door
                             .map(original_tile_short_label)
+                            .or_else(|| {
+                                vehicle_gate
+                                    .off_road_tile
+                                    .map(original_tile_short_label)
+                                    .map(|tile| format!("off-road route node {tile}"))
+                            })
+                            .or_else(|| {
+                                vehicle_gate.disconnected_step.map(|(from, to)| {
+                                    format!(
+                                        "disconnected road step {} to {}",
+                                        original_tile_short_label(from),
+                                        original_tile_short_label(to)
+                                    )
+                                })
+                            })
                             .unwrap_or(route_probe.message),
                     );
                 }
@@ -2873,9 +2917,16 @@ impl OriginalControlTrace {
     }
 
     fn should_emit(&mut self, signature: &str, force: bool) -> bool {
-        if force || self.elapsed >= self.next_emit_elapsed || self.last_signature != signature {
+        let signature_changed = self.last_signature != signature;
+        let interval_elapsed = self.elapsed >= self.next_emit_elapsed;
+        if force || interval_elapsed || (!self.playtest && signature_changed) {
             self.last_signature = signature.to_string();
-            self.next_emit_elapsed = self.elapsed + 0.5;
+            self.next_emit_elapsed = self.elapsed
+                + if self.playtest {
+                    ORIGINAL_CONTROL_PLAYTEST_TRACE_EMIT_SECS
+                } else {
+                    ORIGINAL_CONTROL_TRACE_EMIT_SECS
+                };
             return true;
         }
         false
@@ -3261,19 +3312,20 @@ impl WorldState {
         if is_key_pressed(KeyCode::Escape) {
             std::process::exit(0);
         }
+        let original_dt = original_control_frame_dt(real_dt);
         self.camera.update(real_dt);
         self.original_object_animation_time =
-            (self.original_object_animation_time + real_dt.max(0.0)).rem_euclid(10_000.0);
+            (self.original_object_animation_time + original_dt).rem_euclid(10_000.0);
         self.clamp_original_map_camera();
         self.update_render_controls();
         self.update_sim_controls();
         self.update_original_scene_cursor_probe();
-        self.update_original_debug_agents(real_dt);
-        self.update_original_hostile_reactions(real_dt);
-        self.original_audio_runtime.update(real_dt);
-        self.update_original_combat_feedback(real_dt);
-        self.update_original_selected_agent_camera_follow(real_dt);
-        self.update_original_control_trace(real_dt);
+        self.update_original_debug_agents(original_dt);
+        self.update_original_hostile_reactions(original_dt);
+        self.original_audio_runtime.update(original_dt);
+        self.update_original_combat_feedback(original_dt);
+        self.update_original_selected_agent_camera_follow(original_dt);
+        self.update_original_control_trace(original_dt);
         let dt = self.sim_clock.advance_dt(real_dt);
         for (key, idx) in [
             (KeyCode::Key1, 0),
@@ -3672,6 +3724,10 @@ impl WorldState {
                 let door_tiles = original_route_door_candidate_tiles(scene);
                 let opened_doors = self.original_control_runtime.opened_door_tiles.clone();
                 let dynamic_blockers = self.local_route_dynamic_blocker_tiles(&selected_set);
+                let pedestrian_surface = self
+                    .original_map_tiles
+                    .as_ref()
+                    .zip(self.original_tile_types.as_ref());
                 let mut occupied = self.local_route_occupied_tiles(&selected_set);
                 let route_probes = selected_agents
                     .into_iter()
@@ -3686,6 +3742,7 @@ impl WorldState {
                             &door_tiles,
                             &opened_doors,
                             &dynamic_blockers,
+                            pedestrian_surface,
                         );
                         (idx, formation_idx, route_probe, fallback_attempts)
                     })
@@ -3887,6 +3944,8 @@ impl WorldState {
                 &opened_doors,
                 &dynamic_blockers,
             );
+            let (route_probe, vehicle_gate) =
+                original_apply_vehicle_route_gates(route_probe, Some((map_tiles, tile_types)));
             if route_probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady
                 && route_probe.path.len() > 1
             {
@@ -3908,6 +3967,21 @@ impl WorldState {
                     gate.closed_door
                         .map(original_tile_short_label)
                         .or_else(|| gate.dynamic_blocker.map(original_tile_short_label))
+                        .or_else(|| {
+                            vehicle_gate
+                                .off_road_tile
+                                .map(original_tile_short_label)
+                                .map(|tile| format!("off-road route node {tile}"))
+                        })
+                        .or_else(|| {
+                            vehicle_gate.disconnected_step.map(|(from, to)| {
+                                format!(
+                                    "disconnected road step {} to {}",
+                                    original_tile_short_label(from),
+                                    original_tile_short_label(to)
+                                )
+                            })
+                        })
                         .unwrap_or(route_probe.message),
                 );
                 if let Some(agent) = self.original_debug_agents.get_mut(idx) {
@@ -4003,6 +4077,7 @@ impl WorldState {
         door_tiles: &[OriginalTilePoint],
         opened_doors: &BTreeSet<OriginalTilePoint>,
         dynamic_blockers: &[OriginalTilePoint],
+        pedestrian_surface: Option<(&OriginalMapTiles, &OriginalTileTypes)>,
     ) -> (OriginalRuntimeRouteProbe, usize) {
         let mut seen = BTreeSet::new();
         let mut first_probe = None;
@@ -4024,6 +4099,8 @@ impl WorldState {
                     opened_doors,
                     dynamic_blockers,
                 );
+                let (probe, surface_gate) =
+                    original_apply_pedestrian_surface_route_gates(probe, pedestrian_surface);
                 if probe.status == OriginalRuntimeRouteStatus::CandidateRouteReady {
                     for reservation in original_route_spacing_reservations(&probe.path) {
                         occupied.push(reservation);
@@ -4033,6 +4110,7 @@ impl WorldState {
                         occupied.push(goal_tile);
                     }
                     let _ = gate;
+                    let _ = surface_gate;
                     return (probe, fallback_attempts);
                 }
                 if first_probe.is_none() {
@@ -4614,6 +4692,9 @@ impl WorldState {
             &door_tiles,
             &opened_doors,
             &dynamic_blockers,
+            self.original_map_tiles
+                .as_ref()
+                .zip(self.original_tile_types.as_ref()),
         );
         for label in npc_labels {
             self.record_original_audio_event(label);
@@ -5160,7 +5241,17 @@ impl WorldState {
         let route = self
             .original_route_probe
             .as_ref()
-            .map(|probe| format!("route={:?}/{}nodes", probe.status, probe.path.len()))
+            .map(|probe| {
+                let goal = probe
+                    .goal_tile
+                    .map(original_tile_short_label)
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "route={:?}/{}nodes goal={goal}",
+                    probe.status,
+                    probe.path.len()
+                )
+            })
             .unwrap_or_else(|| "route=none".to_string());
         let mission_state = self
             .original_combat_runtime
@@ -6240,11 +6331,14 @@ impl WorldState {
         let mission_state = self
             .original_combat_runtime
             .local_mission_state_with_agents(&self.original_debug_agents);
+        let failed = mission_state.is_terminal_failure();
         let objective = self
             .original_combat_runtime
             .objective_target_state()
             .map(|state| {
-                if mission_state.is_complete() {
+                if failed {
+                    format!("Mission failed - {}", mission_state.label())
+                } else if mission_state.is_complete() {
                     "Objective complete - target down".to_string()
                 } else if state.defeated {
                     "Objective target down - completion pending".to_string()
@@ -6356,6 +6450,7 @@ impl WorldState {
                 "RMB move/drive | LMB select/fire | E action/open/exit | Q weapon | V/Z/X audio | T details"
                     .to_string(),
             complete: mission_state.is_complete(),
+            failed,
         })
     }
 
@@ -8171,6 +8266,70 @@ fn original_vehicle_visual_tile_is_road_candidate(
     )
 }
 
+fn original_apply_vehicle_route_gates(
+    mut probe: OriginalRuntimeRouteProbe,
+    vehicle_surface: Option<(&OriginalMapTiles, &OriginalTileTypes)>,
+) -> (OriginalRuntimeRouteProbe, OriginalVehicleRouteGate) {
+    let Some((map_tiles, tile_types)) = vehicle_surface else {
+        return (probe, OriginalVehicleRouteGate::default());
+    };
+    let gate = original_vehicle_route_gate(map_tiles, tile_types, &probe.path);
+    if probe.status != OriginalRuntimeRouteStatus::CandidateRouteReady {
+        return (probe, gate);
+    }
+    if let Some((from, to)) = gate.disconnected_step {
+        probe.status = OriginalRuntimeRouteStatus::CandidateRouteBlocked;
+        probe.message = format!(
+            "vehicle route blocked: disconnected road step {} to {}; final road connection semantics gated",
+            original_tile_short_label(from),
+            original_tile_short_label(to)
+        );
+        return (probe, gate);
+    }
+    if let Some(tile) = gate.off_road_tile {
+        probe.status = OriginalRuntimeRouteStatus::CandidateRouteBlocked;
+        probe.message = format!(
+            "vehicle route blocked: route leaves road/ped-crossing surface at {}; final road connection semantics gated",
+            original_tile_short_label(tile)
+        );
+        return (probe, gate);
+    }
+    if gate.checked_nodes > 0 {
+        probe.message = format!(
+            "{}; vehicle road gate checked {} candidate node(s)",
+            probe.message, gate.checked_nodes
+        );
+    }
+    (probe, gate)
+}
+
+fn original_vehicle_route_gate(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    path: &[OriginalTilePoint],
+) -> OriginalVehicleRouteGate {
+    let mut gate = OriginalVehicleRouteGate::default();
+    for window in path.windows(2) {
+        let from = window[0];
+        let to = window[1];
+        let dx = from.tile_x.abs_diff(to.tile_x);
+        let dy = from.tile_y.abs_diff(to.tile_y);
+        let dz = from.tile_z.abs_diff(to.tile_z);
+        if dx > 1 || dy > 1 || dz > 1 {
+            gate.disconnected_step = Some((from, to));
+            return gate;
+        }
+    }
+    for tile in path.iter().skip(1).copied() {
+        gate.checked_nodes += 1;
+        if !original_vehicle_visual_tile_is_road_candidate(map_tiles, tile_types, tile) {
+            gate.off_road_tile = Some(tile);
+            break;
+        }
+    }
+    gate
+}
+
 fn original_target_vehicle_drive_goal_candidates(
     scene_model: &OriginalMissionScene,
     target_record_index: u16,
@@ -8314,6 +8473,91 @@ fn original_apply_scripted_route_gates(
     dynamic_blockers: &[OriginalTilePoint],
 ) -> (OriginalRuntimeRouteProbe, OriginalLocalRouteGate) {
     original_apply_local_route_gates(probe, &[], &BTreeSet::new(), dynamic_blockers)
+}
+
+fn original_apply_pedestrian_surface_route_gates(
+    mut probe: OriginalRuntimeRouteProbe,
+    pedestrian_surface: Option<(&OriginalMapTiles, &OriginalTileTypes)>,
+) -> (
+    OriginalRuntimeRouteProbe,
+    OriginalPedestrianSurfaceRouteGate,
+) {
+    let Some((map_tiles, tile_types)) = pedestrian_surface else {
+        return (probe, OriginalPedestrianSurfaceRouteGate::default());
+    };
+    let gate = original_pedestrian_surface_route_gate(map_tiles, tile_types, &probe.path);
+    if probe.status != OriginalRuntimeRouteStatus::CandidateRouteReady {
+        return (probe, gate);
+    }
+    if let Some(tile) = gate.blocked_tile {
+        let surface = gate.blocked_surface.unwrap_or("unsupported");
+        probe.status = OriginalRuntimeRouteStatus::CandidateRouteBlocked;
+        probe.message = format!(
+            "original route blocked by {surface} candidate surface at {}; normal control stays on ground/road/slope surfaces; roof/interior semantics gated",
+            original_tile_short_label(tile)
+        );
+        return (probe, gate);
+    }
+    if gate.checked_nodes > 0 {
+        probe.message = format!(
+            "{}; pedestrian surface gate checked {} candidate node(s)",
+            probe.message, gate.checked_nodes
+        );
+    }
+    (probe, gate)
+}
+
+fn original_pedestrian_surface_route_gate(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    path: &[OriginalTilePoint],
+) -> OriginalPedestrianSurfaceRouteGate {
+    let mut gate = OriginalPedestrianSurfaceRouteGate::default();
+    for tile in path.iter().skip(1).copied() {
+        gate.checked_nodes += 1;
+        let surface = original_pedestrian_surface_label(map_tiles, tile_types, tile);
+        if !original_pedestrian_surface_allowed(surface) {
+            gate.blocked_tile = Some(tile);
+            gate.blocked_surface = Some(surface);
+            break;
+        }
+    }
+    gate
+}
+
+fn original_pedestrian_surface_label(
+    map_tiles: &OriginalMapTiles,
+    tile_types: &OriginalTileTypes,
+    tile: OriginalTilePoint,
+) -> &'static str {
+    let Some(tile_index) = map_tiles.tile_at(
+        tile.tile_x as usize,
+        tile.tile_y as usize,
+        tile.tile_z as usize,
+    ) else {
+        return "outside-map";
+    };
+    match tile_index {
+        0x80 | 0x81 => return "train-platform",
+        0x8f | 0x93 => return "empty",
+        _ => {}
+    }
+    match tile_types.tile_type(tile_index) {
+        0x00 => "empty",
+        0x01..=0x04 => "slope",
+        0x05 => "ground",
+        0x06..=0x09 | 0x0b | 0x0f => "road",
+        0x0c => "handrail",
+        0x0d => "roof",
+        0x0e => "road-crossing",
+        0x10 => "train-stop",
+        0x0a => "non-walkable",
+        _ => "unknown",
+    }
+}
+
+fn original_pedestrian_surface_allowed(surface: &'static str) -> bool {
+    matches!(surface, "slope" | "ground" | "road" | "road-crossing")
 }
 
 fn original_local_route_gate(
@@ -8692,7 +8936,9 @@ fn draw_original_control_play_panel(
     let panel_height = screen_height();
     let x = 0.0;
     let y = 0.0;
-    let accent = if summary.complete {
+    let accent = if summary.failed {
+        Color::new(1.0, 0.12, 0.08, 0.92)
+    } else if summary.complete {
         Color::new(0.2, 1.0, 0.25, 0.92)
     } else {
         SKYBLUE
@@ -8715,7 +8961,9 @@ fn draw_original_control_play_panel(
     draw_text("SYND", x + 12.0, y + 18.0, 17.0, accent);
     draw_text("M1", x + 82.0, y + 18.0, 15.0, YELLOW);
     draw_text(
-        if summary.complete {
+        if summary.failed {
+            "FAILED"
+        } else if summary.complete {
             "COMPLETE"
         } else {
             "ACTIVE"
@@ -8853,7 +9101,7 @@ fn draw_original_control_play_panel(
         x + 9.0,
         info_y,
         10.0,
-        YELLOW,
+        if summary.failed { RED } else { YELLOW },
     );
     draw_text(
         &original_ascii_ellipsis(&summary.combat, 19),
@@ -8883,7 +9131,9 @@ fn draw_original_control_status_strip(summary: &OriginalPlayHudSummary) {
     let height = 54.0;
     let x = 22.0;
     let y = screen_height() - height - 22.0;
-    let accent = if summary.complete {
+    let accent = if summary.failed {
+        Color::new(1.0, 0.12, 0.08, 0.90)
+    } else if summary.complete {
         Color::new(0.2, 1.0, 0.25, 0.90)
     } else {
         Color::new(0.0, 0.85, 1.0, 0.84)
@@ -8895,7 +9145,13 @@ fn draw_original_control_status_strip(summary: &OriginalPlayHudSummary) {
         x + 12.0,
         y + 22.0,
         13.0,
-        if summary.complete { GREEN } else { WHITE },
+        if summary.failed {
+            RED
+        } else if summary.complete {
+            GREEN
+        } else {
+            WHITE
+        },
     );
     draw_text(&summary.controls, x + 12.0, y + 43.0, 11.0, GRAY);
 }
@@ -9636,22 +9892,23 @@ fn block_plausibility_panel_label(plausibility: BlockIndexPlausibility) -> &'sta
 #[cfg(test)]
 mod tests {
     use super::{
-        MapRenderMode, ORIGINAL_FORMATION_OFFSETS, OriginalAudioRuntime,
-        OriginalCombatAttackResult, OriginalCombatFeedback, OriginalCombatPedState,
-        OriginalCombatShotStatus, OriginalCombatTargetCandidate, OriginalCombatTargetRole,
-        OriginalCombatWeaponProfile, OriginalControlTrace, OriginalDebugActionResolution,
-        OriginalDebugActionStatus, OriginalDebugAgent, OriginalDebugAgentDirection,
-        OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn, OriginalDroppedWeaponState,
-        OriginalLocalMissionState, OriginalMissionCombatRuntime, OriginalMissionControlRuntime,
-        OriginalNpcRouteMode, OriginalNpcRouteState, OriginalPlaytestFirePosture,
-        OriginalVehicleBoardingPhase, OriginalVehicleBoardingState, initial_render_mode,
-        original_agent_focus_camera_offset_from_tile_size,
+        MapRenderMode, ORIGINAL_CONTROL_MAX_FRAME_DT, ORIGINAL_FORMATION_OFFSETS,
+        OriginalAudioRuntime, OriginalCombatAttackResult, OriginalCombatFeedback,
+        OriginalCombatPedState, OriginalCombatShotStatus, OriginalCombatTargetCandidate,
+        OriginalCombatTargetRole, OriginalCombatWeaponProfile, OriginalControlTrace,
+        OriginalDebugActionResolution, OriginalDebugActionStatus, OriginalDebugAgent,
+        OriginalDebugAgentDirection, OriginalDebugAgentRouteStatus, OriginalDebugAgentSpawn,
+        OriginalDroppedWeaponState, OriginalLocalMissionState, OriginalMissionCombatRuntime,
+        OriginalMissionControlRuntime, OriginalNpcRouteMode, OriginalNpcRouteState,
+        OriginalPlaytestFirePosture, OriginalVehicleBoardingPhase, OriginalVehicleBoardingState,
+        initial_render_mode, original_agent_focus_camera_offset_from_tile_size,
         original_agent_focus_world_point_from_tile_size, original_agent_play_hud_row,
         original_agent_play_status_row, original_agent_screen_needs_follow,
-        original_apply_local_route_gates, original_apply_scripted_route_gates,
+        original_apply_local_route_gates, original_apply_pedestrian_surface_route_gates,
+        original_apply_scripted_route_gates, original_apply_vehicle_route_gates,
         original_combat_feedback_detail_label, original_combat_shot_check,
         original_compact_command_label, original_control_compact_hud_enabled,
-        original_door_action_summary, original_flee_goal_from_threat,
+        original_control_frame_dt, original_door_action_summary, original_flee_goal_from_threat,
         original_formation_goal_candidates, original_formation_requested_tile,
         original_formation_start_delay, original_hostile_return_fire_check,
         original_local_route_gate, original_ped_candidate_role_style,
@@ -9687,6 +9944,17 @@ mod tests {
             off_y: 128,
             off_z: 0,
         }
+    }
+
+    #[test]
+    fn original_control_frame_dt_clamps_startup_spikes_without_bytes() {
+        assert_eq!(original_control_frame_dt(0.016), 0.016);
+        assert_eq!(
+            original_control_frame_dt(66.0),
+            ORIGINAL_CONTROL_MAX_FRAME_DT
+        );
+        assert_eq!(original_control_frame_dt(-1.0), 0.0);
+        assert_eq!(original_control_frame_dt(f32::INFINITY), 0.0);
     }
 
     fn clear_line() -> OriginalCombatLineProbe {
@@ -9926,6 +10194,81 @@ mod tests {
         assert!(label.contains("last drive blocker no candidate road"));
         assert!(!label.contains("00 00"));
         assert!(!label.contains("0x"));
+    }
+
+    #[test]
+    fn original_vehicle_route_gate_blocks_offroad_and_disconnected_steps_without_bytes() {
+        let mut stacks = vec![[0u8, 0u8]; 25];
+        stacks[1 * 5 + 1] = [42, 0];
+        stacks[1 * 5 + 2] = [42, 0];
+        stacks[1 * 5 + 3] = [42, 0];
+        let map_tiles = synthetic_original_map_tiles_with_stacks(5, 5, 2, &stacks);
+        let tile_types = synthetic_original_tile_types(&[(42, 0x06)]);
+
+        let ready_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 1)),
+            goal_tile: Some(tile(3, 1, 1)),
+            requested_goal_tile: Some(tile(3, 1, 1)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(1, 1, 1), tile(2, 1, 1), tile(3, 1, 1)],
+            message: "candidate route ready".to_string(),
+        };
+        let (ready, gate) =
+            original_apply_vehicle_route_gates(ready_probe, Some((&map_tiles, &tile_types)));
+        assert_eq!(
+            ready.status,
+            OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert_eq!(gate.checked_nodes, 2);
+        assert_eq!(gate.off_road_tile, None);
+        assert_eq!(gate.disconnected_step, None);
+        assert!(ready.message.contains("vehicle road gate checked 2"));
+        assert!(!ready.message.contains("00 00"));
+        assert!(!ready.message.contains("0x"));
+
+        let offroad_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 1)),
+            goal_tile: Some(tile(4, 1, 1)),
+            requested_goal_tile: Some(tile(4, 1, 1)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(1, 1, 1), tile(2, 1, 1), tile(3, 1, 1), tile(4, 1, 1)],
+            message: "candidate route ready".to_string(),
+        };
+        let (offroad, gate) =
+            original_apply_vehicle_route_gates(offroad_probe, Some((&map_tiles, &tile_types)));
+        assert_eq!(
+            offroad.status,
+            OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(gate.off_road_tile, Some(tile(4, 1, 1)));
+        assert!(offroad.message.contains("leaves road"));
+        assert!(!offroad.message.contains("00 00"));
+        assert!(!offroad.message.contains("0x"));
+
+        let disconnected_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(1, 1, 1)),
+            goal_tile: Some(tile(3, 1, 1)),
+            requested_goal_tile: Some(tile(3, 1, 1)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(1, 1, 1), tile(3, 1, 1)],
+            message: "candidate route ready".to_string(),
+        };
+        let (disconnected, gate) =
+            original_apply_vehicle_route_gates(disconnected_probe, Some((&map_tiles, &tile_types)));
+        assert_eq!(
+            disconnected.status,
+            OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(gate.disconnected_step, Some((tile(1, 1, 1), tile(3, 1, 1))));
+        assert!(disconnected.message.contains("disconnected road step"));
+        assert!(!disconnected.message.contains("00 00"));
+        assert!(!disconnected.message.contains("0x"));
     }
 
     #[test]
@@ -10608,6 +10951,85 @@ mod tests {
         assert_eq!(blocked_gate.dynamic_blocker, Some(tile(3, 1, 0)));
         assert!(blocked_probe.message.contains("local dynamic blocker"));
         assert!(!blocked_probe.message.contains("0x"));
+    }
+
+    #[test]
+    fn original_pedestrian_surface_gate_blocks_roof_train_and_unknown_without_bytes() {
+        let mut stacks = vec![[1u8, 0u8]; 16];
+        stacks[1 * 4 + 2] = [2, 0];
+        stacks[1 * 4 + 3] = [0x80, 0];
+        let map_tiles = synthetic_original_map_tiles_with_stacks(4, 4, 2, &stacks);
+        let tile_types = synthetic_original_tile_types(&[(1, 0x05), (2, 0x0d)]);
+
+        let ready_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(0, 1, 0)),
+            goal_tile: Some(tile(1, 1, 0)),
+            requested_goal_tile: Some(tile(1, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(0, 1, 0), tile(1, 1, 0)],
+            message: "synthetic route ready".to_string(),
+        };
+        let (ready, gate) = original_apply_pedestrian_surface_route_gates(
+            ready_probe,
+            Some((&map_tiles, &tile_types)),
+        );
+        assert_eq!(
+            ready.status,
+            OriginalRuntimeRouteStatus::CandidateRouteReady
+        );
+        assert_eq!(gate.checked_nodes, 1);
+        assert!(ready.message.contains("pedestrian surface gate checked 1"));
+        assert!(!ready.message.contains("0x"));
+
+        let roof_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(0, 1, 0)),
+            goal_tile: Some(tile(2, 1, 0)),
+            requested_goal_tile: Some(tile(2, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(0, 1, 0), tile(1, 1, 0), tile(2, 1, 0)],
+            message: "synthetic route ready".to_string(),
+        };
+        let (roof, gate) = original_apply_pedestrian_surface_route_gates(
+            roof_probe,
+            Some((&map_tiles, &tile_types)),
+        );
+        assert_eq!(
+            roof.status,
+            OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(gate.blocked_tile, Some(tile(2, 1, 0)));
+        assert_eq!(gate.blocked_surface, Some("roof"));
+        assert!(roof.message.contains("roof candidate surface"));
+        assert!(roof.message.contains("roof/interior semantics gated"));
+        assert!(!roof.message.contains("00 00"));
+        assert!(!roof.message.contains("0x"));
+
+        let train_probe = OriginalRuntimeRouteProbe {
+            status: OriginalRuntimeRouteStatus::CandidateRouteReady,
+            start_tile: Some(tile(0, 1, 0)),
+            goal_tile: Some(tile(3, 1, 0)),
+            requested_goal_tile: Some(tile(3, 1, 0)),
+            snap: None,
+            transition_kind: OriginalRouteTransitionKind::SameLevelOnly,
+            path: vec![tile(0, 1, 0), tile(1, 1, 0), tile(3, 1, 0)],
+            message: "synthetic route ready".to_string(),
+        };
+        let (train, gate) = original_apply_pedestrian_surface_route_gates(
+            train_probe,
+            Some((&map_tiles, &tile_types)),
+        );
+        assert_eq!(
+            train.status,
+            OriginalRuntimeRouteStatus::CandidateRouteBlocked
+        );
+        assert_eq!(gate.blocked_surface, Some("train-platform"));
+        assert!(train.message.contains("train-platform candidate surface"));
+        assert!(!train.message.contains("00 00"));
+        assert!(!train.message.contains("0x"));
     }
 
     #[test]
@@ -11462,6 +11884,53 @@ mod tests {
         assert!(!trace.trace_line("mission=active").contains("00 00"));
         assert!(!trace.trace_line("mission=active").contains("0x"));
         assert!(trace.require_completion);
+    }
+
+    #[test]
+    fn original_control_playtest_trace_throttles_route_noise_without_asset_bytes() {
+        let mut trace = OriginalControlTrace {
+            enabled: true,
+            autopilot: true,
+            playtest: true,
+            require_completion: true,
+            quit_after_frames: Some(8),
+            frame: 0,
+            elapsed: 0.0,
+            next_emit_elapsed: 0.0,
+            next_playtest_elapsed: 0.0,
+            last_signature: String::new(),
+            smoke_queued: false,
+        };
+
+        assert!(trace.should_emit("route=0/40", true));
+        assert!(!trace.should_emit("route=1/40", false));
+        trace.elapsed = super::ORIGINAL_CONTROL_PLAYTEST_TRACE_EMIT_SECS + 0.01;
+        assert!(trace.should_emit("route=2/40", false));
+        assert_eq!(trace.last_signature, "route=2/40");
+        assert!(!trace.trace_line("route=2/40").contains("00 00"));
+        assert!(!trace.trace_line("route=2/40").contains("0x"));
+    }
+
+    #[test]
+    fn original_control_manual_trace_still_reports_signature_changes_without_asset_bytes() {
+        let mut trace = OriginalControlTrace {
+            enabled: true,
+            autopilot: false,
+            playtest: false,
+            require_completion: false,
+            quit_after_frames: None,
+            frame: 0,
+            elapsed: 0.0,
+            next_emit_elapsed: 0.0,
+            next_playtest_elapsed: 0.0,
+            last_signature: String::new(),
+            smoke_queued: false,
+        };
+
+        assert!(trace.should_emit("route=idle", false));
+        assert!(trace.should_emit("route=moving", false));
+        assert!(!trace.trace_line("route=moving").contains("00 00"));
+        assert!(!trace.trace_line("route=moving").contains("0x"));
     }
 
     #[test]
